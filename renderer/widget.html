@@ -476,6 +476,8 @@
 
     if (d.paused) { addTag(d.type && d.type.glyph, '일시정지됨', null); return; }
     if (d.idle) { addTag(d.type && d.type.glyph, '자리 비움', null); return; }
+    // 발표·전체화면·회의 중이라 알림을 붙잡고 있는 상태
+    if (d.hold) { addTag('pause', d.hold, null); return; }
 
     addTag(d.type.glyph, d.type.name, d.type.color,
       d.remaining <= IMMINENT_SEC ? 'imminent' : null);
@@ -590,7 +592,7 @@
     b.textContent = String(d.today.done);
     ct.append(b, '회');
 
-    card.classList.toggle('paused', d.paused || d.idle);
+    card.classList.toggle('paused', d.paused || d.idle || !!d.hold);
     setPauseIcon(d.paused);
 
     if (d.upcoming) {

@@ -25,5 +25,18 @@ contextBridge.exposeInMainWorld('nunsseom', {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setApp: (patch) => ipcRenderer.send('settings:set-app', patch),
   setReminder: (id, patch) => ipcRenderer.send('settings:set-reminder', { id, patch }),
-  closeSettings: () => ipcRenderer.send('settings:close')
+  closeSettings: () => ipcRenderer.send('settings:close'),
+
+  // 캘린더
+  calAdd: (name, url) => ipcRenderer.invoke('cal:add', { name, url }),
+  calUpdate: (id, patch) => ipcRenderer.invoke('cal:update', { id, patch }),
+  calRemove: (id) => ipcRenderer.invoke('cal:remove', id),
+  calRefresh: () => ipcRenderer.invoke('cal:refresh'),
+  calTest: (url) => ipcRenderer.invoke('cal:test', url),
+
+  // 업데이트
+  updateCheck: () => ipcRenderer.invoke('update:check'),
+  updateState: () => ipcRenderer.invoke('update:state'),
+  updateInstall: () => ipcRenderer.send('update:install'),
+  onUpdateStatus: (cb) => ipcRenderer.on('update:status', (_e, s) => cb(s))
 });

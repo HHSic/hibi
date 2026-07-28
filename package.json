@@ -8,7 +8,8 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win",
+    "dist": "electron-builder --win -p never",
+    "release": "electron-builder --win -p always",
     "pack": "electron-builder --win --dir"
   },
   "devDependencies": {
@@ -24,6 +25,13 @@
       "output": "dist",
       "buildResources": "build"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "HHSic",
+        "repo": "nunsseom"
+      }
+    ],
     "files": [
       "src/**/*",
       "renderer/**/*",

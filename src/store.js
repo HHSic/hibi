@@ -12,7 +12,16 @@ const DEFAULT_SETTINGS = {
   // 0.86 이하로 내리면 글자 많은 배경 위에서 뒤 내용이 비쳐 읽기 어려워진다(실측).
   scrim: 0.92,
   radius: 26,          // 위젯 코너 반경 (DIP)
-  autoLaunch: false    // Windows 로그인 시 자동 실행
+  autoLaunch: false,   // Windows 로그인 시 자동 실행
+
+  // 방해 금지 — 전체화면/발표/집중지원 중이면 알림을 미룬다
+  dndEnabled: true,
+  dndApps: [],         // 추가로 감지할 실행 파일 이름 (예: 'zoom', 'powerpnt')
+
+  // 캘린더 — 일정 중에는 알림을 미룬다
+  calendarBusy: true,
+  calendarAllDay: false,   // 종일 일정도 '바쁨'으로 볼지
+  autoUpdate: true         // 자동으로 업데이트 확인
 };
 
 let cache = null;
@@ -28,6 +37,7 @@ function blank() {
     settings: { ...DEFAULT_SETTINGS },
     reminders: reminders.defaultConfig(),
     custom: {},          // 사용자 지정 알림
+    calendars: [],       // [{ id, name, url, enabled }]
     stats: {},           // { 'YYYY-MM-DD': { done, skipped } }
     widgetPos: null,
     widgetSize: null
@@ -45,6 +55,7 @@ function load() {
       // 새 버전에서 추가된 종류가 있어도 기본값이 채워지도록 병합
       reminders: mergeReminders(base.reminders, raw.reminders),
       custom: raw.custom || {},
+      calendars: Array.isArray(raw.calendars) ? raw.calendars : [],
       stats: raw.stats || {},
       widgetPos: raw.widgetPos || null,
       widgetSize: raw.widgetSize || null,
@@ -125,6 +136,28 @@ module.exports = {
     else s.custom[id] = { ...(s.custom[id] || {}), ...def };
     save();
     return s.custom;
+  },
+
+  get calendars() { return load().calendars; },
+  addCalendar(cal) {
+    const s = load();
+    const id = `c${Date.now().toString(36)}`;
+    s.calendars.push({ id, name: cal.name || '캘린더', url: cal.url, enabled: true });
+    save();
+    return s.calendars;
+  },
+  updateCalendar(id, patch) {
+    const s = load();
+    const c = s.calendars.find((x) => x.id === id);
+    if (c) Object.assign(c, patch);
+    save();
+    return s.calendars;
+  },
+  removeCalendar(id) {
+    const s = load();
+    s.calendars = s.calendars.filter((x) => x.id !== id);
+    save();
+    return s.calendars;
   },
 
   get widgetPos() { return load().widgetPos; },

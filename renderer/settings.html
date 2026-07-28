@@ -179,6 +179,59 @@
   .row.toggle .sw { justify-self: end; }
 
   .foot { font-size: 11.5px; line-height: 1.55; color: var(--tertiary); margin: 10px 4px 0; }
+  .foot b { color: var(--secondary-label); font-weight: 600; }
+
+  /* 세로로 쌓는 행 (입력 필드 등) */
+  .col { padding: 10px 13px; display: flex; flex-direction: column; gap: 6px; }
+  .col + .col, .row + .col, .col + .row { box-shadow: inset 0 0.5px 0 var(--separator); }
+  .col .lbl { font-size: 11.5px; color: var(--tertiary); }
+  input[type=text] {
+    all: unset;
+    font-family: inherit; font-size: 12.5px; color: var(--label);
+    background: rgba(255, 255, 255, 0.07);
+    box-shadow: inset 0 0 0 0.5px var(--separator);
+    border-radius: 8px; padding: 7px 10px;
+    width: 100%; box-sizing: border-box;
+  }
+  input[type=text]:focus { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent); }
+  input[type=text]::placeholder { color: var(--tertiary); }
+
+  .upline { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .upline .ver { font-size: 12.5px; color: var(--label); }
+  .mini {
+    all: unset; cursor: default; flex: none;
+    font-family: inherit; font-size: 11.5px; font-weight: 620;
+    color: #fff; background: color-mix(in srgb, var(--accent) 86%, black);
+    padding: 6px 12px; border-radius: 999px;
+  }
+  .mini:hover { filter: brightness(1.12); }
+  .mini[disabled] { opacity: 0.45; }
+  .mini.ghost { background: transparent; color: var(--accent); }
+  .mini.ghost:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+
+  /* 캘린더 목록 */
+  .cal { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 9px; padding: 10px 13px; }
+  .cal + .cal { box-shadow: inset 0 0.5px 0 var(--separator); }
+  .cal .who { min-width: 0; }
+  .cal .who b { display: block; font-size: 13px; font-weight: 600; }
+  .cal .who small {
+    display: block; font-size: 10.5px; color: var(--tertiary);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .cal .del {
+    all: unset; cursor: default; color: var(--tertiary);
+    width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%;
+  }
+  .cal .del svg { width: 12px; height: 12px; }
+  .cal .del:hover { background: var(--group); color: var(--label); }
+  .empty { padding: 12px 13px; font-size: 12px; color: var(--tertiary); }
+  .banner {
+    margin: 8px 0 0; padding: 9px 12px; border-radius: 10px;
+    font-size: 11.5px; line-height: 1.5;
+    background: color-mix(in srgb, var(--accent) 13%, transparent);
+    color: var(--secondary-label);
+  }
+  .banner b { color: var(--label); }
 </style>
 </head>
 <body>
@@ -189,8 +242,9 @@
   </div>
 
   <div class="tabs">
-    <button id="tab-rem" class="on">알림 종류</button>
-    <button id="tab-app">모양 · 동작</button>
+    <button id="tab-rem" class="on">알림</button>
+    <button id="tab-cal">캘린더</button>
+    <button id="tab-app">일반</button>
   </div>
 
   <div class="scroll" id="pane-rem">
@@ -232,7 +286,82 @@
         <button class="sw" id="autoLaunch" role="switch" aria-label="Windows 시작 시 자동 실행"></button>
       </div>
     </div>
-    <p class="foot">자리를 비운 동안에는 카운트다운이 멈춥니다.</p>
+    <div class="sec">방해 금지</div>
+    <div class="group">
+      <div class="row toggle">
+        <span class="nm">전체화면 · 발표 중 미루기</span>
+        <span></span>
+        <button class="sw" id="dndEnabled" role="switch" aria-label="방해 금지 감지"></button>
+      </div>
+      <div class="col">
+        <span class="lbl">추가로 감지할 앱 (쉼표로 구분)</span>
+        <input type="text" id="dndApps" placeholder="zoom, powerpnt, obs">
+      </div>
+    </div>
+
+    <div class="sec">업데이트</div>
+    <div class="group">
+      <div class="row toggle">
+        <span class="nm">자동으로 확인</span>
+        <span></span>
+        <button class="sw" id="autoUpdate" role="switch" aria-label="자동 업데이트 확인"></button>
+      </div>
+      <div class="col">
+        <div class="upline">
+          <span class="ver" id="up-ver">버전 —</span>
+          <button class="mini" id="btn-update">업데이트 확인</button>
+        </div>
+        <span class="lbl" id="up-msg"></span>
+      </div>
+    </div>
+
+    <p class="foot">
+      자리를 비운 동안에는 카운트다운이 멈춥니다.<br>
+      발표·전체화면·회의 중에는 알림을 붙잡아 두었다가 끝나면 이어서 실행합니다.
+    </p>
+  </div>
+
+  <div class="scroll" id="pane-cal" style="display:none">
+    <div class="sec">캘린더 연동</div>
+    <div class="group">
+      <div class="row toggle">
+        <span class="nm">일정 중에는 알림 미루기</span>
+        <span></span>
+        <button class="sw" id="calendarBusy" role="switch" aria-label="일정 중 알림 미루기"></button>
+      </div>
+      <div class="row toggle">
+        <span class="nm">종일 일정도 바쁨으로</span>
+        <span></span>
+        <button class="sw" id="calendarAllDay" role="switch" aria-label="종일 일정 포함"></button>
+      </div>
+    </div>
+
+    <div class="sec">구독한 캘린더</div>
+    <div class="group" id="cal-list"></div>
+
+    <div class="sec">새로 추가</div>
+    <div class="group">
+      <div class="col">
+        <span class="lbl">이름</span>
+        <input type="text" id="cal-name" placeholder="회사 일정">
+      </div>
+      <div class="col">
+        <span class="lbl">iCal 주소 (.ics)</span>
+        <input type="text" id="cal-url" placeholder="https://calendar.google.com/calendar/ical/.../basic.ics">
+      </div>
+      <div class="col">
+        <div class="upline">
+          <span class="lbl" id="cal-msg"></span>
+          <button class="mini" id="btn-cal-add">추가</button>
+        </div>
+      </div>
+    </div>
+
+    <p class="foot">
+      <b>Google 캘린더</b> — 설정 → 해당 캘린더 → "캘린더 통합" → <b>iCal 형식의 비공개 주소</b> 복사<br>
+      <b>Notion</b> — 캘린더 뷰 우측 상단 ··· → 연결 → <b>iCal로 내보내기</b><br>
+      Outlook·Apple 캘린더의 게시 주소도 같은 방식으로 됩니다. 15분마다 새로 읽어옵니다.
+    </p>
   </div>
  </div>
 
@@ -350,6 +479,139 @@
     off.style.display = hasOff ? '' : 'none';
   }
 
+  /** 켜기/끄기 스위치를 설정 키에 묶는다 */
+  function bindSwitch(key) {
+    const el = $(key);
+    if (!el) return;
+    let on = !!data.settings[key];
+    const paint = () => {
+      el.classList.toggle('on', on);
+      el.setAttribute('aria-checked', String(on));
+    };
+    paint();
+    el.onclick = () => { on = !on; paint(); window.nunsseom.setApp({ [key]: on }); };
+  }
+
+  // ── 캘린더 ────────────────────────────────────────
+  function fmtWhen(ms) {
+    const d = new Date(ms);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  }
+
+  function renderCalendars(list, status) {
+    const host = $('cal-list');
+    host.textContent = '';
+
+    if (!list || !list.length) {
+      const p = document.createElement('div');
+      p.className = 'empty';
+      p.textContent = '아직 없습니다. 아래에서 iCal 주소를 추가하세요.';
+      host.append(p);
+    } else {
+      for (const c of list) {
+        const row = document.createElement('div');
+        row.className = 'cal';
+
+        const who = document.createElement('div');
+        who.className = 'who';
+        const b = document.createElement('b');
+        b.textContent = c.name || '캘린더';
+        const s = document.createElement('small');
+        s.textContent = c.url;
+        who.append(b, s);
+
+        const sw = document.createElement('button');
+        sw.className = 'sw' + (c.enabled !== false ? ' on' : '');
+        sw.setAttribute('role', 'switch');
+        sw.setAttribute('aria-label', `${c.name} 사용`);
+        sw.onclick = async () => {
+          const r = await window.nunsseom.calUpdate(c.id, { enabled: !(c.enabled !== false) });
+          renderCalendars(r.calendars, r.status);
+        };
+
+        const del = document.createElement('button');
+        del.className = 'del';
+        del.setAttribute('aria-label', `${c.name} 삭제`);
+        del.append(window.nunsIcon('close'));
+        del.onclick = async () => {
+          const r = await window.nunsseom.calRemove(c.id);
+          renderCalendars(r.calendars, r.status);
+        };
+
+        row.append(who, sw, del);
+        host.append(row);
+      }
+    }
+
+    // 상태 배너 — 지금 일정 중인지 / 다음 일정 / 오류
+    const old = document.getElementById('cal-banner');
+    if (old) old.remove();
+    if (!status) return;
+    const parts = [];
+    if (status.current) parts.push(`지금 <b>${status.current.summary}</b> 진행 중 (${fmtWhen(status.current.end)}까지)`);
+    else if (status.next) parts.push(`다음 일정 <b>${status.next.summary}</b> · ${fmtWhen(status.next.start)}`);
+    else if (status.count === 0 && list && list.length) parts.push('앞뒤 이틀 안에 일정이 없습니다');
+    for (const e of status.errors || []) parts.push(`<b>${e.name || '캘린더'}</b> 읽기 실패: ${e.message}`);
+    if (!parts.length) return;
+
+    const banner = document.createElement('div');
+    banner.className = 'banner';
+    banner.id = 'cal-banner';
+    // 안전하게 조립 (innerHTML 대신)
+    for (const [i, text] of parts.entries()) {
+      if (i) banner.append(document.createElement('br'));
+      const frag = text.split(/<b>|<\/b>/);
+      frag.forEach((chunk, k) => {
+        if (k % 2 === 1) {
+          const bb = document.createElement('b');
+          bb.textContent = chunk;
+          banner.append(bb);
+        } else if (chunk) {
+          banner.append(chunk);
+        }
+      });
+    }
+    host.after(banner);
+  }
+
+  $('btn-cal-add').onclick = async () => {
+    const url = $('cal-url').value.trim();
+    const name = $('cal-name').value.trim() || '캘린더';
+    const msg = $('cal-msg');
+    if (!url) { msg.textContent = '주소를 입력하세요'; return; }
+    msg.textContent = '확인 중…';
+    $('btn-cal-add').disabled = true;
+    try {
+      const t = await window.nunsseom.calTest(url);
+      if (!t.ok) { msg.textContent = t.message; return; }
+      const r = await window.nunsseom.calAdd(name, url);
+      data.calendars = r.calendars;
+      renderCalendars(r.calendars, r.status);
+      $('cal-url').value = '';
+      $('cal-name').value = '';
+      msg.textContent = t.message;
+    } finally {
+      $('btn-cal-add').disabled = false;
+    }
+  };
+
+  // ── 업데이트 ──────────────────────────────────────
+  function paintUpdate(s) {
+    if (!s) return;
+    $('up-ver').textContent = `버전 ${s.version}`;
+    $('up-msg').textContent = s.message || '';
+    const btn = $('btn-update');
+    if (s.status === 'ready') {
+      btn.textContent = '설치하고 다시 시작';
+      btn.onclick = () => window.nunsseom.updateInstall();
+    } else {
+      btn.textContent = '업데이트 확인';
+      btn.onclick = async () => { paintUpdate(await window.nunsseom.updateCheck()); };
+    }
+    btn.disabled = s.status === 'checking' || s.status === 'downloading';
+  }
+  window.nunsseom.onUpdateStatus(paintUpdate);
+
   // ── 일반 설정 ─────────────────────────────────────
   function bindAppRow(id, fmt, toValue, toStore) {
     const input = $(id);
@@ -368,26 +630,31 @@
     bindAppRow('radius', (v) => `${v}px`, (s) => s.radius ?? 26, (v) => ({ radius: v }));
     bindAppRow('idlePauseSec', (v) => `${v}초`, (s) => s.idlePauseSec ?? 120, (v) => ({ idlePauseSec: v }));
 
-    const al = $('autoLaunch');
-    let alOn = !!data.settings.autoLaunch;
-    const paintAl = () => {
-      al.classList.toggle('on', alOn);
-      al.setAttribute('aria-checked', String(alOn));
+    for (const key of ['autoLaunch', 'dndEnabled', 'autoUpdate', 'calendarBusy', 'calendarAllDay']) {
+      bindSwitch(key);
+    }
+
+    // 감지할 앱 목록
+    const apps = $('dndApps');
+    apps.value = (data.settings.dndApps || []).join(', ');
+    apps.onchange = () => {
+      const list = apps.value.split(',').map((s) => s.trim()).filter(Boolean);
+      window.nunsseom.setApp({ dndApps: list });
     };
-    paintAl();
-    al.onclick = () => { alOn = !alOn; paintAl(); window.nunsseom.setApp({ autoLaunch: alOn }); };
+
+    renderCalendars(data.calendars, data.calendarStatus);
+    paintUpdate(data.update);
   });
 
   // ── 탭 ───────────────────────────────────────────
+  const TABS = ['rem', 'cal', 'app'];
   function showTab(which) {
-    const isRem = which === 'rem';
-    $('tab-rem').classList.toggle('on', isRem);
-    $('tab-app').classList.toggle('on', !isRem);
-    $('pane-rem').style.display = isRem ? '' : 'none';
-    $('pane-app').style.display = isRem ? 'none' : '';
+    for (const t of TABS) {
+      $(`tab-${t}`).classList.toggle('on', t === which);
+      $(`pane-${t}`).style.display = t === which ? '' : 'none';
+    }
   }
-  $('tab-rem').onclick = () => showTab('rem');
-  $('tab-app').onclick = () => showTab('app');
+  for (const t of TABS) $(`tab-${t}`).onclick = () => showTab(t);
 
   $('btn-done').append(window.nunsIcon('close'));
   $('btn-done').onclick = () => window.nunsseom.closeSettings();

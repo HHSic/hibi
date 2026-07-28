@@ -6,6 +6,9 @@ const path = require('path');
 const store = require('./store');
 const glass = require('./glass');
 const reminders = require('./reminders');
+const dnd = require('./dnd');
+const calendar = require('./calendar');
+const updater = require('./updater');
 
 const ICON = path.join(__dirname, '..', 'assets', 'tray.png');
 const PRELOAD = path.join(__dirname, 'preload.js');
@@ -46,8 +49,48 @@ const state = {
   onBreak: false,
   breakIds: [],
   breakEndsAt: 0,
-  breakStartedAt: 0
+  breakStartedAt: 0,
+  hold: null          // 지금 알림을 미루는 이유 ('발표 모드', '회의 중' 등)
 };
+
+// 캘린더 일정 캐시
+const CAL_REFRESH_MS = 15 * 60 * 1000;
+const cal = { occurrences: [], errors: [], fetchedAt: 0, loading: false };
+
+async function refreshCalendars() {
+  const list = store.calendars;
+  if (!list.length) { cal.occurrences = []; cal.errors = []; return; }
+  if (cal.loading) return;
+  cal.loading = true;
+  try {
+    const r = await calendar.loadOccurrences(list, {
+      includeAllDay: store.settings.calendarAllDay
+    });
+    cal.occurrences = r.occurrences;
+    cal.errors = r.errors;
+    cal.fetchedAt = r.fetchedAt;
+    if (r.errors.length) console.warn('[calendar] 일부 실패:', r.errors.map((e) => e.message).join(', '));
+  } catch (e) {
+    console.warn('[calendar] refresh failed:', e.message);
+  } finally {
+    cal.loading = false;
+  }
+}
+
+/**
+ * 지금 알림을 띄우면 안 되는 이유가 있으면 문자열로, 없으면 null.
+ * 전체화면·발표·집중지원과 캘린더 일정을 함께 본다.
+ */
+function holdReason() {
+  const s = store.settings;
+  const d = dnd.check({ enabled: s.dndEnabled, apps: s.dndApps });
+  if (d.blocked) return d.reason;
+  if (s.calendarBusy) {
+    const ev = calendar.currentEvent(cal.occurrences);
+    if (ev) return ev.summary ? `일정: ${ev.summary}` : '일정 중';
+  }
+  return null;
+}
 
 // ── 위젯 ──────────────────────────────────────────────────
 function createWidget() {
@@ -219,9 +262,24 @@ function tick() {
 
   if (powerMonitor.getSystemIdleTime() >= store.settings.idlePauseSec) {
     scheduler.postponeAll(1000); // 자리 비움 동안 정지
+    state.hold = null;
   } else {
     const due = scheduler.due(now);
-    if (due.length) { startBreak(due); return; }
+    if (due.length) {
+      // 발표·전체화면·회의 중이면 끝날 때까지 카운트다운을 붙잡아 둔다.
+      // 미룬 알림은 상황이 끝나는 즉시 이어서 실행된다.
+      const reason = holdReason();
+      if (reason) {
+        state.hold = reason;
+        scheduler.postponeAll(1000);
+      } else {
+        state.hold = null;
+        startBreak(due);
+        return;
+      }
+    } else {
+      state.hold = null;
+    }
   }
   pushTick();
 }
@@ -247,6 +305,7 @@ function pushTick() {
       paused: state.paused,
       onBreak: state.onBreak,
       idle: powerMonitor.getSystemIdleTime() >= store.settings.idlePauseSec,
+      hold: state.hold,
       today: store.todayStats(),
       upcoming: upcomingList(8),
       // 다음 휴식에 함께 묶일 종류들 — 위젯 칩에서 강조된다
@@ -276,10 +335,12 @@ function updateTray() {
   const next = scheduler.soonest();
   const custom = store.custom;
   const mins = next ? Math.max(0, Math.ceil((next.at - Date.now()) / 60_000)) : 0;
+  const up = updater.getState();
   tray.setToolTip(
     state.paused ? '눈쉼 — 일시정지됨'
-      : next ? `눈쉼 — ${reminders.meta(next.id, custom).name} 약 ${mins}분 후`
-        : '눈쉼 — 켜진 알림 없음'
+      : state.hold ? `눈쉼 — ${state.hold} (대기 중)`
+        : next ? `눈쉼 — ${reminders.meta(next.id, custom).name} 약 ${mins}분 후`
+          : '눈쉼 — 켜진 알림 없음'
   );
 
   const nowSub = scheduler.activeIds().map((id) => ({
@@ -296,6 +357,9 @@ function updateTray() {
     { label: '위젯 보이기/숨기기', click: toggleWidget },
     { label: '위젯 크기 초기화', click: resetWidgetSize },
     { label: '설정', click: openSettings },
+    ...(up.status === 'ready'
+      ? [{ type: 'separator' }, { label: `업데이트 ${up.newVersion} 설치하고 다시 시작`, click: () => updater.installNow() }]
+      : []),
     { type: 'separator' },
     { label: '종료', click: () => { app.isQuitting = true; app.quit(); } }
   ]));
@@ -374,10 +438,66 @@ ipcMain.handle('settings:get', () => ({
   settings: store.settings,
   reminders: store.reminders,
   custom: store.custom,
+  calendars: store.calendars,
+  calendarStatus: calendarStatus(),
+  update: updater.getState(),
   types: reminders.TYPES.map((t) => ({
     id: t.id, name: t.name, glyph: t.glyph, color: t.color, kind: t.kind, headline: t.headline
   }))
 }));
+
+function calendarStatus() {
+  const now = Date.now();
+  const cur = calendar.currentEvent(cal.occurrences, now);
+  const next = calendar.nextEvent(cal.occurrences, now);
+  return {
+    count: cal.occurrences.length,
+    fetchedAt: cal.fetchedAt,
+    errors: cal.errors.map((e) => ({ name: e.name, message: e.message })),
+    current: cur ? { summary: cur.summary, end: cur.end } : null,
+    next: next ? { summary: next.summary, start: next.start } : null
+  };
+}
+
+// ── 캘린더 ────────────────────────────────────────────────
+ipcMain.handle('cal:add', async (_e, { name, url }) => {
+  store.addCalendar({ name, url });
+  await refreshCalendars();
+  return { calendars: store.calendars, status: calendarStatus() };
+});
+ipcMain.handle('cal:update', async (_e, { id, patch }) => {
+  store.updateCalendar(id, patch);
+  await refreshCalendars();
+  return { calendars: store.calendars, status: calendarStatus() };
+});
+ipcMain.handle('cal:remove', async (_e, id) => {
+  store.removeCalendar(id);
+  await refreshCalendars();
+  return { calendars: store.calendars, status: calendarStatus() };
+});
+ipcMain.handle('cal:refresh', async () => {
+  await refreshCalendars();
+  return { calendars: store.calendars, status: calendarStatus() };
+});
+/** 저장 전에 주소가 실제로 읽히는지 확인 */
+ipcMain.handle('cal:test', async (_e, url) => {
+  try {
+    const text = await calendar.fetchText(url);
+    if (!/BEGIN:VCALENDAR/i.test(text)) return { ok: false, message: 'iCalendar 형식이 아닙니다' };
+    const now = Date.now();
+    const occ = calendar.occurrencesIn(text, now - 7 * 86400000, now + 30 * 86400000, {
+      includeAllDay: store.settings.calendarAllDay
+    });
+    return { ok: true, message: `연결됨 · 앞으로 30일 일정 ${occ.length}건` };
+  } catch (e) {
+    return { ok: false, message: String(e.message || e).slice(0, 120) };
+  }
+});
+
+// ── 업데이트 ──────────────────────────────────────────────
+ipcMain.handle('update:check', async () => { await updater.check(); return updater.getState(); });
+ipcMain.handle('update:state', () => updater.getState());
+ipcMain.on('update:install', () => updater.installNow());
 /** Windows 로그인 시 자동 실행 (패키징된 앱에서만 의미가 있다) */
 function applyAutoLaunch(on) {
   try {
@@ -390,6 +510,8 @@ function applyAutoLaunch(on) {
 ipcMain.on('settings:set-app', (_e, patch) => {
   store.setSettings(patch);
   if (patch.autoLaunch != null) applyAutoLaunch(patch.autoLaunch);
+  if (patch.autoUpdate != null) updater.startAuto(patch.autoUpdate);
+  if (patch.calendarAllDay != null) refreshCalendars();
   if (widgetWin && !widgetWin.isDestroyed()) {
     if (patch.scrim != null) widgetWin.webContents.send('scrim', patch.scrim);
     if (patch.radius != null) widgetWin.webContents.send('radius', patch.radius);
@@ -419,6 +541,17 @@ if (!app.requestSingleInstanceLock()) {
     createWidget();
     setInterval(tick, 1000);
     setInterval(updateTray, 30_000);
+
+    refreshCalendars();
+    setInterval(refreshCalendars, CAL_REFRESH_MS);
+
+    updater.init({
+      onUpdate: (s) => {
+        if (settingsWin && !settingsWin.isDestroyed()) settingsWin.webContents.send('update:status', s);
+        updateTray();
+      }
+    });
+    updater.startAuto(store.settings.autoUpdate);
 
     // 개발용: NUNS_DEV=settings,break 로 창을 바로 띄워 확인한다
     const dev = (process.env.NUNS_DEV || '').split(',').map((s) => s.trim());
