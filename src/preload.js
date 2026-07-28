@@ -1,0 +1,29 @@
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('nunsseom', {
+  // 위젯
+  onTick: (cb) => ipcRenderer.on('tick', (_e, data) => cb(data)),
+  onScrim: (cb) => ipcRenderer.on('scrim', (_e, v) => cb(v)),
+  onRadius: (cb) => ipcRenderer.on('radius', (_e, v) => cb(v)),
+  togglePause: () => ipcRenderer.send('widget:toggle-pause'),
+  breakNow: (id) => ipcRenderer.send('widget:break-now', id),
+  openSettings: () => ipcRenderer.send('widget:open-settings'),
+  hideWidget: () => ipcRenderer.send('widget:hide'),
+  resizeWidget: (size) => ipcRenderer.send('widget:resize', size),
+  getWidgetSize: () => ipcRenderer.invoke('widget:get-size'),
+  getWidgetPos: () => ipcRenderer.invoke('widget:get-pos'),
+  moveWidget: (pos) => ipcRenderer.send('widget:move', pos),
+
+  // 오버레이
+  getOverlayBg: (displayId) => ipcRenderer.invoke('overlay:get-bg', displayId),
+  getBreakPayload: () => ipcRenderer.invoke('overlay:get-payload'),
+  snooze: () => ipcRenderer.send('overlay:snooze'),
+  skip: () => ipcRenderer.send('overlay:skip'),
+  finish: () => ipcRenderer.send('overlay:done'),
+
+  // 설정
+  getSettings: () => ipcRenderer.invoke('settings:get'),
+  setApp: (patch) => ipcRenderer.send('settings:set-app', patch),
+  setReminder: (id, patch) => ipcRenderer.send('settings:set-reminder', { id, patch }),
+  closeSettings: () => ipcRenderer.send('settings:close')
+});

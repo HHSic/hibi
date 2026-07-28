@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../assets/font/pretendard.css">
+<script src="icons.js"></script>
+<style>
+  :root {
+    --label: rgba(255, 255, 255, 0.96);
+    --secondary: rgba(235, 235, 245, 0.62);
+    --tertiary: rgba(235, 235, 245, 0.34);
+    --fill: rgba(255, 255, 255, 0.12);
+    --fill-hi: rgba(255, 255, 255, 0.22);
+    --hairline: rgba(255, 255, 255, 0.20);
+    --tint: #5ecfb6;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: transparent; }
+  body {
+    font-family: 'Pretendard Variable', Pretendard, -apple-system, 'Segoe UI Variable Display', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: grid;
+    place-items: center;
+    animation: fadein 0.55s ease both;
+    cursor: default;
+  }
+  @keyframes fadein { from { opacity: 0; } }
+
+  /* 휴식 직전 캡처한 바탕화면을 실제로 블러 (frameless 전체화면에서 가장 안정적) */
+  .backdrop {
+    position: fixed; inset: 0; z-index: -2;
+    background-size: cover; background-position: center;
+    filter: blur(44px) saturate(1.25) brightness(0.58);
+    transform: scale(1.12);
+    opacity: 0;
+    transition: opacity 0.5s ease;
+  }
+  .backdrop.ready { opacity: 1; }
+  .scrim { position: fixed; inset: 0; z-index: -1; background: rgba(16, 16, 20, 0.56); }
+
+  .stage { text-align: center; animation: rise 0.75s cubic-bezier(0.2, 0.8, 0.2, 1) both 0.1s; }
+  /* to를 명시해야 한다 — 생략하면 요소 자신의 opacity(0)가 종료 상태가 되어 끝까지 안 보인다 */
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(18px) scale(0.99); }
+    to { opacity: 1; transform: none; }
+  }
+
+  .kicker {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 14px; font-weight: 640; letter-spacing: 0.01em;
+    color: var(--tint);
+    margin-bottom: 34px;
+  }
+  .kicker svg { width: 17px; height: 17px; }
+
+  /* 숨쉬는 유리 원 */
+  .breath { position: relative; width: 312px; height: 312px; margin: 0 auto 36px; display: grid; place-items: center; }
+  .breath .disc {
+    position: absolute; inset: 0; border-radius: 50%;
+    background: linear-gradient(160deg, rgba(255,255,255,0.13), rgba(255,255,255,0.04) 62%);
+    box-shadow:
+      inset 0 0 0 0.5px var(--hairline),
+      inset 0 1px 0 rgba(255,255,255,0.30),
+      0 24px 60px rgba(0,0,0,0.28);
+    animation: breathe 5.5s ease-in-out infinite;
+  }
+  .breath .halo {
+    position: absolute; inset: -26px; border-radius: 50%;
+    box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--tint) 26%, transparent);
+    animation: breathe 5.5s ease-in-out infinite reverse;
+  }
+  @keyframes breathe { 0%, 100% { transform: scale(0.96); } 50% { transform: scale(1.04); } }
+  @media (prefers-reduced-motion: reduce) {
+    .breath .disc, .breath .halo { animation: none; }
+  }
+  .count {
+    position: relative;
+    font-size: 100px; font-weight: 210;
+    color: var(--label);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.05em;
+    line-height: 1;
+  }
+  .count small { font-size: 27px; font-weight: 420; letter-spacing: 0; color: var(--secondary); margin-left: 6px; }
+
+  .headline { font-size: 21px; font-weight: 620; letter-spacing: -0.02em; color: var(--label); }
+  .subline { font-size: 13.5px; color: var(--secondary); margin-top: 8px; }
+
+  /* 묶음/긴 휴식 체크리스트 */
+  .list { margin-top: 22px; display: inline-flex; flex-direction: column; gap: 8px; text-align: left; }
+  .list .item {
+    display: flex; align-items: center; gap: 12px;
+    font-size: 15.5px; font-weight: 540; letter-spacing: -0.015em;
+    color: var(--label);
+    background: var(--fill);
+    box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.11);
+    padding: 11px 20px 11px 12px;
+    border-radius: 999px;
+    min-width: 300px;
+    animation: rise 0.55s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    transition: background 0.15s;
+  }
+  .list .item:hover { background: var(--fill-hi); }
+  .list .item .box {
+    width: 23px; height: 23px; flex: none; border-radius: 50%;
+    box-shadow: inset 0 0 0 1.5px var(--tertiary);
+    display: grid; place-items: center;
+    color: #fff; transition: background 0.18s, box-shadow 0.18s;
+  }
+  .list .item .box svg { width: 13px; height: 13px; opacity: 0; }
+  .list .item .g { width: 17px; height: 17px; flex: none; color: var(--itc, var(--tint)); }
+  .list .item.done { color: var(--secondary); }
+  .list .item.done .box { background: var(--itc, var(--tint)); box-shadow: none; }
+  .list .item.done .box svg { opacity: 1; }
+
+  .actions {
+    position: fixed; bottom: 46px; left: 0; right: 0;
+    display: flex; justify-content: center; gap: 10px;
+    animation: fadein 0.7s ease both 1.3s;
+  }
+  .actions button {
+    all: unset; cursor: default;
+    font-family: inherit; font-size: 13px; font-weight: 540; letter-spacing: -0.01em;
+    color: var(--secondary);
+    padding: 10px 20px; border-radius: 999px;
+    background: var(--fill);
+    box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.11);
+    transition: background 0.15s, color 0.15s;
+  }
+  .actions button:hover { background: var(--fill-hi); color: var(--label); }
+  .actions button:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--tint) 65%, transparent); }
+
+  /* 일찍 끝내기 — 체크를 다 하면 강조된다 */
+  .actions button.finish {
+    color: var(--label);
+    font-weight: 640;
+    background: color-mix(in srgb, var(--tint) 26%, transparent);
+    box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--tint) 45%, transparent);
+    padding-left: 16px;
+  }
+  .actions button.finish:hover { background: color-mix(in srgb, var(--tint) 38%, transparent); }
+  .actions button.finish.ready {
+    background: color-mix(in srgb, var(--tint) 86%, black);
+    color: #fff;
+    box-shadow: none;
+  }
+</style>
+</head>
+<body>
+  <div class="backdrop" id="backdrop"></div>
+  <div class="scrim"></div>
+
+  <div class="stage">
+    <div class="kicker" id="kicker"></div>
+    <div class="breath">
+      <div class="halo"></div>
+      <div class="disc"></div>
+      <div class="count" id="count">20<small>초</small></div>
+    </div>
+    <div class="headline" id="headline"></div>
+    <div class="subline" id="subline"></div>
+    <div class="list" id="list"></div>
+  </div>
+
+  <div class="actions">
+    <button id="btn-finish" class="finish" title="남은 시간을 기다리지 않고 끝내기"><span id="finish-label">다 했어요</span></button>
+    <button id="btn-snooze">5분 뒤에</button>
+    <button id="btn-skip">건너뛰기</button>
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const qs = new URLSearchParams(location.search);
+  const endsAt = Number(qs.get('endsAt')) || (Date.now() + 20_000);
+  const isMain = qs.get('main') === 'true';
+  const displayId = qs.get('display');
+
+  // 캡처된 바탕화면 배경
+  window.nunsseom.getOverlayBg(displayId).then((url) => {
+    if (!url) return;
+    const bd = $('backdrop');
+    bd.style.backgroundImage = `url("${url}")`;
+    requestAnimationFrame(() => bd.classList.add('ready'));
+  }).catch(() => {});
+
+  // 알림 내용
+  window.nunsseom.getBreakPayload().then((p) => {
+    if (!p || !p.items || !p.items.length) return;
+    render(p);
+  }).catch(() => {});
+
+  function render(p) {
+    const first = p.items[0];
+    document.documentElement.style.setProperty('--tint', first.color);
+
+    // 상단 킥커 — 묶음이면 개수 표기
+    const kicker = $('kicker');
+    kicker.textContent = '';
+    kicker.append(window.nunsIcon(first.glyph));
+    const kt = document.createElement('span');
+    kt.textContent = p.grouped ? `${first.name} 외 ${p.items.length - 1}개` : first.name;
+    kicker.append(kt);
+
+    if (p.mode === 'single') {
+      const tip = first.tip;
+      $('headline').textContent = tip ? tip[0] : first.headline;
+      $('subline').textContent = tip && tip[1] ? tip[1] : '';
+      return;
+    }
+
+    // 체크리스트 모드 — 묶음이거나 긴 휴식
+    $('headline').textContent = p.grouped ? '한 번에 처리해 주세요' : first.headline;
+    $('subline').textContent = '하나씩 눌러 체크해보세요';
+
+    const rows = [];
+    for (const item of p.items) {
+      if (item.checklist && item.checklist.length) {
+        for (const text of item.checklist) rows.push({ text, glyph: item.glyph, color: item.color });
+      } else {
+        rows.push({ text: item.tip ? item.tip[0] : item.headline, glyph: item.glyph, color: item.color });
+      }
+    }
+
+    const host = $('list');
+    host.textContent = '';
+    rows.forEach((row, i) => {
+      const el = document.createElement('div');
+      el.className = 'item';
+      el.style.animationDelay = `${0.75 + i * 0.12}s`;
+      el.style.setProperty('--itc', row.color);
+
+      const box = document.createElement('span');
+      box.className = 'box';
+      box.append(window.nunsIcon('check'));
+
+      el.append(box, window.nunsIcon(row.glyph, 'g'));
+      const label = document.createElement('span');
+      label.textContent = row.text;
+      el.append(label);
+
+      el.onclick = () => { el.classList.toggle('done'); refreshFinish(); };
+      host.append(el);
+    });
+    refreshFinish();
+  }
+
+  /** 체크 진행도에 따라 완료 버튼 상태를 갱신 */
+  function refreshFinish() {
+    const items = document.querySelectorAll('.list .item');
+    const btn = $('btn-finish');
+    const label = $('finish-label');
+    if (!items.length) { label.textContent = '다 했어요'; return; }
+    const done = document.querySelectorAll('.list .item.done').length;
+    const all = done === items.length;
+    btn.classList.toggle('ready', all);
+    label.textContent = all ? '완료' : `다 했어요 (${done}/${items.length})`;
+  }
+
+  // 카운트다운 (종료는 메인 프로세스가 담당)
+  function tick() {
+    const remain = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+    const c = $('count');
+    c.textContent = '';
+    if (remain >= 60) {
+      c.append(`${Math.floor(remain / 60)}:${String(remain % 60).padStart(2, '0')}`);
+    } else {
+      c.append(String(remain));
+      const s = document.createElement('small');
+      s.textContent = '초';
+      c.append(s);
+    }
+  }
+  tick();
+  setInterval(tick, 250);
+
+  $('btn-finish').onclick = () => window.nunsseom.finish();
+  $('btn-snooze').onclick = () => window.nunsseom.snooze();
+  $('btn-skip').onclick = () => window.nunsseom.skip();
+
+  // 키보드: Enter/Space = 완료, Esc = 건너뛰기
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); window.nunsseom.finish(); }
+    else if (e.key === 'Escape') window.nunsseom.skip();
+  });
+
+  // 잔잔한 차임 (주 모니터에서만)
+  if (isMain) {
+    try {
+      const ctx = new AudioContext();
+      const bell = (freq, t0, dur, vol) => {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = 'sine';
+        o.frequency.value = freq;
+        g.gain.setValueAtTime(0, t0);
+        g.gain.linearRampToValueAtTime(vol, t0 + 0.04);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+        o.connect(g).connect(ctx.destination);
+        o.start(t0); o.stop(t0 + dur);
+      };
+      bell(660, ctx.currentTime + 0.05, 1.6, 0.05);
+      bell(880, ctx.currentTime + 0.25, 2.0, 0.04);
+    } catch {}
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../assets/font/pretendard.css">
+<script src="icons.js"></script>
+<style>
+  :root {
+    --accent: #0a84ff;
+    --scrim-a: 0.80;
+    --scrim: rgba(20, 20, 25, var(--scrim-a));
+    --inset: 12px;
+    --r: 20px;
+    --label: rgba(255, 255, 255, 0.96);
+    --secondary: rgba(235, 235, 245, 0.60);
+    --tertiary: rgba(235, 235, 245, 0.32);
+    --separator: rgba(255, 255, 255, 0.09);
+    --group: rgba(255, 255, 255, 0.07);
+    --hairline: rgba(255, 255, 255, 0.14);
+    --track: rgba(255, 255, 255, 0.18);
+    --veil: rgba(24, 24, 28, 0.94);
+    --pad: 16px;
+  }
+  :root[data-theme="light"] {
+    --accent: #007aff;
+    --scrim: rgba(252, 252, 254, var(--scrim-a));
+    --label: rgba(0, 0, 0, 0.90);
+    --secondary: rgba(60, 60, 67, 0.62);
+    --tertiary: rgba(60, 60, 67, 0.34);
+    --separator: rgba(60, 60, 67, 0.13);
+    --group: rgba(255, 255, 255, 0.62);
+    --hairline: rgba(255, 255, 255, 0.60);
+    --track: rgba(120, 120, 128, 0.22);
+    --veil: rgba(242, 242, 247, 0.94);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: transparent; }
+  body {
+    font-family: 'Pretendard Variable', Pretendard, -apple-system, 'Segoe UI Variable Display', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    color: var(--label);
+    display: flex;
+    padding: var(--inset); /* 그림자가 드리워질 투명 여백 */
+  }
+  /* 유리 패널 — 라운딩은 CSS가 담당하므로 어떤 반경에서도 매끈하다 */
+  .panel {
+    flex: 1;
+    min-height: 0;
+    display: flex; flex-direction: column;
+    background: var(--scrim);
+    border-radius: var(--r);
+    overflow: hidden;
+    position: relative;
+    box-shadow:
+      inset 0 0 0 0.5px var(--hairline),
+      0 6px 18px rgba(0, 0, 0, 0.44),
+      0 1px 4px rgba(0, 0, 0, 0.28);
+  }
+  .panel::before {
+    content: "";
+    position: absolute; inset: 0;
+    background: linear-gradient(172deg, rgba(255, 255, 255, 0.06) 0%, transparent 34%);
+    pointer-events: none;
+  }
+  /* 상단 하이라이트 — 양끝 페이드로 코너에 밝은 점이 남지 않게 */
+  .panel::after {
+    content: "";
+    position: absolute;
+    left: 0; right: 0; top: 0;
+    height: 1px;
+    background: linear-gradient(90deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.20) 22%,
+      rgba(255, 255, 255, 0.20) 78%,
+      transparent 100%);
+    pointer-events: none;
+    z-index: 2;
+  }
+  .panel > * { position: relative; }
+
+  /* 내비 */
+  .nav {
+    -webkit-app-region: drag;
+    flex: none;
+    display: grid; grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    padding: 14px var(--pad) 10px;
+  }
+  .nav h1 { grid-column: 2; font-size: 16.5px; font-weight: 650; letter-spacing: -0.02em; }
+  /* 닫기 — 작은 원형 X (Esc도 동작하지만 표시하지 않는다) */
+  .nav .done {
+    /* all: unset은 반드시 먼저 — 뒤에 두면 grid-column/justify-self까지 초기화된다 */
+    all: unset;
+    -webkit-app-region: no-drag;
+    grid-column: 3;
+    justify-self: end;
+    cursor: default;
+    display: grid; place-items: center;
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    color: var(--secondary);
+    transition: background 0.12s, color 0.12s;
+  }
+  .nav .done svg { width: 13px; height: 13px; display: block; }
+  .nav .done:hover { background: var(--group); color: var(--label); }
+  .nav .done:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
+
+  /* 탭 */
+  .tabs {
+    -webkit-app-region: no-drag;
+    flex: none; display: flex; gap: 2px;
+    margin: 2px var(--pad) 10px;
+    background: var(--group);
+    border-radius: 9px; padding: 2px;
+  }
+  .tabs button {
+    all: unset; cursor: default; flex: 1; text-align: center;
+    font-family: inherit; font-size: 12.5px; font-weight: 600;
+    padding: 6px 0; border-radius: 7px; color: var(--secondary);
+  }
+  .tabs button.on { background: color-mix(in srgb, var(--accent) 88%, black); color: #fff; }
+
+  .scroll { flex: 1; overflow-y: auto; padding: 0 var(--pad) var(--pad); }
+  .scroll::-webkit-scrollbar { width: 8px; }
+  .scroll::-webkit-scrollbar-thumb { background: var(--track); border-radius: 4px; }
+
+  .sec { font-size: 11.5px; color: var(--tertiary); margin: 12px 4px 6px; letter-spacing: 0.01em; }
+  .group {
+    background: var(--group);
+    border-radius: 13px;
+    box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.07);
+    overflow: hidden;
+  }
+
+  /* 알림 종류 행 */
+  .rem { display: grid; grid-template-columns: 26px 1fr auto auto; align-items: center; gap: 11px; padding: 10px 13px; }
+  .rem + .rem { box-shadow: inset 0 0.5px 0 var(--separator); }
+  .rem .g { width: 17px; height: 17px; justify-self: center; }
+  .rem .nm { font-size: 13.5px; font-weight: 540; }
+  .rem .nm small { display: block; font-size: 11px; font-weight: 400; color: var(--tertiary); margin-top: 1px; }
+  .rem .val { font-size: 11.5px; color: var(--tertiary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .rem.off .g, .rem.off .nm { opacity: 0.45; }
+
+  /* 스위치 */
+  .sw {
+    all: unset; cursor: default;
+    width: 36px; height: 21px; border-radius: 999px;
+    background: var(--track); position: relative;
+    transition: background 0.18s;
+    flex: none;
+  }
+  .sw::after {
+    content: ""; position: absolute; top: 2px; left: 2px;
+    width: 17px; height: 17px; border-radius: 50%;
+    background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+    transition: transform 0.18s;
+  }
+  .sw.on { background: var(--rc, var(--accent)); }
+  .sw.on::after { transform: translateX(15px); }
+  .sw:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent); }
+
+  /* 펼침 상세 (주기·길이) */
+  .detail { padding: 2px 13px 12px 50px; display: none; }
+  .rem-wrap.open .detail { display: block; }
+  .drow { display: grid; grid-template-columns: 44px 1fr 46px; align-items: center; gap: 10px; padding: 4px 0; }
+  .drow span:first-child { font-size: 11.5px; color: var(--secondary); }
+  .drow .out { font-size: 11.5px; color: var(--tertiary); text-align: right; font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; accent-color: var(--rc, var(--accent)); height: 18px; }
+
+  .rem-wrap + .rem-wrap { box-shadow: inset 0 0.5px 0 var(--separator); }
+
+  /* 일반 설정 행 */
+  .row { display: grid; grid-template-columns: 90px 1fr 52px; align-items: center; gap: 11px; padding: 10px 13px; }
+  .row + .row { box-shadow: inset 0 0.5px 0 var(--separator); }
+  .row .nm { font-size: 13.5px; }
+  .row .out { font-size: 11.5px; color: var(--tertiary); text-align: right; font-variant-numeric: tabular-nums; }
+  .row.toggle { grid-template-columns: 1fr auto auto; }
+  .row.toggle .sw { justify-self: end; }
+
+  .foot { font-size: 11.5px; line-height: 1.55; color: var(--tertiary); margin: 10px 4px 0; }
+</style>
+</head>
+<body>
+ <div class="panel">
+  <div class="nav">
+    <h1>설정</h1>
+    <button class="done" id="btn-done" title="닫기 (Esc)" aria-label="설정 닫기"></button>
+  </div>
+
+  <div class="tabs">
+    <button id="tab-rem" class="on">알림 종류</button>
+    <button id="tab-app">모양 · 동작</button>
+  </div>
+
+  <div class="scroll" id="pane-rem">
+    <div class="sec" id="sec-on">켜진 알림</div>
+    <div class="group" id="grp-on"></div>
+    <div class="sec" id="sec-off">꺼진 알림</div>
+    <div class="group" id="grp-off"></div>
+    <p class="foot">
+      여러 알림이 비슷한 시각에 겹치면 한 번의 휴식 화면으로 묶어 보여줍니다.<br>
+      행을 눌러 펼치면 주기와 길이를 따로 조절할 수 있어요.
+    </p>
+  </div>
+
+  <div class="scroll" id="pane-app" style="display:none">
+    <div class="sec">위젯 모양</div>
+    <div class="group">
+      <div class="row">
+        <span class="nm">유리 진하기</span>
+        <input type="range" id="scrim" min="40" max="98" step="2">
+        <span class="out" id="out-scrim"></span>
+      </div>
+      <div class="row">
+        <span class="nm">코너 라운드</span>
+        <input type="range" id="radius" min="0" max="44" step="2">
+        <span class="out" id="out-radius"></span>
+      </div>
+    </div>
+
+    <div class="sec">동작</div>
+    <div class="group">
+      <div class="row">
+        <span class="nm">자리 비움</span>
+        <input type="range" id="idlePauseSec" min="30" max="600" step="30">
+        <span class="out" id="out-idlePauseSec"></span>
+      </div>
+      <div class="row toggle">
+        <span class="nm">시작 시 자동 실행</span>
+        <span></span>
+        <button class="sw" id="autoLaunch" role="switch" aria-label="Windows 시작 시 자동 실행"></button>
+      </div>
+    </div>
+    <p class="foot">자리를 비운 동안에는 카운트다운이 멈춥니다.</p>
+  </div>
+ </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const params = new URLSearchParams(location.search);
+  const root = document.documentElement;
+  root.dataset.theme = params.get('theme') === 'light' ? 'light' : 'dark';
+  const num = (k, d) => { const v = parseFloat(params.get(k)); return Number.isNaN(v) ? d : v; };
+  root.style.setProperty('--inset', num('inset', 12) + 'px');
+  root.style.setProperty('--r', num('radius', 20) + 'px');
+  // 설정 창은 내용이 많아 위젯보다 약간 더 불투명하게 둔다
+  root.style.setProperty('--scrim-a', String(Math.min(0.96, num('scrim', 0.92) + 0.04)));
+
+  const fmtInterval = (m) => (m >= 60 && m % 60 === 0 ? `${m / 60}시간` : `${m}분`);
+  const fmtDuration = (sec) => (sec >= 60 ? `${Math.round(sec / 60)}분` : `${sec}초`);
+
+  let data = null;
+
+  // ── 알림 종류 행 만들기 ────────────────────────────
+  function buildRow(type, cfg) {
+    const wrap = document.createElement('div');
+    wrap.className = 'rem-wrap';
+    wrap.style.setProperty('--rc', type.color);
+
+    const row = document.createElement('div');
+    row.className = 'rem' + (cfg.enabled ? '' : ' off');
+
+    const g = window.nunsIcon(type.glyph, 'g');
+    g.style.color = type.color;
+
+    const nm = document.createElement('div');
+    nm.className = 'nm';
+    nm.textContent = type.name;
+    const sub = document.createElement('small');
+    sub.textContent = type.headline || '';
+    nm.append(sub);
+
+    const val = document.createElement('span');
+    val.className = 'val';
+    const paintVal = () => {
+      val.textContent = `${fmtInterval(cfg.intervalMin)} · ${fmtDuration(cfg.durationSec)}`;
+    };
+    paintVal();
+
+    const sw = document.createElement('button');
+    sw.className = 'sw' + (cfg.enabled ? ' on' : '');
+    sw.setAttribute('role', 'switch');
+    sw.setAttribute('aria-checked', String(!!cfg.enabled));
+    sw.setAttribute('aria-label', `${type.name} 켜기/끄기`);
+    sw.onclick = (e) => {
+      e.stopPropagation();
+      cfg.enabled = !cfg.enabled;
+      sw.classList.toggle('on', cfg.enabled);
+      sw.setAttribute('aria-checked', String(cfg.enabled));
+      row.classList.toggle('off', !cfg.enabled);
+      window.nunsseom.setReminder(type.id, { enabled: cfg.enabled });
+      renderReminders(); // 켜진/꺼진 그룹 간 이동
+    };
+
+    row.append(g, nm, val, sw);
+
+    // 상세 (주기 · 길이)
+    const detail = document.createElement('div');
+    detail.className = 'detail';
+
+    const mkSlider = (label, key, min, max, step, fmt) => {
+      const dr = document.createElement('div');
+      dr.className = 'drow';
+      const lb = document.createElement('span');
+      lb.textContent = label;
+      const input = document.createElement('input');
+      input.type = 'range';
+      input.min = min; input.max = max; input.step = step;
+      input.value = cfg[key];
+      input.setAttribute('aria-label', `${type.name} ${label}`);
+      const out = document.createElement('span');
+      out.className = 'out';
+      out.textContent = fmt(cfg[key]);
+      input.oninput = () => { out.textContent = fmt(Number(input.value)); };
+      input.onchange = () => {
+        cfg[key] = Number(input.value);
+        paintVal();
+        window.nunsseom.setReminder(type.id, { [key]: cfg[key] });
+      };
+      dr.append(lb, input, out);
+      return dr;
+    };
+
+    detail.append(
+      mkSlider('주기', 'intervalMin', 5, 240, 5, fmtInterval),
+      mkSlider('길이', 'durationSec', 10, 300, 10, fmtDuration)
+    );
+
+    row.onclick = () => wrap.classList.toggle('open');
+    wrap.append(row, detail);
+    return wrap;
+  }
+
+  function renderReminders() {
+    const on = $('grp-on');
+    const off = $('grp-off');
+    on.textContent = '';
+    off.textContent = '';
+    for (const type of data.types) {
+      const cfg = data.reminders[type.id];
+      if (!cfg) continue;
+      (cfg.enabled ? on : off).append(buildRow(type, cfg));
+    }
+    const hasOn = on.childElementCount > 0;
+    const hasOff = off.childElementCount > 0;
+    $('sec-on').style.display = hasOn ? '' : 'none';
+    on.style.display = hasOn ? '' : 'none';
+    $('sec-off').style.display = hasOff ? '' : 'none';
+    off.style.display = hasOff ? '' : 'none';
+  }
+
+  // ── 일반 설정 ─────────────────────────────────────
+  function bindAppRow(id, fmt, toValue, toStore) {
+    const input = $(id);
+    const out = $('out-' + id);
+    const paint = () => { out.textContent = fmt(Number(input.value)); };
+    input.value = toValue(data.settings);
+    paint();
+    input.oninput = paint;
+    input.onchange = () => window.nunsseom.setApp(toStore(Number(input.value)));
+  }
+
+  window.nunsseom.getSettings().then((d) => {
+    data = d;
+    renderReminders();
+    bindAppRow('scrim', (v) => `${v}%`, (s) => Math.round((s.scrim ?? 0.62) * 100), (v) => ({ scrim: v / 100 }));
+    bindAppRow('radius', (v) => `${v}px`, (s) => s.radius ?? 26, (v) => ({ radius: v }));
+    bindAppRow('idlePauseSec', (v) => `${v}초`, (s) => s.idlePauseSec ?? 120, (v) => ({ idlePauseSec: v }));
+
+    const al = $('autoLaunch');
+    let alOn = !!data.settings.autoLaunch;
+    const paintAl = () => {
+      al.classList.toggle('on', alOn);
+      al.setAttribute('aria-checked', String(alOn));
+    };
+    paintAl();
+    al.onclick = () => { alOn = !alOn; paintAl(); window.nunsseom.setApp({ autoLaunch: alOn }); };
+  });
+
+  // ── 탭 ───────────────────────────────────────────
+  function showTab(which) {
+    const isRem = which === 'rem';
+    $('tab-rem').classList.toggle('on', isRem);
+    $('tab-app').classList.toggle('on', !isRem);
+    $('pane-rem').style.display = isRem ? '' : 'none';
+    $('pane-app').style.display = isRem ? 'none' : '';
+  }
+  $('tab-rem').onclick = () => showTab('rem');
+  $('tab-app').onclick = () => showTab('app');
+
+  $('btn-done').append(window.nunsIcon('close'));
+  $('btn-done').onclick = () => window.nunsseom.closeSettings();
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') window.nunsseom.closeSettings();
+  });
+</script>
+</body>
+</html>

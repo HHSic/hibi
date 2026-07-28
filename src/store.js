@@ -1,0 +1,157 @@
+// 설정·통계·위젯 위치를 userData 폴더의 JSON 파일에 저장한다.
+const fs = require('fs');
+const path = require('path');
+const { app } = require('electron');
+const reminders = require('./reminders');
+
+const FILE = () => path.join(app.getPath('userData'), 'nunsseom.json');
+
+const DEFAULT_SETTINGS = {
+  idlePauseSec: 120,   // 이 시간 이상 자리 비움이면 타이머 정지
+  // 실시간 블러가 없으므로 틴트가 가독성을 담당한다.
+  // 0.86 이하로 내리면 글자 많은 배경 위에서 뒤 내용이 비쳐 읽기 어려워진다(실측).
+  scrim: 0.92,
+  radius: 26,          // 위젯 코너 반경 (DIP)
+  autoLaunch: false    // Windows 로그인 시 자동 실행
+};
+
+let cache = null;
+
+// 저장 포맷 버전. 창 높이 계산 방식이 바뀌면 올린다.
+//  1 → 창 높이 = 카드 + 여백
+//  2 → 창 높이 = 카드 + 여백 + 호버 컨트롤 띠
+const LAYOUT_VERSION = 2;
+
+function blank() {
+  return {
+    layoutVersion: LAYOUT_VERSION,
+    settings: { ...DEFAULT_SETTINGS },
+    reminders: reminders.defaultConfig(),
+    custom: {},          // 사용자 지정 알림
+    stats: {},           // { 'YYYY-MM-DD': { done, skipped } }
+    widgetPos: null,
+    widgetSize: null
+  };
+}
+
+function load() {
+  if (cache) return cache;
+  const base = blank();
+  try {
+    const raw = JSON.parse(fs.readFileSync(FILE(), 'utf8'));
+    cache = {
+      // 구버전에서 쓰던 키가 영구히 남지 않도록 알려진 키만 취한다
+      settings: pickKnown(base.settings, raw.settings),
+      // 새 버전에서 추가된 종류가 있어도 기본값이 채워지도록 병합
+      reminders: mergeReminders(base.reminders, raw.reminders),
+      custom: raw.custom || {},
+      stats: raw.stats || {},
+      widgetPos: raw.widgetPos || null,
+      widgetSize: raw.widgetSize || null,
+      layoutVersion: raw.layoutVersion || 1
+    };
+    migrate(cache);
+  } catch {
+    cache = base;
+  }
+  return cache;
+}
+
+/**
+ * v1에서 저장한 창 높이는 컨트롤 띠를 포함하지 않는다.
+ * 그대로 쓰면 카드가 띠 높이만큼 짧아지므로 한 번 보정한다.
+ */
+function migrate(s) {
+  if (s.layoutVersion >= LAYOUT_VERSION) return;
+  if (s.widgetSize && s.widgetSize.height) {
+    const { CONTROLS } = require('./glass');
+    s.widgetSize = { ...s.widgetSize, height: s.widgetSize.height + CONTROLS };
+  }
+  s.layoutVersion = LAYOUT_VERSION;
+  save();
+}
+
+function pickKnown(defaults, saved) {
+  const out = { ...defaults };
+  if (!saved) return out;
+  for (const key of Object.keys(defaults)) {
+    if (saved[key] !== undefined) out[key] = saved[key];
+  }
+  return out;
+}
+
+function mergeReminders(defaults, saved) {
+  const out = {};
+  for (const id of Object.keys(defaults)) {
+    out[id] = { ...defaults[id], ...((saved && saved[id]) || {}) };
+  }
+  return out;
+}
+
+function save() {
+  try {
+    fs.writeFileSync(FILE(), JSON.stringify(cache, null, 2));
+  } catch (e) {
+    console.error('store save failed:', e);
+  }
+}
+
+function todayKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+module.exports = {
+  get settings() { return load().settings; },
+  setSettings(patch) {
+    const s = load();
+    s.settings = { ...s.settings, ...patch };
+    save();
+    return s.settings;
+  },
+
+  get reminders() { return load().reminders; },
+  setReminder(id, patch) {
+    const s = load();
+    s.reminders[id] = { ...(s.reminders[id] || {}), ...patch };
+    save();
+    return s.reminders[id];
+  },
+
+  get custom() { return load().custom; },
+  setCustom(id, def) {
+    const s = load();
+    if (def == null) delete s.custom[id];
+    else s.custom[id] = { ...(s.custom[id] || {}), ...def };
+    save();
+    return s.custom;
+  },
+
+  get widgetPos() { return load().widgetPos; },
+  setWidgetPos(pos) { load().widgetPos = pos; save(); },
+  get widgetSize() { return load().widgetSize; },
+  setWidgetSize(size) { load().widgetSize = size; save(); },
+
+  bumpStat(kind, count = 1) {
+    const s = load();
+    const key = todayKey();
+    if (!s.stats[key]) s.stats[key] = { done: 0, skipped: 0 };
+    s.stats[key][kind] += count;
+    save();
+  },
+  todayStats() {
+    return load().stats[todayKey()] || { done: 0, skipped: 0 };
+  },
+  /** 최근 n일 완료 수 (오래된 것 → 최신) */
+  recentDays(n = 7) {
+    const s = load();
+    const out = [];
+    for (let i = n - 1; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      out.push((s.stats[key] || {}).done || 0);
+    }
+    return out;
+  }
+};
