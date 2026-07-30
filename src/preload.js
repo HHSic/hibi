@@ -8,7 +8,16 @@ contextBridge.exposeInMainWorld('nunsseom', {
   togglePause: () => ipcRenderer.send('widget:toggle-pause'),
   breakNow: (id) => ipcRenderer.send('widget:break-now', id),
   openSettings: () => ipcRenderer.send('widget:open-settings'),
+  openStats: (id) => ipcRenderer.send('widget:open-stats', id),
   hideWidget: () => ipcRenderer.send('widget:hide'),
+
+  // 기록 창
+  statsData: (typeId) => ipcRenderer.invoke('stats:data', typeId),
+  statsSetWeeks: (weeks) => ipcRenderer.send('stats:set-weeks', weeks),
+  statsBreakNow: (id) => ipcRenderer.send('stats:break-now', id),
+  statsClose: () => ipcRenderer.send('stats:close'),
+  onStatsChanged: (cb) => ipcRenderer.on('stats:changed', () => cb()),
+  onStatsFocus: (cb) => ipcRenderer.on('stats:focus', (_e, id) => cb(id)),
   resizeWidget: (size) => ipcRenderer.send('widget:resize', size),
   getWidgetSize: () => ipcRenderer.invoke('widget:get-size'),
   getWidgetPos: () => ipcRenderer.invoke('widget:get-pos'),

@@ -268,15 +268,25 @@
     padding: 0 0.125rem 0.125rem;
     flex: none;
   }
+  .sheet .sh button {
+    all: unset; cursor: default;
+    font-family: inherit; font-size: 0.625rem; font-weight: 650;
+    color: color-mix(in srgb, var(--tint) 85%, white);
+  }
+  .sheet .sh button:hover { text-decoration: underline; }
   .sheet .rows { display: flex; flex-direction: column; gap: 0.1875rem; overflow-y: auto; min-height: 0; }
   .sheet .rows::-webkit-scrollbar { width: 3px; }
   .sheet .rows::-webkit-scrollbar-thumb { background: var(--fill-hi); border-radius: 2px; }
   .sheet .row {
     display: grid; grid-template-columns: 0.875rem 1fr auto;
     align-items: center; gap: 0.4375rem;
-    padding: 0.25rem 0.125rem;
+    padding: 0.25rem 0.3125rem;
+    margin: 0 -0.1875rem;
+    border-radius: 0.375rem;
     font-size: 0.6875rem;
+    transition: background 0.1s;
   }
+  .sheet .row:hover { background: var(--fill); }
   .sheet .row .g { width: 0.875rem; height: 0.875rem; }
   .sheet .row .nm { color: var(--label); font-weight: 540; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sheet .row .tm { color: var(--secondary); font-variant-numeric: tabular-nums; font-weight: 560; }
@@ -399,7 +409,7 @@
     </div>
 
     <div class="sheet" id="sheet">
-      <div class="sh"><span>예정된 알림</span><span id="sheet-hint">닫기</span></div>
+      <div class="sh"><span>예정된 알림</span><button id="sheet-stats">기록 보기</button></div>
       <div class="rows" id="sheet-rows"></div>
     </div>
 
@@ -632,6 +642,9 @@
       tm.className = 'tm';
       tm.textContent = fmtLeft(t.remaining || 0);
       row.append(g, nm, tm);
+      // 항목을 누르면 그 종류의 기록 상세로
+      row.style.cursor = 'default';
+      row.onclick = (e) => { e.stopPropagation(); window.nunsseom.openStats(t.id); };
       host.append(row);
     });
   }
@@ -714,6 +727,7 @@
   $('btn-pause').onclick = () => window.nunsseom.togglePause();
   $('btn-now').onclick = () => window.nunsseom.breakNow(lastTypeId);
   $('btn-set').onclick = () => window.nunsseom.openSettings();
+  $('sheet-stats').onclick = (e) => { e.stopPropagation(); window.nunsseom.openStats(null); };
   $('btn-hide').onclick = () => window.nunsseom.hideWidget();
 
   // ── 카드: 클릭하면 예정된 알림 시트, 끌면 창 이동 ──

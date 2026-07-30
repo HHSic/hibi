@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { app } = require('electron');
 const reminders = require('./reminders');
+const grass = require('./grass');
 
 const FILE = () => path.join(app.getPath('userData'), 'nunsseom.json');
 
@@ -32,6 +33,7 @@ const DEFAULT_SETTINGS = {
   // 0.86 이하로 내리면 글자 많은 배경 위에서 뒤 내용이 비쳐 읽기 어려워진다(실측).
   scrim: 0.92,
   radius: 26,          // 위젯 코너 반경 (DIP)
+  grassWeeks: 15,      // 기록 창 잔디 기간 (주)
   autoLaunch: false,   // Windows 로그인 시 자동 실행
 
   // 방해 금지 — 전체화면/발표/집중지원 중이면 알림을 미룬다
@@ -218,8 +220,39 @@ module.exports = {
     s.stats[key][kind] += count;
     save();
   },
+  /** 완료한 알림 종류들을 기록 — done 합계와 종류별 카운트를 함께 올린다 */
+  recordDone(ids) {
+    const s = load();
+    const key = todayKey();
+    if (!s.stats[key]) s.stats[key] = { done: 0, skipped: 0 };
+    const day = s.stats[key];
+    if (!day.byType) day.byType = {};
+    for (const id of ids || []) {
+      day.done += 1;
+      day.byType[id] = (day.byType[id] || 0) + 1;
+    }
+    save();
+  },
   todayStats() {
     return load().stats[todayKey()] || { done: 0, skipped: 0 };
+  },
+  /** 잔디 데이터 — typeId 가 null 이면 전체 */
+  grassSeries(weeks, typeId) {
+    return grass.series(load().stats, weeks, typeId || null);
+  },
+  /** { current, best } 연속 기록 */
+  streaks(typeId) {
+    const st = load().stats;
+    return {
+      current: grass.currentStreak(st, typeId || null),
+      best: grass.bestStreak(st, typeId || null)
+    };
+  },
+  /** 오늘 특정 종류 횟수 */
+  todayCount(typeId) {
+    const day = load().stats[todayKey()];
+    if (!day) return 0;
+    return typeId ? (day.byType && day.byType[typeId]) || 0 : day.done || 0;
   },
   /** 오늘 횟수만 0으로 */
   resetToday() {

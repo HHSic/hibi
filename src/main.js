@@ -28,6 +28,7 @@ const SNOOZE_MS = 5 * 60_000;
 let tray = null;
 let widgetWin = null;
 let settingsWin = null;
+let statsWin = null;
 let overlayWins = [];
 let overlayShots = new Map();
 
@@ -260,9 +261,11 @@ function endBreak(kind) { // 'done' | 'skipped' | 'snoozed'
   if (kind === 'snoozed') {
     scheduler.snooze(ids, SNOOZE_MS);
   } else {
-    store.bumpStat(kind === 'done' ? 'done' : 'skipped', ids.length);
+    if (kind === 'done') store.recordDone(ids);        // 종류별로 기록
+    else store.bumpStat('skipped', ids.length);
     scheduler.rescheduleAll(ids);
   }
+  if (statsWin && !statsWin.isDestroyed()) statsWin.webContents.send('stats:changed');
   state.breakIds = [];
   updateTray();
   pushTick();
@@ -383,6 +386,7 @@ function updateTray() {
     { label: '위젯 보이기', click: revealWidget },
     { label: '위젯 숨기기', click: () => widgetWin && !widgetWin.isDestroyed() && widgetWin.hide() },
     { label: '위젯 크기 초기화', click: resetWidgetSize },
+    { label: '기록 보기', click: () => openStats(null) },
     { label: '설정', click: openSettings },
     ...(up.status === 'ready'
       ? [{ type: 'separator' }, { label: `업데이트 ${up.newVersion} 설치하고 다시 시작`, click: installUpdate }]
@@ -460,11 +464,74 @@ function openSettings() {
   settingsWin.on('closed', () => { settingsWin = null; });
 }
 
+// ── 기록 창 (통계 + 종류별 상세) ──────────────────────────
+function openStats(focusType) {
+  if (statsWin && !statsWin.isDestroyed()) {
+    statsWin.focus();
+    if (focusType) statsWin.webContents.send('stats:focus', focusType);
+    return;
+  }
+  statsWin = new BrowserWindow({
+    width: 380 + PAD,
+    height: 452 + PAD,
+    frame: false,
+    resizable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    ...glass.windowOptions(),
+    webPreferences: { preload: PRELOAD }
+  });
+  statsWin.loadFile(page('stats.html'), {
+    query: glassQuery({ radius: '20', focus: focusType || '' })
+  });
+  statsWin.on('closed', () => { statsWin = null; });
+}
+
+/** 기록 창이 그릴 전체 데이터 */
+function statsPayloadFull(typeId) {
+  const custom = store.custom;
+  const weeks = store.settings.grassWeeks || 15;
+  const active = scheduler.activeIds();
+  const now = Date.now();
+
+  const tabs = active.map((id) => {
+    const at = scheduler.nextAt.get(id);
+    return {
+      ...reminders.meta(id, custom),
+      remaining: at ? Math.max(0, Math.round((at - now) / 1000)) : null
+    };
+  });
+
+  const sel = typeId && active.includes(typeId) ? typeId : null;
+  const g = store.grassSeries(weeks, sel);
+  const st = store.streaks(sel);
+
+  return {
+    weeks,
+    selected: sel,
+    tabs,
+    grass: g.cells,
+    max: g.max,
+    streak: st,
+    today: store.todayCount(sel),
+    detail: sel ? tabs.find((t) => t.id === sel) : null
+  };
+}
+
 // ── IPC ──────────────────────────────────────────────────
 ipcMain.on('widget:toggle-pause', togglePause);
 ipcMain.on('widget:break-now', (_e, id) => startBreak(id ? [id] : null));
 ipcMain.on('widget:open-settings', openSettings);
+ipcMain.on('widget:open-stats', (_e, id) => openStats(id || null));
 ipcMain.on('widget:hide', () => widgetWin && widgetWin.hide());
+
+// 기록 창
+ipcMain.handle('stats:data', (_e, typeId) => statsPayloadFull(typeId));
+ipcMain.on('stats:set-weeks', (_e, weeks) => {
+  store.setSettings({ grassWeeks: clamp(Math.round(weeks), 4, 53) });
+});
+ipcMain.on('stats:break-now', (_e, id) => { if (id) startBreak([id]); });
+ipcMain.on('stats:close', () => statsWin && statsWin.close());
 ipcMain.on('widget:resize', (_e, { width, height }) => {
   if (!widgetWin || widgetWin.isDestroyed()) return;
   widgetWin.setSize(
@@ -681,6 +748,7 @@ if (!app.requestSingleInstanceLock()) {
     const dev = (process.env.NUNS_DEV || '').split(',').map((s) => s.trim());
     if (dev.includes('settings')) setTimeout(openSettings, 1200);
     if (dev.includes('break')) setTimeout(() => startBreak(scheduler.activeIds()), 1800);
+    if (dev.includes('stats')) setTimeout(() => openStats(null), 1200);
   });
 
   app.on('window-all-closed', () => { /* 트레이 상주 */ });
