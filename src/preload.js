@@ -34,6 +34,10 @@ contextBridge.exposeInMainWorld('nunsseom', {
   calRefresh: () => ipcRenderer.invoke('cal:refresh'),
   calTest: (url) => ipcRenderer.invoke('cal:test', url),
 
+  // 자동 실행 (OS 상태를 그대로 읽고 쓴다)
+  autoLaunchGet: () => ipcRenderer.invoke('autolaunch:get'),
+  autoLaunchSet: (on) => ipcRenderer.invoke('autolaunch:set', on),
+
   // 기록
   statsGet: () => ipcRenderer.invoke('stats:get'),
   statsResetToday: () => ipcRenderer.invoke('stats:reset-today'),

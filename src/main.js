@@ -10,6 +10,7 @@ const dnd = require('./dnd');
 const calendar = require('./calendar');
 const updater = require('./updater');
 const session = require('./session');
+const autolaunch = require('./autolaunch');
 
 const ICON = path.join(__dirname, '..', 'assets', 'tray.png');
 const PRELOAD = path.join(__dirname, 'preload.js');
@@ -456,8 +457,16 @@ ipcMain.on('overlay:snooze', () => endBreak('snoozed'));
 ipcMain.on('overlay:skip', () => endBreak('skipped'));
 ipcMain.on('overlay:done', () => endBreak('done')); // 남은 시간을 기다리지 않고 일찍 끝내기
 
+// 자동 실행은 OS 상태(시작 폴더 바로가기)가 진실이므로 저장값을 신뢰하지 않는다.
+ipcMain.handle('autolaunch:get', () => autolaunch.isEnabled());
+ipcMain.handle('autolaunch:set', (_e, on) => {
+  const actual = autolaunch.setEnabled(on);
+  store.setSettings({ autoLaunch: actual });
+  return actual;
+});
+
 ipcMain.handle('settings:get', () => ({
-  settings: store.settings,
+  settings: { ...store.settings, autoLaunch: autolaunch.isEnabled() },
   reminders: store.reminders,
   custom: store.custom,
   calendars: store.calendars,
@@ -569,18 +578,8 @@ function installUpdate() {
   updater.installNow();
 }
 
-/** Windows 로그인 시 자동 실행 (패키징된 앱에서만 의미가 있다) */
-function applyAutoLaunch(on) {
-  try {
-    app.setLoginItemSettings({ openAtLogin: !!on, path: process.execPath });
-  } catch (e) {
-    console.warn('[autolaunch] failed:', e.message);
-  }
-}
-
 ipcMain.on('settings:set-app', (_e, patch) => {
   store.setSettings(patch);
-  if (patch.autoLaunch != null) applyAutoLaunch(patch.autoLaunch);
   if (patch.autoUpdate != null) updater.startAuto(patch.autoUpdate);
   if (patch.calendarAllDay != null) refreshCalendars();
   if (widgetWin && !widgetWin.isDestroyed()) {
@@ -606,7 +605,12 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(() => {
     tray = new Tray(nativeImage.createFromPath(ICON));
-    if (app.isPackaged) applyAutoLaunch(store.settings.autoLaunch);
+    // 예전 버전에서 설정값으로만 켜 두었던 경우를 실제 바로가기로 옮긴다
+    if (app.isPackaged) {
+      const on = autolaunch.migrate(store.settings.autoLaunch);
+      if (on !== store.settings.autoLaunch) store.setSettings({ autoLaunch: on });
+      console.log('[autolaunch]', on ? '켜짐' : '꺼짐', '·', autolaunch.linkPath());
+    }
 
     scheduler.reset();
     const resumed = restoreSession();

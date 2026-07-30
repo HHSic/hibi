@@ -174,6 +174,7 @@
   .row { display: grid; grid-template-columns: 90px 1fr 52px; align-items: center; gap: 11px; padding: 10px 13px; }
   .row + .row { box-shadow: inset 0 0.5px 0 var(--separator); }
   .row .nm { font-size: 13.5px; }
+  .row .nm small { display: block; font-size: 11px; color: #ff8f8f; margin-top: 2px; }
   .row .out { font-size: 11.5px; color: var(--tertiary); text-align: right; font-variant-numeric: tabular-nums; }
   .row.toggle { grid-template-columns: 1fr auto auto; }
   .row.toggle .sw { justify-self: end; }
@@ -284,7 +285,7 @@
         <span class="out" id="out-idlePauseSec"></span>
       </div>
       <div class="row toggle">
-        <span class="nm">시작 시 자동 실행</span>
+        <span class="nm">시작 시 자동 실행<small id="autoLaunch-note"></small></span>
         <span></span>
         <button class="sw" id="autoLaunch" role="switch" aria-label="Windows 시작 시 자동 실행"></button>
       </div>
@@ -519,6 +520,39 @@
     };
     paint();
     el.onclick = () => { on = !on; paint(); window.nunsseom.setApp({ [key]: on }); };
+  }
+
+  // ── 자동 실행 ─────────────────────────────────────
+  // OS 상태(시작 폴더 바로가기)가 진실이므로, 누른 뒤 실제 상태를 다시 읽어 그린다.
+  // 실패하면 스위치가 스스로 돌아가므로 조용히 실패하는 일이 없다.
+  function bindAutoLaunch() {
+    const el = $('autoLaunch');
+    const note = $('autoLaunch-note');
+    let busy = false;
+
+    const paint = (on) => {
+      el.classList.toggle('on', on);
+      el.setAttribute('aria-checked', String(on));
+    };
+    paint(!!data.settings.autoLaunch);
+
+    el.onclick = async () => {
+      if (busy) return;
+      busy = true;
+      const want = !el.classList.contains('on');
+      paint(want);
+      if (note) note.textContent = '';
+      try {
+        const actual = await window.nunsseom.autoLaunchSet(want);
+        paint(actual);
+        data.settings.autoLaunch = actual;
+        if (note && actual !== want) {
+          note.textContent = want ? '등록하지 못했습니다' : '해제하지 못했습니다';
+        }
+      } finally {
+        busy = false;
+      }
+    };
   }
 
   // ── 방해 금지 앱 목록 ─────────────────────────────
@@ -785,9 +819,10 @@
     bindAppRow('radius', (v) => `${v}px`, (s) => s.radius ?? 26, (v) => ({ radius: v }));
     bindAppRow('idlePauseSec', (v) => `${v}초`, (s) => s.idlePauseSec ?? 120, (v) => ({ idlePauseSec: v }));
 
-    for (const key of ['autoLaunch', 'dndEnabled', 'autoUpdate', 'calendarBusy', 'calendarAllDay']) {
+    for (const key of ['dndEnabled', 'autoUpdate', 'calendarBusy', 'calendarAllDay']) {
       bindSwitch(key);
     }
+    bindAutoLaunch();
 
     renderDndApps();
 
