@@ -175,6 +175,19 @@ module.exports = {
   todayStats() {
     return load().stats[todayKey()] || { done: 0, skipped: 0 };
   },
+  /** 오늘 횟수만 0으로 */
+  resetToday() {
+    const s = load();
+    s.stats[todayKey()] = { done: 0, skipped: 0 };
+    save();
+    return s.stats[todayKey()];
+  },
+  /** 전체 기록 삭제 */
+  resetAllStats() {
+    const s = load();
+    s.stats = {};
+    save();
+  },
   /** 최근 n일 완료 수 (오래된 것 → 최신) */
   recentDays(n = 7) {
     const s = load();

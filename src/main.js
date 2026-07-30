@@ -494,6 +494,24 @@ ipcMain.handle('cal:test', async (_e, url) => {
   }
 });
 
+// ── 기록 ──────────────────────────────────────────────────
+function statsPayload() {
+  return { today: store.todayStats(), week: store.recentDays(7) };
+}
+ipcMain.handle('stats:get', () => statsPayload());
+ipcMain.handle('stats:reset-today', () => {
+  store.resetToday();
+  pushTick();
+  updateTray();
+  return statsPayload();
+});
+ipcMain.handle('stats:reset-all', () => {
+  store.resetAllStats();
+  pushTick();
+  updateTray();
+  return statsPayload();
+});
+
 // ── 업데이트 ──────────────────────────────────────────────
 ipcMain.handle('update:check', async () => { await updater.check(); return updater.getState(); });
 ipcMain.handle('update:state', () => updater.getState());

@@ -34,6 +34,11 @@ contextBridge.exposeInMainWorld('nunsseom', {
   calRefresh: () => ipcRenderer.invoke('cal:refresh'),
   calTest: (url) => ipcRenderer.invoke('cal:test', url),
 
+  // 기록
+  statsGet: () => ipcRenderer.invoke('stats:get'),
+  statsResetToday: () => ipcRenderer.invoke('stats:reset-today'),
+  statsResetAll: () => ipcRenderer.invoke('stats:reset-all'),
+
   // 업데이트
   updateCheck: () => ipcRenderer.invoke('update:check'),
   updateState: () => ipcRenderer.invoke('update:state'),

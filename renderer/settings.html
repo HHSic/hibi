@@ -208,6 +208,9 @@
   .mini[disabled] { opacity: 0.45; }
   .mini.ghost { background: transparent; color: var(--accent); }
   .mini.ghost:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  .mini.danger { color: #ff6b6b; }
+  .mini.danger:hover { background: rgba(255, 107, 107, 0.14); }
+  .mini.armed { color: #fff; background: #e0453f; }
 
   /* 캘린더 목록 */
   .cal { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 9px; padding: 10px 13px; }
@@ -286,6 +289,23 @@
         <button class="sw" id="autoLaunch" role="switch" aria-label="Windows 시작 시 자동 실행"></button>
       </div>
     </div>
+    <div class="sec">기록</div>
+    <div class="group">
+      <div class="col">
+        <div class="upline">
+          <span class="ver" id="st-today">오늘 —</span>
+          <button class="mini ghost" id="btn-reset-today">횟수 초기화</button>
+        </div>
+        <span class="lbl" id="st-week"></span>
+      </div>
+      <div class="col">
+        <div class="upline">
+          <span class="lbl">지난 기록까지 모두 지우기</span>
+          <button class="mini ghost danger" id="btn-reset-all">전체 삭제</button>
+        </div>
+      </div>
+    </div>
+
     <div class="sec">방해 금지</div>
     <div class="group">
       <div class="row toggle">
@@ -595,6 +615,44 @@
     }
   };
 
+  // ── 기록 ──────────────────────────────────────────
+  function paintStats(s) {
+    if (!s) return;
+    const t = s.today || { done: 0, skipped: 0 };
+    $('st-today').textContent = `오늘 ${t.done}회 완료 · ${t.skipped}회 건너뜀`;
+    const week = s.week || [];
+    const sum = week.reduce((a, b) => a + b, 0);
+    $('st-week').textContent = week.length ? `최근 7일 합계 ${sum}회` : '';
+  }
+
+  $('btn-reset-today').onclick = async () => {
+    paintStats(await window.nunsseom.statsResetToday());
+  };
+
+  // 전체 삭제는 되돌릴 수 없으므로 한 번 더 누르게 한다
+  let armed = false;
+  let armTimer = null;
+  const allBtn = $('btn-reset-all');
+  allBtn.onclick = async () => {
+    if (!armed) {
+      armed = true;
+      allBtn.textContent = '한 번 더 누르면 삭제';
+      allBtn.classList.add('armed');
+      clearTimeout(armTimer);
+      armTimer = setTimeout(() => {
+        armed = false;
+        allBtn.textContent = '전체 삭제';
+        allBtn.classList.remove('armed');
+      }, 4000);
+      return;
+    }
+    clearTimeout(armTimer);
+    armed = false;
+    allBtn.textContent = '전체 삭제';
+    allBtn.classList.remove('armed');
+    paintStats(await window.nunsseom.statsResetAll());
+  };
+
   // ── 업데이트 ──────────────────────────────────────
   function paintUpdate(s) {
     if (!s) return;
@@ -644,6 +702,7 @@
 
     renderCalendars(data.calendars, data.calendarStatus);
     paintUpdate(data.update);
+    window.nunsseom.statsGet().then(paintStats);
   });
 
   // ── 탭 ───────────────────────────────────────────
