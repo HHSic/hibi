@@ -1,8 +1,8 @@
 {
-  "name": "nunsseom",
-  "productName": "눈쉼",
-  "version": "0.1.4",
-  "description": "눈과 몸을 위한 휴식 리마인더 위젯",
+  "name": "hibi",
+  "productName": "Hibi",
+  "version": "0.1.5",
+  "description": "하루의 쉼과 일정을 챙기는 데스크톱 위젯",
   "main": "src/main.js",
   "author": "hyong",
   "license": "MIT",
@@ -20,8 +20,8 @@
   },
   "build": {
     "appId": "com.hyong.nunsseom",
-    "productName": "눈쉼",
-    "artifactName": "nunsseom-${version}-${arch}.${ext}",
+    "productName": "Hibi",
+    "artifactName": "hibi-${version}-${arch}.${ext}",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -30,7 +30,7 @@
       {
         "provider": "github",
         "owner": "HHSic",
-        "repo": "nunsseom"
+        "repo": "hibi"
       }
     ],
     "files": [
@@ -62,11 +62,11 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "눈쉼",
+      "shortcutName": "Hibi",
       "deleteAppDataOnUninstall": false
     },
     "portable": {
-      "artifactName": "nunsseom-${version}-portable.${ext}"
+      "artifactName": "hibi-${version}-portable.${ext}"
     }
   },
   "dependencies": {

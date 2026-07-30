@@ -60,7 +60,7 @@ function setEnabled(on) {
       shell.writeShortcutLink(p, 'create', {
         target: process.execPath,
         cwd: path.dirname(process.execPath),
-        description: '눈쉼 — 휴식 리마인더'
+        description: 'Hibi — 휴식 리마인더'
       });
     } else if (fs.existsSync(p)) {
       fs.unlinkSync(p);

@@ -6,6 +6,26 @@ const reminders = require('./reminders');
 
 const FILE = () => path.join(app.getPath('userData'), 'nunsseom.json');
 
+// 앱 이름(눈쉼 → Hibi)이 바뀌면 userData 폴더도 바뀐다.
+// 새 폴더에 설정이 없고 예전 폴더에 있으면 한 번만 복사해 온다.
+// (한 번 실행되면 새 파일이 생기므로 다시 실행되지 않는다)
+function migrateUserDataFolder() {
+  try {
+    const target = FILE();
+    if (fs.existsSync(target)) return;
+    const legacyDir = path.join(app.getPath('appData'), '눈쉼');
+    const legacy = path.join(legacyDir, 'nunsseom.json');
+    if (fs.existsSync(legacy)) {
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.copyFileSync(legacy, target);
+      console.log('[store] 이전 설정을 옮겨왔습니다:', legacy, '→', target);
+    }
+  } catch (e) {
+    console.warn('[store] 설정 이전 실패:', e.message);
+  }
+}
+migrateUserDataFolder();
+
 const DEFAULT_SETTINGS = {
   idlePauseSec: 120,   // 이 시간 이상 자리 비움이면 타이머 정지
   // 실시간 블러가 없으므로 틴트가 가독성을 담당한다.

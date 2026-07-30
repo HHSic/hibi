@@ -134,6 +134,9 @@ function createWidget() {
     query: glassQuery({ radius: String(store.settings.radius) })
   });
 
+  // 저장된 좌표가 지금 없는 모니터를 가리킬 수 있다 (모니터 구성 변경)
+  ensureOnScreen(widgetWin);
+
   widgetWin.on('moved', () => {
     const [x, y] = widgetWin.getPosition();
     store.setWidgetPos({ x, y });
@@ -359,11 +362,11 @@ function updateTray() {
   const mins = next ? Math.max(0, Math.ceil((next.at - Date.now()) / 60_000)) : 0;
   const up = updater.getState();
   tray.setToolTip(
-    state.paused ? '눈쉼 — 일시정지됨'
-      : state.hold ? `눈쉼 — 방해 금지 (${state.hold}) · 알림 대기 중`
-        : state.dnd ? `눈쉼 — 방해 금지 (${state.dnd})`
-          : next ? `눈쉼 — ${reminders.meta(next.id, custom).name} 약 ${mins}분 후`
-            : '눈쉼 — 켜진 알림 없음'
+    state.paused ? 'Hibi — 일시정지됨'
+      : state.hold ? `Hibi — 방해 금지 (${state.hold}) · 알림 대기 중`
+        : state.dnd ? `Hibi — 방해 금지 (${state.dnd})`
+          : next ? `Hibi — ${reminders.meta(next.id, custom).name} 약 ${mins}분 후`
+            : 'Hibi — 켜진 알림 없음'
   );
 
   const nowSub = scheduler.activeIds().map((id) => ({
@@ -377,7 +380,8 @@ function updateTray() {
       ? { label: '지금 알림 실행', submenu: nowSub }
       : { label: '지금 알림 실행', enabled: false },
     { type: 'separator' },
-    { label: '위젯 보이기/숨기기', click: toggleWidget },
+    { label: '위젯 보이기', click: revealWidget },
+    { label: '위젯 숨기기', click: () => widgetWin && !widgetWin.isDestroyed() && widgetWin.hide() },
     { label: '위젯 크기 초기화', click: resetWidgetSize },
     { label: '설정', click: openSettings },
     ...(up.status === 'ready'
@@ -396,7 +400,41 @@ function togglePause() {
 
 function toggleWidget() {
   if (!widgetWin || widgetWin.isDestroyed()) { createWidget(); return; }
-  widgetWin.isVisible() ? widgetWin.hide() : widgetWin.show();
+  if (widgetWin.isVisible()) widgetWin.hide();
+  else revealWidget();
+}
+
+/**
+ * 창이 어느 모니터에도 걸쳐 있지 않으면 기본 위치로 되돌린다.
+ * 모니터를 뺐다 꽂으면 저장된 좌표가 존재하지 않는 화면을 가리켜
+ * 위젯이 보이지 않는 곳에 남는다.
+ */
+function ensureOnScreen(win) {
+  if (!win || win.isDestroyed()) return;
+  const b = win.getBounds();
+  const visible = screen.getAllDisplays().some((d) => {
+    const w = d.workArea;
+    // 일부라도 겹치면 접근 가능하다고 본다
+    return b.x < w.x + w.width && b.x + b.width > w.x
+      && b.y < w.y + w.height && b.y + b.height > w.y;
+  });
+  if (visible) return;
+
+  const { workArea } = screen.getPrimaryDisplay();
+  const x = workArea.x + workArea.width - b.width - 20;
+  const y = workArea.y + 20;
+  win.setPosition(Math.round(x), Math.round(y));
+  store.setWidgetPos({ x: Math.round(x), y: Math.round(y) });
+  console.log('[widget] 화면 밖이라 기본 위치로 되돌렸습니다');
+}
+
+/** 트레이에서 위젯을 다시 불러올 때 — 보이게 하고, 화면 안으로, 맨 앞으로 */
+function revealWidget() {
+  if (!widgetWin || widgetWin.isDestroyed()) { createWidget(); return; }
+  ensureOnScreen(widgetWin);
+  widgetWin.show();
+  widgetWin.setAlwaysOnTop(true);
+  widgetWin.focus();
 }
 
 function resetWidgetSize() {
@@ -605,6 +643,8 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(() => {
     tray = new Tray(nativeImage.createFromPath(ICON));
+    // 트레이 아이콘을 더블클릭하면 위젯이 다시 나온다 (Windows 관례)
+    tray.on('double-click', revealWidget);
     // 예전 버전에서 설정값으로만 켜 두었던 경우를 실제 바로가기로 옮긴다
     if (app.isPackaged) {
       const on = autolaunch.migrate(store.settings.autoLaunch);

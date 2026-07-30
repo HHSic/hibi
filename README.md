@@ -1,4 +1,4 @@
-# 눈쉼
+# Hibi
 
 눈과 몸을 위한 휴식 리마인더 위젯 (Windows).
 
@@ -43,8 +43,8 @@ npm run dist
 
 | 파일 | 용도 |
 |---|---|
-| `nunsseom-0.1.0-x64.exe` | NSIS 설치 프로그램 (설치 위치 선택 가능, 바탕화면·시작메뉴 바로가기) |
-| `nunsseom-0.1.0-portable.exe` | 설치 없이 바로 실행 (USB 등) |
+| `hibi-0.1.5-x64.exe` | NSIS 설치 프로그램 (설치 위치 선택 가능, 바탕화면·시작메뉴 바로가기) |
+| `hibi-0.1.5-portable.exe` | 설치 없이 바로 실행 (USB 등) |
 
 폴더만 만들어 확인하려면 `npm run pack`.
 

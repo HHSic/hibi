@@ -3,7 +3,33 @@
 // electron-builder가 릴리스에 올린 latest.yml을 보고 판단한다.
 // 개발 중(패키징 전)에는 동작하지 않으므로 조용히 비활성화한다.
 
+const fs = require('fs');
+const path = require('path');
 const { app } = require('electron');
+
+/**
+ * 업데이트는 사용자가 보지 못하는 곳에서 일어나므로, 실패했을 때 남는 흔적이 필요하다.
+ * userData/update.log 에 최근 기록만 남긴다.
+ */
+function fileLogger() {
+  const file = path.join(app.getPath('userData'), 'update.log');
+  const write = (level, msg) => {
+    try {
+      const line = `${new Date().toISOString()} [${level}] ${msg}\n`;
+      // 파일이 커지면 잘라낸다
+      try {
+        if (fs.statSync(file).size > 256 * 1024) fs.writeFileSync(file, '');
+      } catch { /* 파일이 아직 없음 */ }
+      fs.appendFileSync(file, line);
+    } catch { /* 로그를 못 남겨도 업데이트는 계속 */ }
+  };
+  return {
+    info: (m) => write('info', m),
+    warn: (m) => write('warn', m),
+    error: (m) => write('error', m),
+    debug: () => {}
+  };
+}
 
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6시간마다
 const FIRST_CHECK_DELAY_MS = 20 * 1000;
@@ -41,9 +67,10 @@ function init({ onUpdate } = {}) {
     return;
   }
 
+  // 백그라운드에서 알아서 받고, 종료할 때 조용히 적용한다.
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
-  autoUpdater.logger = null;
+  autoUpdater.logger = fileLogger();
 
   autoUpdater.on('checking-for-update', () => setState({ status: 'checking', message: '확인 중…' }));
   autoUpdater.on('update-available', (info) => setState({
@@ -86,11 +113,17 @@ function startAuto(enabled) {
   timer = setInterval(() => check({ silent: true }), CHECK_INTERVAL_MS);
 }
 
-/** 내려받아 둔 업데이트를 지금 설치 */
+/**
+ * 내려받아 둔 업데이트를 지금 설치한다.
+ *
+ * 첫 인자가 isSilent다. false로 주면 NSIS 설치 마법사가 떠서
+ * "설치 파일을 다시 받아 새로 설치하는" 것처럼 보인다. true면 창 없이 적용되고
+ * 두 번째 인자(isForceRunAfter)로 앱이 다시 켜진다.
+ */
 function installNow() {
   if (autoUpdater && state.status === 'ready') {
     app.isQuitting = true;
-    autoUpdater.quitAndInstall(false, true);
+    autoUpdater.quitAndInstall(true, true);
   }
 }
 
