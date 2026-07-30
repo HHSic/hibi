@@ -28,6 +28,45 @@ const LABEL = {
   app: '지정한 앱'
 };
 
+// 자주 쓰이는 앱은 실행 파일 이름을 미리 담아 토글로 켜게 한다.
+// 직접 입력하면 이름을 틀려도 조용히 넘어가므로(예: 'teams' → 실제는 ms-teams.exe)
+// 검증된 이름을 목록으로 제공하는 편이 안전하다.
+const PRESETS = [
+  { id: 'zoom', name: 'Zoom', procs: ['zoom.exe'] },
+  { id: 'teams', name: 'Microsoft Teams', procs: ['ms-teams.exe', 'teams.exe'] },
+  { id: 'webex', name: 'Webex', procs: ['webex.exe', 'ciscocollabhost.exe', 'webexmta.exe'] },
+  { id: 'slack', name: 'Slack', procs: ['slack.exe'] },
+  { id: 'discord', name: 'Discord', procs: ['discord.exe'] },
+  { id: 'powerpoint', name: 'PowerPoint', procs: ['powerpnt.exe'] },
+  { id: 'obs', name: 'OBS Studio', procs: ['obs64.exe', 'obs32.exe'] },
+  { id: 'teamviewer', name: 'TeamViewer', procs: ['teamviewer.exe'] },
+  { id: 'anydesk', name: 'AnyDesk', procs: ['anydesk.exe'] }
+];
+
+const PRESET_BY_ID = new Map(PRESETS.map((p) => [p.id, p]));
+/** 실행 파일 이름 → 프리셋 id (구버전 설정 이전용) */
+const PRESET_BY_PROC = new Map();
+for (const p of PRESETS) {
+  for (const proc of p.procs) {
+    PRESET_BY_PROC.set(proc, p.id);
+    PRESET_BY_PROC.set(proc.replace(/\.exe$/, ''), p.id);
+  }
+}
+
+/** 프리셋 id와 직접 입력한 이름을 하나의 실행 파일 이름 목록으로 합친다 */
+function resolveApps({ presets = [], apps = [] } = {}) {
+  const out = new Set();
+  for (const id of presets) {
+    const p = PRESET_BY_ID.get(id);
+    if (p) for (const proc of p.procs) out.add(proc.toLowerCase());
+  }
+  for (const a of apps) {
+    const s = String(a || '').trim().toLowerCase();
+    if (s) out.add(s);
+  }
+  return [...out];
+}
+
 let api = null;
 let failed = false;
 
@@ -100,9 +139,18 @@ function foregroundProcessName() {
   }
 }
 
+/** 짧은 이름으로 부분 일치를 허용하면 오탐이 나므로 최소 길이를 둔다 */
+const MIN_FUZZY = 3;
+
+function matchesApp(fg, name) {
+  if (!fg || !name) return false;
+  if (fg === name || fg === `${name}.exe`) return true;
+  return name.length >= MIN_FUZZY && fg.includes(name);
+}
+
 /**
  * 지금 방해하면 안 되는 상황인가?
- * @param {{enabled:boolean, apps:string[]}} cfg
+ * @param {{enabled:boolean, presets?:string[], apps?:string[]}} cfg
  * @returns {{ blocked: boolean, reason: string|null }}
  */
 function check(cfg) {
@@ -111,14 +159,26 @@ function check(cfg) {
   const state = notificationState();
   if (BLOCKING.has(state)) return { blocked: true, reason: LABEL[state] };
 
-  const apps = (cfg.apps || []).map((s) => String(s).trim().toLowerCase()).filter(Boolean);
-  if (apps.length) {
+  const names = resolveApps(cfg);
+  if (names.length) {
     const fg = foregroundProcessName();
-    if (fg && apps.some((a) => fg === a || fg === `${a}.exe` || fg.includes(a))) {
-      return { blocked: true, reason: LABEL.app };
+    if (fg) {
+      // 어떤 앱 때문인지 이름으로 알려준다
+      for (const p of PRESETS) {
+        if (!(cfg.presets || []).includes(p.id)) continue;
+        if (p.procs.some((proc) => matchesApp(fg, proc.toLowerCase()))) {
+          return { blocked: true, reason: p.name };
+        }
+      }
+      if (names.some((n) => matchesApp(fg, n))) {
+        return { blocked: true, reason: fg.replace(/\.exe$/, '') };
+      }
     }
   }
   return { blocked: false, reason: null };
 }
 
-module.exports = { check, notificationState, foregroundProcessName };
+module.exports = {
+  check, notificationState, foregroundProcessName,
+  PRESETS, PRESET_BY_PROC, resolveApps
+};

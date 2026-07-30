@@ -51,7 +51,8 @@ const state = {
   breakIds: [],
   breakEndsAt: 0,
   breakStartedAt: 0,
-  hold: null          // 지금 알림을 미루는 이유 ('발표 모드', '회의 중' 등)
+  hold: null,         // 알림이 밀린 상태 (때가 됐는데 방해 금지라 못 띄움)
+  dnd: null           // 방해 금지가 켜진 이유 ('발표 모드', 'Zoom' 등)
 };
 
 // 캘린더 일정 캐시
@@ -81,16 +82,28 @@ async function refreshCalendars() {
 /**
  * 지금 알림을 띄우면 안 되는 이유가 있으면 문자열로, 없으면 null.
  * 전체화면·발표·집중지원과 캘린더 일정을 함께 본다.
+ * 매 초 네이티브 호출을 반복하지 않도록 잠깐 캐시한다.
  */
+const DND_CACHE_MS = 2000;
+let dndCache = { at: 0, reason: null };
+
 function holdReason() {
+  const now = Date.now();
+  if (now - dndCache.at < DND_CACHE_MS) return dndCache.reason;
+
   const s = store.settings;
-  const d = dnd.check({ enabled: s.dndEnabled, apps: s.dndApps });
-  if (d.blocked) return d.reason;
-  if (s.calendarBusy) {
+  let reason = null;
+
+  const d = dnd.check({ enabled: s.dndEnabled, presets: s.dndPresets, apps: s.dndApps });
+  if (d.blocked) {
+    reason = d.reason;
+  } else if (s.calendarBusy) {
     const ev = calendar.currentEvent(cal.occurrences);
-    if (ev) return ev.summary ? `일정: ${ev.summary}` : '일정 중';
+    if (ev) reason = ev.summary ? `일정: ${ev.summary}` : '일정 중';
   }
-  return null;
+
+  dndCache = { at: now, reason };
+  return reason;
 }
 
 // ── 위젯 ──────────────────────────────────────────────────
@@ -264,14 +277,16 @@ function tick() {
   if (powerMonitor.getSystemIdleTime() >= store.settings.idlePauseSec) {
     scheduler.postponeAll(1000); // 자리 비움 동안 정지
     state.hold = null;
+    state.dnd = null;
   } else {
+    // 알림이 밀릴 때만이 아니라 방해 금지가 켜진 동안 계속 상태를 알린다
+    state.dnd = holdReason();
     const due = scheduler.due(now);
     if (due.length) {
       // 발표·전체화면·회의 중이면 끝날 때까지 카운트다운을 붙잡아 둔다.
       // 미룬 알림은 상황이 끝나는 즉시 이어서 실행된다.
-      const reason = holdReason();
-      if (reason) {
-        state.hold = reason;
+      if (state.dnd) {
+        state.hold = state.dnd;
         scheduler.postponeAll(1000);
       } else {
         state.hold = null;
@@ -307,6 +322,7 @@ function pushTick() {
       onBreak: state.onBreak,
       idle: powerMonitor.getSystemIdleTime() >= store.settings.idlePauseSec,
       hold: state.hold,
+      dnd: state.dnd,
       today: store.todayStats(),
       upcoming: upcomingList(8),
       // 다음 휴식에 함께 묶일 종류들 — 위젯 칩에서 강조된다
@@ -343,9 +359,10 @@ function updateTray() {
   const up = updater.getState();
   tray.setToolTip(
     state.paused ? '눈쉼 — 일시정지됨'
-      : state.hold ? `눈쉼 — ${state.hold} (대기 중)`
-        : next ? `눈쉼 — ${reminders.meta(next.id, custom).name} 약 ${mins}분 후`
-          : '눈쉼 — 켜진 알림 없음'
+      : state.hold ? `눈쉼 — 방해 금지 (${state.hold}) · 알림 대기 중`
+        : state.dnd ? `눈쉼 — 방해 금지 (${state.dnd})`
+          : next ? `눈쉼 — ${reminders.meta(next.id, custom).name} 약 ${mins}분 후`
+            : '눈쉼 — 켜진 알림 없음'
   );
 
   const nowSub = scheduler.activeIds().map((id) => ({
@@ -445,6 +462,7 @@ ipcMain.handle('settings:get', () => ({
   custom: store.custom,
   calendars: store.calendars,
   calendarStatus: calendarStatus(),
+  dndPresets: dnd.PRESETS,
   update: updater.getState(),
   types: reminders.TYPES.map((t) => ({
     id: t.id, name: t.name, glyph: t.glyph, color: t.color, kind: t.kind, headline: t.headline

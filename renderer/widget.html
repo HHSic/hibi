@@ -103,6 +103,8 @@
     pointer-events: none;
   }
   .paused .prog { filter: saturate(0.12); }
+  .quiet .prog { filter: saturate(0.45); }
+  .quiet .head .g { color: var(--secondary); }
 
   /* ── 내용 ── */
   .inner {
@@ -133,6 +135,14 @@
   /* 좁은 크기대에서 이름을 다 넣으면 전부 잘리므로 추가 알림은 글리프만 보여준다 */
   .r-base .head .tag:not(:first-child) .nm,
   .r-tall .head .tag:not(:first-child) .nm { display: none; }
+
+  /* 방해 금지 이유 — 자리가 넉넉한 크기대에서만 덧붙인다 */
+  .head .tag.why { display: none; color: var(--tertiary); font-weight: 500; }
+  .head .tag.why::before { content: "·"; margin-right: 0.25rem; }
+  .r-wide .head .tag.why,
+  .r-large .head .tag.why { display: flex; }
+  .r-wide .head .tag.why .nm,
+  .r-large .head .tag.why .nm { display: block; }
   .head .ct { color: var(--tertiary); font-weight: 500; white-space: nowrap; }
   .head .ct b { color: color-mix(in srgb, var(--tint) 80%, white); font-weight: 700; }
   .paused .head .g { color: var(--tertiary); }
@@ -564,8 +574,16 @@
 
     if (d.paused) { addTag(d.type && d.type.glyph, '일시정지됨', null); return; }
     if (d.idle) { addTag(d.type && d.type.glyph, '자리 비움', null); return; }
-    // 발표·전체화면·회의 중이라 알림을 붙잡고 있는 상태
-    if (d.hold) { addTag('pause', d.hold, null); return; }
+
+    // 방해 금지 — 알림이 밀렸는지와 무관하게 켜져 있는 동안 계속 알린다.
+    // 이유(발표 모드 / Zoom / 일정 이름)는 넓은 크기에서만 덧붙인다.
+    const quiet = d.hold || d.dnd;
+    if (quiet) {
+      addTag('sleep', d.hold ? '방해 금지 · 대기 중' : '방해 금지', null);
+      const why = addTag(null, quiet, null, 'why');
+      why.title = quiet;
+      return;
+    }
 
     addTag(d.type.glyph, d.type.name, d.type.color,
       d.remaining <= IMMINENT_SEC ? 'imminent' : null);
@@ -680,7 +698,9 @@
     b.textContent = String(d.today.done);
     ct.append(b, '회');
 
+    // 방해 금지는 완전히 멈춘 상태가 아니므로 paused보다 약하게 표시한다
     card.classList.toggle('paused', d.paused || d.idle || !!d.hold);
+    card.classList.toggle('quiet', !d.paused && !d.idle && !d.hold && !!d.dnd);
     setPauseIcon(d.paused);
 
     if (d.upcoming) {

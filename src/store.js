@@ -16,7 +16,8 @@ const DEFAULT_SETTINGS = {
 
   // 방해 금지 — 전체화면/발표/집중지원 중이면 알림을 미룬다
   dndEnabled: true,
-  dndApps: [],         // 추가로 감지할 실행 파일 이름 (예: 'zoom', 'powerpnt')
+  dndPresets: [],      // 목록에서 켠 앱 id (dnd.PRESETS 참고)
+  dndApps: [],         // 직접 입력한 실행 파일 이름
 
   // 캘린더 — 일정 중에는 알림을 미룬다
   calendarBusy: true,
@@ -29,7 +30,8 @@ let cache = null;
 // 저장 포맷 버전. 창 높이 계산 방식이 바뀌면 올린다.
 //  1 → 창 높이 = 카드 + 여백
 //  2 → 창 높이 = 카드 + 여백 + 호버 컨트롤 띠
-const LAYOUT_VERSION = 2;
+//  3 → 방해 금지 앱을 자유 입력에서 프리셋 목록 + 직접 입력으로 분리
+const LAYOUT_VERSION = 3;
 
 function blank() {
   return {
@@ -76,10 +78,28 @@ function load() {
  */
 function migrate(s) {
   if (s.layoutVersion >= LAYOUT_VERSION) return;
-  if (s.widgetSize && s.widgetSize.height) {
+
+  if (s.layoutVersion < 2 && s.widgetSize && s.widgetSize.height) {
     const { CONTROLS } = require('./glass');
     s.widgetSize = { ...s.widgetSize, height: s.widgetSize.height + CONTROLS };
   }
+
+  // 자유 입력해 둔 이름 중 알려진 앱은 프리셋 토글로 옮긴다
+  if (s.layoutVersion < 3 && Array.isArray(s.settings.dndApps) && s.settings.dndApps.length) {
+    const { PRESET_BY_PROC } = require('./dnd');
+    const presets = new Set(s.settings.dndPresets || []);
+    const rest = [];
+    for (const raw of s.settings.dndApps) {
+      const name = String(raw || '').trim().toLowerCase();
+      if (!name) continue;
+      const id = PRESET_BY_PROC.get(name);
+      if (id) presets.add(id);
+      else rest.push(name);
+    }
+    s.settings.dndPresets = [...presets];
+    s.settings.dndApps = rest;
+  }
+
   s.layoutVersion = LAYOUT_VERSION;
   save();
 }

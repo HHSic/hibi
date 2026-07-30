@@ -313,9 +313,18 @@
         <span></span>
         <button class="sw" id="dndEnabled" role="switch" aria-label="방해 금지 감지"></button>
       </div>
+    </div>
+
+    <div class="sec">이 앱이 켜져 있으면 미루기</div>
+    <div class="group" id="dnd-list"></div>
+
+    <div class="group" id="dnd-add-group">
       <div class="col">
-        <span class="lbl">추가로 감지할 앱 (쉼표로 구분)</span>
-        <input type="text" id="dndApps" placeholder="zoom, powerpnt, obs">
+        <span class="lbl">목록에 없는 앱 (실행 파일 이름)</span>
+        <div class="upline">
+          <input type="text" id="dnd-custom" placeholder="예: figma.exe">
+          <button class="mini" id="btn-dnd-add">추가</button>
+        </div>
       </div>
     </div>
 
@@ -512,6 +521,94 @@
     el.onclick = () => { on = !on; paint(); window.nunsseom.setApp({ [key]: on }); };
   }
 
+  // ── 방해 금지 앱 목록 ─────────────────────────────
+  function renderDndApps() {
+    const host = $('dnd-list');
+    host.textContent = '';
+    const on = new Set(data.settings.dndPresets || []);
+    const custom = data.settings.dndApps || [];
+
+    const row = (label, sub, isOn, onToggle, onDelete) => {
+      const el = document.createElement('div');
+      el.className = 'cal';
+
+      const who = document.createElement('div');
+      who.className = 'who';
+      const b = document.createElement('b');
+      b.textContent = label;
+      who.append(b);
+      if (sub) {
+        const s = document.createElement('small');
+        s.textContent = sub;
+        who.append(s);
+      }
+
+      const sw = document.createElement('button');
+      sw.className = 'sw' + (isOn ? ' on' : '');
+      sw.setAttribute('role', 'switch');
+      sw.setAttribute('aria-checked', String(isOn));
+      sw.setAttribute('aria-label', `${label} 감지`);
+      sw.onclick = onToggle;
+
+      el.append(who, sw);
+
+      if (onDelete) {
+        const del = document.createElement('button');
+        del.className = 'del';
+        del.setAttribute('aria-label', `${label} 삭제`);
+        del.append(window.nunsIcon('close'));
+        del.onclick = onDelete;
+        el.append(del);
+      } else {
+        el.append(document.createElement('span'));
+      }
+      host.append(el);
+    };
+
+    for (const p of data.dndPresets || []) {
+      row(p.name, p.procs.join(', '), on.has(p.id), () => {
+        const next = new Set(data.settings.dndPresets || []);
+        if (next.has(p.id)) next.delete(p.id); else next.add(p.id);
+        data.settings.dndPresets = [...next];
+        window.nunsseom.setApp({ dndPresets: data.settings.dndPresets });
+        renderDndApps();
+      });
+    }
+
+    // 직접 추가한 앱은 항상 켜진 상태이고, 끄는 대신 삭제한다
+    for (const name of custom) {
+      row(name, '직접 추가', true, () => removeCustom(name), () => removeCustom(name));
+    }
+
+    if (!(data.dndPresets || []).length && !custom.length) {
+      const p = document.createElement('div');
+      p.className = 'empty';
+      p.textContent = '감지할 앱이 없습니다.';
+      host.append(p);
+    }
+  }
+
+  function removeCustom(name) {
+    data.settings.dndApps = (data.settings.dndApps || []).filter((n) => n !== name);
+    window.nunsseom.setApp({ dndApps: data.settings.dndApps });
+    renderDndApps();
+  }
+
+  $('btn-dnd-add').onclick = () => {
+    const input = $('dnd-custom');
+    const name = input.value.trim().toLowerCase();
+    if (!name) return;
+    const list = data.settings.dndApps || [];
+    if (!list.includes(name)) list.push(name);
+    data.settings.dndApps = list;
+    window.nunsseom.setApp({ dndApps: list });
+    input.value = '';
+    renderDndApps();
+  };
+  $('dnd-custom').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') $('btn-dnd-add').click();
+  });
+
   // ── 캘린더 ────────────────────────────────────────
   function fmtWhen(ms) {
     const d = new Date(ms);
@@ -692,13 +789,7 @@
       bindSwitch(key);
     }
 
-    // 감지할 앱 목록
-    const apps = $('dndApps');
-    apps.value = (data.settings.dndApps || []).join(', ');
-    apps.onchange = () => {
-      const list = apps.value.split(',').map((s) => s.trim()).filter(Boolean);
-      window.nunsseom.setApp({ dndApps: list });
-    };
+    renderDndApps();
 
     renderCalendars(data.calendars, data.calendarStatus);
     paintUpdate(data.update);
