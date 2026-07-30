@@ -318,6 +318,42 @@
   .controls svg { width: 0.8125rem; height: 0.8125rem; display: block; }
   .controls button:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--tint) 70%, transparent); }
 
+  /* ── 업데이트 알림 칩 ──
+     카드 우측 상단 구석에 조용히 뜬다. 한 번 누르면 확인, 한 번 더 누르면 설치. */
+  .upchip {
+    all: unset;
+    cursor: default;
+    position: absolute;
+    top: 0.5rem; right: 0.5rem;
+    z-index: 8;
+    display: none;
+    align-items: center;
+    gap: 0.25rem;
+    font-family: inherit;
+    font-size: 0.625rem;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    color: color-mix(in srgb, var(--tint) 90%, white);
+    background: color-mix(in srgb, var(--tint) 22%, transparent);
+    box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--tint) 45%, transparent);
+    padding: 0.1875rem 0.4375rem;
+    border-radius: 999px;
+    max-width: calc(100% - 1rem);
+    white-space: nowrap;
+    animation: upfade 0.4s ease both;
+  }
+  .card.has-update .upchip { display: inline-flex; }
+  /* 칩이 뜨면 같은 자리의 오늘 횟수는 양보한다 */
+  .card.has-update .head .ct { display: none; }
+  .upchip svg { width: 0.625rem; height: 0.625rem; flex: none; }
+  .upchip:hover { background: color-mix(in srgb, var(--tint) 34%, transparent); }
+  .upchip.armed {
+    color: #fff;
+    background: color-mix(in srgb, var(--tint) 88%, black);
+    box-shadow: none;
+  }
+  @keyframes upfade { from { opacity: 0; transform: translateY(-3px); } }
+
   /* ── 리사이즈 그립 ── */
   .grip {
     position: absolute; right: 0; bottom: 0;
@@ -356,6 +392,8 @@
       <div class="sh"><span>예정된 알림</span><span id="sheet-hint">닫기</span></div>
       <div class="rows" id="sheet-rows"></div>
     </div>
+
+    <button class="upchip" id="upchip" title="업데이트 설치"></button>
 
     <div class="grip" id="grip" title="드래그해서 크기 조절">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
@@ -445,6 +483,56 @@
     $('btn-pause').textContent = '';
     $('btn-pause').append(paused ? window.nunsIconFilled('play') : window.nunsIcon('pause'));
   }
+
+  // ── 업데이트 칩 ────────────────────────────────────
+  // 실수로 재시작되지 않도록 두 번 누르게 한다.
+  // 첫 tick이 동기로 들어올 수 있으므로 tick 핸들러보다 먼저 선언해 둔다.
+  const upchip = $('upchip');
+  let upVersion = null;
+  let upArmed = false;
+  let upTimer = null;
+
+  function paintChip(label, armed) {
+    upchip.textContent = '';
+    upchip.append(window.nunsIcon(armed ? 'check' : 'download'));
+    const t = document.createElement('span');
+    t.textContent = label;
+    upchip.append(t);
+    upchip.classList.toggle('armed', armed);
+  }
+
+  function showUpdate(info) {
+    const card = $('card');
+    if (!info || !info.ready) {
+      card.classList.remove('has-update');
+      upVersion = null;
+      return;
+    }
+    if (upVersion === info.version) return; // 이미 표시 중
+    upVersion = info.version;
+    upArmed = false;
+    paintChip(`업데이트 ${info.version}`, false);
+    card.classList.add('has-update');
+  }
+
+  upchip.onclick = (e) => {
+    e.stopPropagation();
+    if (!upArmed) {
+      upArmed = true;
+      paintChip('설치하고 재시작', true);
+      clearTimeout(upTimer);
+      upTimer = setTimeout(() => {
+        upArmed = false;
+        paintChip(`업데이트 ${upVersion}`, false);
+      }, 5000);
+      return;
+    }
+    clearTimeout(upTimer);
+    paintChip('설치 중…', true);
+    window.nunsseom.updateInstall();
+  };
+  // 칩을 눌러도 카드 클릭(시트 열기)이 따라오지 않게
+  upchip.addEventListener('pointerdown', (e) => e.stopPropagation());
 
   // ── 렌더 ──────────────────────────────────────────
   let lastTypeId = null;
@@ -599,6 +687,7 @@
       renderChips(d.upcoming, d.bundle && d.bundle.length ? d.bundle : [d.type.id]);
       renderSheet(d.upcoming);
     }
+    showUpdate(d.update);
     if (d.week) renderWeek(d.week);
   });
 

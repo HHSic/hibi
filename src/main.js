@@ -9,6 +9,7 @@ const reminders = require('./reminders');
 const dnd = require('./dnd');
 const calendar = require('./calendar');
 const updater = require('./updater');
+const session = require('./session');
 
 const ICON = path.join(__dirname, '..', 'assets', 'tray.png');
 const PRELOAD = path.join(__dirname, 'preload.js');
@@ -310,7 +311,11 @@ function pushTick() {
       upcoming: upcomingList(8),
       // 다음 휴식에 함께 묶일 종류들 — 위젯 칩에서 강조된다
       bundle: scheduler.nextBundle(),
-      week: store.recentDays(7)
+      week: store.recentDays(7),
+      update: (() => {
+        const u = updater.getState();
+        return u.status === 'ready' ? { ready: true, version: u.newVersion } : null;
+      })()
     };
   }
   widgetWin.webContents.send('tick', payload);
@@ -358,7 +363,7 @@ function updateTray() {
     { label: '위젯 크기 초기화', click: resetWidgetSize },
     { label: '설정', click: openSettings },
     ...(up.status === 'ready'
-      ? [{ type: 'separator' }, { label: `업데이트 ${up.newVersion} 설치하고 다시 시작`, click: () => updater.installNow() }]
+      ? [{ type: 'separator' }, { label: `업데이트 ${up.newVersion} 설치하고 다시 시작`, click: installUpdate }]
       : []),
     { type: 'separator' },
     { label: '종료', click: () => { app.isQuitting = true; app.quit(); } }
@@ -515,7 +520,37 @@ ipcMain.handle('stats:reset-all', () => {
 // ── 업데이트 ──────────────────────────────────────────────
 ipcMain.handle('update:check', async () => { await updater.check(); return updater.getState(); });
 ipcMain.handle('update:state', () => updater.getState());
-ipcMain.on('update:install', () => updater.installNow());
+ipcMain.on('update:install', installUpdate);
+// ── 세션 유지 ─────────────────────────────────────────────
+// 업데이트로 앱이 다시 시작돼도 카운트다운이 처음부터 돌지 않게, 종료 직전 상태를 저장한다.
+function saveSession() {
+  try {
+    store.setSession(session.capture({
+      paused: state.paused,
+      widgetHidden: !!(widgetWin && !widgetWin.isDestroyed() && !widgetWin.isVisible()),
+      nextAt: Object.fromEntries(scheduler.nextAt)
+    }));
+  } catch (e) {
+    console.warn('[session] save failed:', e.message);
+  }
+}
+
+/** @returns {{restored:number, widgetHidden:boolean}|null} */
+function restoreSession() {
+  const p = session.plan(store.session, [...scheduler.nextAt.keys()]);
+  store.clearSession();
+  if (!p) return null;
+  state.paused = p.paused;
+  for (const [id, at] of Object.entries(p.nextAt)) scheduler.nextAt.set(id, at);
+  return { restored: p.restored, widgetHidden: p.widgetHidden };
+}
+
+/** 업데이트 설치 — 재시작 후 이어가도록 상태를 먼저 저장한다 */
+function installUpdate() {
+  saveSession();
+  updater.installNow();
+}
+
 /** Windows 로그인 시 자동 실행 (패키징된 앱에서만 의미가 있다) */
 function applyAutoLaunch(on) {
   try {
@@ -554,9 +589,14 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     tray = new Tray(nativeImage.createFromPath(ICON));
     if (app.isPackaged) applyAutoLaunch(store.settings.autoLaunch);
+
     scheduler.reset();
+    const resumed = restoreSession();
+    if (resumed) console.log(`[session] 이전 상태 이어가기 (알림 ${resumed.restored}개)`);
+
     updateTray();
     createWidget();
+    if (resumed && resumed.widgetHidden) widgetWin.hide();
     setInterval(tick, 1000);
     setInterval(updateTray, 30_000);
 
@@ -570,6 +610,10 @@ if (!app.requestSingleInstanceLock()) {
       }
     });
     updater.startAuto(store.settings.autoUpdate);
+
+    // 강제 종료로 세션을 잃지 않게 주기적으로도 저장한다
+    setInterval(saveSession, 60_000);
+    app.on('before-quit', saveSession);
 
     // 개발용: NUNS_DEV=settings,break 로 창을 바로 띄워 확인한다
     const dev = (process.env.NUNS_DEV || '').split(',').map((s) => s.trim());

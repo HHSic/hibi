@@ -1,7 +1,7 @@
 {
   "name": "nunsseom",
   "productName": "눈쉼",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "눈과 몸을 위한 휴식 리마인더 위젯",
   "main": "src/main.js",
   "author": "hyong",
@@ -10,7 +10,8 @@
     "start": "electron .",
     "dist": "electron-builder --win -p never",
     "release": "electron-builder --win -p always",
-    "pack": "electron-builder --win --dir"
+    "pack": "electron-builder --win --dir",
+    "ship": "node scripts/ship.js"
   },
   "devDependencies": {
     "electron": "^33.0.0",

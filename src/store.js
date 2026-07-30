@@ -40,7 +40,8 @@ function blank() {
     calendars: [],       // [{ id, name, url, enabled }]
     stats: {},           // { 'YYYY-MM-DD': { done, skipped } }
     widgetPos: null,
-    widgetSize: null
+    widgetSize: null,
+    session: null        // 종료 직전 상태 (업데이트 재시작 후 이어가기용)
   };
 }
 
@@ -59,6 +60,7 @@ function load() {
       stats: raw.stats || {},
       widgetPos: raw.widgetPos || null,
       widgetSize: raw.widgetSize || null,
+      session: raw.session || null,
       layoutVersion: raw.layoutVersion || 1
     };
     migrate(cache);
@@ -159,6 +161,10 @@ module.exports = {
     save();
     return s.calendars;
   },
+
+  get session() { return load().session; },
+  setSession(s) { load().session = s; save(); },
+  clearSession() { load().session = null; save(); },
 
   get widgetPos() { return load().widgetPos; },
   setWidgetPos(pos) { load().widgetPos = pos; save(); },
