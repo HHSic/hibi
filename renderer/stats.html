@@ -72,6 +72,9 @@
   .tabs {
     -webkit-app-region: no-drag; flex: none;
     display: flex; gap: 4px; padding: 4px 16px 6px; overflow-x: auto;
+    scroll-behavior: smooth;
+    /* 잘린 탭이 더 있음을 알리는 양끝 페이드 */
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
   }
   .tabs::-webkit-scrollbar { display: none; }
   .tab {
@@ -202,6 +205,11 @@
   let current = params.get('focus') || null;   // 선택된 종류 id (null = 전체)
   let weeks = 15;
 
+  // 세로 휠을 탭 가로 스크롤로 (탭이 많을 때 마우스로도 넘길 수 있게)
+  $('tabs').addEventListener('wheel', (e) => {
+    if (e.deltaY !== 0) { $('tabs').scrollLeft += e.deltaY; e.preventDefault(); }
+  }, { passive: false });
+
   $('btn-close').append(window.nunsIcon('close'));
   $('btn-close').onclick = () => window.nunsseom.statsClose();
   window.addEventListener('keydown', (e) => { if (e.key === 'Escape') window.nunsseom.statsClose(); });
@@ -217,26 +225,46 @@
     return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
   }
 
+  // 최근 본 종류를 앞에 두기 위한 순서 (id 배열, 최근 것 먼저)
+  let mru = [];
+
   function renderTabs(tabs) {
     const host = $('tabs');
     host.textContent = '';
+    let onEl = null;
     const mk = (id, name, glyph, emoji, color) => {
+      const on = (current || null) === (id || null);
       const b = document.createElement('button');
-      b.className = 'tab' + ((current || null) === (id || null) ? ' on' : '');
-      if (color && (current || null) === (id || null)) b.style.background = color;
+      b.className = 'tab' + (on ? ' on' : '');
+      if (color && on) b.style.background = color;
       if (glyph || emoji) {
         const g = window.nunsMark(emoji ? { emoji } : glyph);
-        if (color) g.style.color = (current || null) === (id || null) ? 'inherit' : color;
+        if (color) g.style.color = on ? 'inherit' : color;
         b.append(g);
       }
       const t = document.createElement('span');
       t.textContent = name;
       b.append(t);
-      b.onclick = () => { current = id || null; load(); };
+      b.onclick = () => {
+        if (id) { mru = [id, ...mru.filter((x) => x !== id)]; } // 방금 본 것을 맨 앞으로
+        current = id || null;
+        load();
+      };
       host.append(b);
+      if (on) onEl = b;
     };
+
     mk(null, '전체', 'eye', null, 'var(--accent)');
-    for (const t of tabs) mk(t.id, t.name, t.glyph, t.emoji, t.color);
+
+    // 최근 본 순서로 종류 탭을 정렬 (mru에 있는 것 먼저, 나머지는 원래 순서)
+    const byId = new Map(tabs.map((t) => [t.id, t]));
+    const ordered = [];
+    for (const id of mru) if (byId.has(id)) { ordered.push(byId.get(id)); byId.delete(id); }
+    for (const t of tabs) if (byId.has(t.id)) ordered.push(t);
+    for (const t of ordered) mk(t.id, t.name, t.glyph, t.emoji, t.color);
+
+    // 선택된 탭이 잘려 있으면 보이게 스크롤
+    if (onEl) onEl.scrollIntoView({ inline: 'center', block: 'nearest' });
   }
 
   function paintGrass(cells, max, accent) {

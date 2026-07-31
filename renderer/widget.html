@@ -746,11 +746,20 @@
 
   cardEl.addEventListener('pointerdown', async (e) => {
     if (e.button !== 0) return;
-    if (e.target.closest('.ctlwrap, .grip')) return;
+    // 컨트롤·그립·시트 위에서는 카드 이동/토글 로직을 돌리지 않는다.
+    // (시트를 포함하지 않으면 카드가 포인터를 가로채 시트 버튼 클릭이 먹힌다)
+    if (e.target.closest('.ctlwrap, .grip, .sheet')) return;
     dragging = false;
     const pos = await window.nunsseom.getWidgetPos();
     press = { sx: e.screenX, sy: e.screenY, x: pos.x, y: pos.y };
     try { cardEl.setPointerCapture(e.pointerId); } catch {}
+  });
+
+  // 시트가 열린 상태에서 빈 곳(버튼·행이 아닌 곳)을 누르면 닫는다
+  $('sheet').addEventListener('pointerdown', (e) => {
+    if (!e.target.closest('#sheet-stats, .rows .row')) {
+      cardEl.classList.remove('open');
+    }
   });
 
   cardEl.addEventListener('pointermove', (e) => {

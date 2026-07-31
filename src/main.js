@@ -124,7 +124,9 @@ function createWidget() {
     maxWidth: WIDGET_MAX.width,
     maxHeight: WIDGET_MAX.height,
     frame: false,
-    resizable: true,
+    // resizable:true면 프레임 없는 창 가장자리에 OS 네이티브 리사이즈 테두리가 붙어
+    // 투명 여백을 누를 때 창이 멋대로 커진다. 그립으로 setSize는 이 값과 무관하게 동작한다.
+    resizable: false,
     alwaysOnTop: true,
     skipTaskbar: true,
     ...glass.windowOptions(),
