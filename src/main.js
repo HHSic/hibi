@@ -472,7 +472,7 @@ function openStats(focusType) {
     return;
   }
   statsWin = new BrowserWindow({
-    width: 380 + PAD,
+    width: 316 + PAD,      // 15주 잔디에 맞춰 폭을 좁게 (더 긴 기간은 가로 스크롤)
     height: 452 + PAD,
     frame: false,
     resizable: false,
@@ -701,6 +701,31 @@ ipcMain.on('settings:set-reminder', (_e, { id, patch }) => {
   pushTick();
 });
 ipcMain.on('settings:close', () => settingsWin && settingsWin.close());
+
+// 사용자 지정 알림
+ipcMain.handle('settings:custom-add', (_e, def) => {
+  const { id, custom } = store.addCustom(def);
+  scheduler.sync();
+  scheduler.schedule(id);
+  updateTray();
+  pushTick();
+  return custom;
+});
+ipcMain.handle('settings:custom-update', (_e, { id, patch }) => {
+  store.setCustom(id, patch);
+  scheduler.sync();
+  if (patch && patch.intervalMin != null) scheduler.schedule(id);
+  updateTray();
+  pushTick();
+  return store.custom;
+});
+ipcMain.handle('settings:custom-remove', (_e, id) => {
+  store.setCustom(id, null);
+  scheduler.sync();
+  updateTray();
+  pushTick();
+  return store.custom;
+});
 
 // ── 라이프사이클 ──────────────────────────────────────────
 if (!app.requestSingleInstanceLock()) {

@@ -34,6 +34,9 @@ contextBridge.exposeInMainWorld('nunsseom', {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setApp: (patch) => ipcRenderer.send('settings:set-app', patch),
   setReminder: (id, patch) => ipcRenderer.send('settings:set-reminder', { id, patch }),
+  customAdd: (def) => ipcRenderer.invoke('settings:custom-add', def),
+  customUpdate: (id, patch) => ipcRenderer.invoke('settings:custom-update', { id, patch }),
+  customRemove: (id) => ipcRenderer.invoke('settings:custom-remove', id),
   closeSettings: () => ipcRenderer.send('settings:close'),
 
   // 캘린더

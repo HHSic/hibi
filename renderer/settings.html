@@ -137,6 +137,7 @@
   .rem { display: grid; grid-template-columns: 26px 1fr auto auto; align-items: center; gap: 11px; padding: 10px 13px; }
   .rem + .rem { box-shadow: inset 0 0.5px 0 var(--separator); }
   .rem .g { width: 17px; height: 17px; justify-self: center; }
+  .rem .g.emoji { font-size: 15px; display: grid; place-items: center; line-height: 1; }
   .rem .nm { font-size: 13.5px; font-weight: 540; }
   .rem .nm small { display: block; font-size: 11px; font-weight: 400; color: var(--tertiary); margin-top: 1px; }
   .rem .val { font-size: 11.5px; color: var(--tertiary); font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -169,6 +170,38 @@
   input[type=range] { width: 100%; accent-color: var(--rc, var(--accent)); height: 18px; }
 
   .rem-wrap + .rem-wrap { box-shadow: inset 0 0.5px 0 var(--separator); }
+
+  /* 새 알림 만들기 버튼 */
+  .add-btn {
+    all: unset; cursor: default; display: block; width: 100%; text-align: center;
+    margin-top: 8px; padding: 10px 0; border-radius: 11px;
+    font-size: 12.5px; font-weight: 600; color: var(--accent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+  .add-btn:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+  /* 사용자 지정 알림 편집 */
+  .cust-name {
+    all: unset; font-family: inherit; font-size: 13px; color: var(--label);
+    background: rgba(255,255,255,0.07); box-shadow: inset 0 0 0 0.5px var(--separator);
+    border-radius: 8px; padding: 6px 10px; width: 100%; box-sizing: border-box;
+  }
+  :root[data-theme="light"] .cust-name { background: rgba(0,0,0,0.05); }
+  .cust-name:focus { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent); }
+  .emoji-grid {
+    display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; margin-top: 8px;
+    max-height: 120px; overflow-y: auto;
+  }
+  .emoji-grid button {
+    all: unset; cursor: default; text-align: center; font-size: 17px; line-height: 1;
+    padding: 5px 0; border-radius: 8px;
+  }
+  .emoji-grid button:hover { background: var(--fill); }
+  .emoji-grid button.on { background: color-mix(in srgb, var(--accent) 26%, transparent); box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--accent) 50%, transparent); }
+  .cust-del { all: unset; cursor: default; color: #ff8f8f; font-size: 12px; font-weight: 600; }
+  .cust-del:hover { text-decoration: underline; }
+  .drow.wide { grid-template-columns: 44px 1fr; }
+  .drow.wide .lbl2 { font-size: 11.5px; color: var(--secondary); }
 
   /* 일반 설정 행 */
   .row { display: grid; grid-template-columns: 90px 1fr 52px; align-items: center; gap: 11px; padding: 10px 13px; }
@@ -256,6 +289,11 @@
     <div class="group" id="grp-on"></div>
     <div class="sec" id="sec-off">꺼진 알림</div>
     <div class="group" id="grp-off"></div>
+
+    <div class="sec" id="sec-custom">내 알림</div>
+    <div class="group" id="grp-custom"></div>
+    <button class="add-btn" id="btn-custom-add">+ 새 알림 만들기</button>
+
     <p class="foot">
       여러 알림이 비슷한 시각에 겹치면 한 번의 휴식 화면으로 묶어 보여줍니다.<br>
       행을 눌러 펼치면 주기와 길이를 따로 조절할 수 있어요.
@@ -420,7 +458,7 @@
     const row = document.createElement('div');
     row.className = 'rem' + (cfg.enabled ? '' : ' off');
 
-    const g = window.nunsIcon(type.glyph, 'g');
+    const g = window.nunsMark(type, 'g');
     g.style.color = type.color;
 
     const nm = document.createElement('div');
@@ -507,7 +545,147 @@
     on.style.display = hasOn ? '' : 'none';
     $('sec-off').style.display = hasOff ? '' : 'none';
     off.style.display = hasOff ? '' : 'none';
+
+    renderCustom();
   }
+
+  // ── 사용자 지정 알림 ───────────────────────────────
+  function renderCustom(openId) {
+    const host = $('grp-custom');
+    host.textContent = '';
+    const ids = Object.keys(data.custom || {});
+    $('sec-custom').style.display = ids.length ? '' : 'none';
+    host.style.display = ids.length ? '' : 'none';
+    for (const id of ids) host.append(buildCustomRow(id, data.custom[id], id === openId));
+  }
+
+  function buildCustomRow(id, def, startOpen) {
+    const meta = { glyph: 'custom', emoji: def.emoji || null };
+    const wrap = document.createElement('div');
+    wrap.className = 'rem-wrap' + (startOpen ? ' open' : '');
+    wrap.style.setProperty('--rc', def.color || 'var(--accent)');
+
+    const row = document.createElement('div');
+    row.className = 'rem' + (def.enabled === false ? ' off' : '');
+
+    const g = window.nunsMark(meta, 'g');
+    g.style.color = def.color || 'var(--accent)';
+
+    const nm = document.createElement('div');
+    nm.className = 'nm';
+    nm.textContent = def.name || '내 알림';
+    const sub = document.createElement('small');
+    sub.textContent = def.headline || '';
+    nm.append(sub);
+
+    const val = document.createElement('span');
+    val.className = 'val';
+    val.textContent = `${fmtInterval(def.intervalMin)} · ${fmtDuration(def.durationSec)}`;
+
+    const sw = document.createElement('button');
+    sw.className = 'sw' + (def.enabled === false ? '' : ' on');
+    sw.setAttribute('role', 'switch');
+    sw.onclick = async (e) => {
+      e.stopPropagation();
+      def.enabled = def.enabled === false;
+      data.custom = await window.nunsseom.customUpdate(id, { enabled: def.enabled });
+      renderCustom();
+    };
+
+    row.append(g, nm, val, sw);
+    row.onclick = () => wrap.classList.toggle('open');
+
+    // 편집 상세 — 이름, 이모지, 주기, 길이, 삭제
+    const detail = document.createElement('div');
+    detail.className = 'detail';
+
+    const nameRow = document.createElement('div');
+    nameRow.className = 'drow wide';
+    const nlab = document.createElement('span');
+    nlab.className = 'lbl2';
+    nlab.textContent = '이름';
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.className = 'cust-name';
+    nameInput.value = def.name || '';
+    nameInput.onclick = (e) => e.stopPropagation();
+    nameInput.onchange = async () => {
+      def.name = nameInput.value.trim() || '내 알림';
+      nm.firstChild.textContent = def.name;
+      data.custom = await window.nunsseom.customUpdate(id, { name: def.name, headline: def.name });
+    };
+    nameRow.append(nlab, nameInput);
+
+    const emojiGrid = document.createElement('div');
+    emojiGrid.className = 'emoji-grid';
+    emojiGrid.onclick = (e) => e.stopPropagation();
+    for (const emo of window.NUNS_EMOJI) {
+      const b = document.createElement('button');
+      b.textContent = emo;
+      if (emo === def.emoji) b.classList.add('on');
+      b.onclick = async () => {
+        def.emoji = emo;
+        emojiGrid.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+        const ng = window.nunsMark({ glyph: 'custom', emoji: emo }, 'g');
+        ng.style.color = def.color || 'var(--accent)';
+        g.replaceWith(ng);
+        data.custom = await window.nunsseom.customUpdate(id, { emoji: emo });
+      };
+      emojiGrid.append(b);
+    }
+
+    const mkSlider = (label, key, min, max, step, fmt) => {
+      const dr = document.createElement('div');
+      dr.className = 'drow';
+      const lb = document.createElement('span');
+      lb.textContent = label;
+      const input = document.createElement('input');
+      input.type = 'range';
+      input.min = min; input.max = max; input.step = step; input.value = def[key];
+      input.onclick = (e) => e.stopPropagation();
+      const out = document.createElement('span');
+      out.className = 'out';
+      out.textContent = fmt(def[key]);
+      input.oninput = () => { out.textContent = fmt(Number(input.value)); };
+      input.onchange = async () => {
+        def[key] = Number(input.value);
+        val.textContent = `${fmtInterval(def.intervalMin)} · ${fmtDuration(def.durationSec)}`;
+        data.custom = await window.nunsseom.customUpdate(id, { [key]: def[key] });
+      };
+      dr.append(lb, input, out);
+      return dr;
+    };
+
+    const delRow = document.createElement('div');
+    delRow.className = 'drow wide';
+    delRow.style.marginTop = '4px';
+    const del = document.createElement('button');
+    del.className = 'cust-del';
+    del.textContent = '이 알림 삭제';
+    del.onclick = async (e) => {
+      e.stopPropagation();
+      data.custom = await window.nunsseom.customRemove(id);
+      renderCustom();
+    };
+    delRow.append(document.createElement('span'), del);
+
+    detail.append(nameRow, emojiGrid,
+      mkSlider('주기', 'intervalMin', 5, 240, 5, fmtInterval),
+      mkSlider('길이', 'durationSec', 10, 300, 10, fmtDuration),
+      delRow);
+
+    wrap.append(row, detail);
+    return wrap;
+  }
+
+  $('btn-custom-add').onclick = async () => {
+    const custom = await window.nunsseom.customAdd({
+      name: '내 알림', emoji: window.NUNS_EMOJI[0], intervalMin: 60, durationSec: 30
+    });
+    data.custom = custom;
+    const newId = Object.keys(custom).sort().pop();
+    renderCustom(newId); // 새로 만든 것은 펼친 채로
+  };
 
   /** 켜기/끄기 스위치를 설정 키에 묶는다 */
   function bindSwitch(key) {

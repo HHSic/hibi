@@ -181,6 +181,23 @@ module.exports = {
     save();
     return s.custom;
   },
+  /** 새 사용자 지정 알림 — id를 생성해 저장하고 { id, custom } 반환 */
+  addCustom(def) {
+    const s = load();
+    const id = `u${Date.now().toString(36)}`;
+    s.custom[id] = {
+      name: def.name || '내 알림',
+      emoji: def.emoji || null,
+      color: def.color || '#e3c08a',
+      kind: def.kind === 'long' ? 'long' : 'short',
+      intervalMin: Math.max(1, Math.round(def.intervalMin || 60)),
+      durationSec: Math.max(5, Math.round(def.durationSec || 30)),
+      headline: def.headline || def.name || '잠깐 쉬어요',
+      enabled: true
+    };
+    save();
+    return { id, custom: s.custom };
+  },
 
   get calendars() { return load().calendars; },
   addCalendar(cal) {

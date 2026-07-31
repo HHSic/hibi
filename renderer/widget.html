@@ -125,6 +125,14 @@
     min-width: 0;
   }
   .head .g { width: 0.8125rem; height: 0.8125rem; flex: none; color: var(--tint); }
+  /* 이모지 마크는 font-size로 크기가 정해진다 — 각 문맥의 아이콘 크기에 맞춘다 */
+  .g.emoji { display: inline-grid; place-items: center; line-height: 1; }
+  .head .g.emoji { font-size: 0.75rem; }
+  .chip .g.emoji { font-size: 0.5625rem; }
+  .sheet .row .g.emoji { font-size: 0.8125rem; }
+  .r-micro .head .g.emoji { font-size: 1rem; }
+  .r-wide .head .g.emoji { font-size: 0.9rem; }
+  .primary .g.emoji, .primary span.emoji { font-size: 0.75rem; }
   .head .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .head .sp { flex: 1; }
   /* 라벨바 — 곧 함께 올 알림들이 옆으로 붙는다 */
@@ -566,11 +574,11 @@
     const host = $('tags');
     host.textContent = '';
 
-    const addTag = (glyph, name, color, cls) => {
+    const addTag = (mark, name, color, cls) => {
       const tag = document.createElement('span');
       tag.className = 'tag' + (cls ? ' ' + cls : '');
-      if (glyph) {
-        const g = window.nunsIcon(glyph, 'g');
+      if (mark) {
+        const g = window.nunsMark(mark, 'g');
         if (color) g.style.color = color;
         tag.append(g);
       }
@@ -582,8 +590,8 @@
       return tag;
     };
 
-    if (d.paused) { addTag(d.type && d.type.glyph, '일시정지됨', null); return; }
-    if (d.idle) { addTag(d.type && d.type.glyph, '자리 비움', null); return; }
+    if (d.paused) { addTag(d.type || null, '일시정지됨', null); return; }
+    if (d.idle) { addTag(d.type || null, '자리 비움', null); return; }
 
     // 방해 금지 — 알림이 밀렸는지와 무관하게 켜져 있는 동안 계속 알린다.
     // 이유(발표 모드 / Zoom / 일정 이름)는 넓은 크기에서만 덧붙인다.
@@ -595,7 +603,7 @@
       return;
     }
 
-    addTag(d.type.glyph, d.type.name, d.type.color,
+    addTag(d.type, d.type.name, d.type.color,
       d.remaining <= IMMINENT_SEC ? 'imminent' : null);
 
     const bundle = new Set(d.bundle || []);
@@ -603,7 +611,7 @@
       t.id !== d.type.id && (t.remaining <= IMMINENT_SEC || bundle.has(t.id)));
 
     for (const t of extras.slice(0, MAX_TAGS - 1)) {
-      addTag(t.glyph, t.name, t.color, t.remaining <= IMMINENT_SEC ? 'imminent' : null);
+      addTag(t, t.name, t.color, t.remaining <= IMMINENT_SEC ? 'imminent' : null);
     }
     const hidden = extras.length - (MAX_TAGS - 1);
     if (hidden > 0) addTag(null, `+${hidden}`, null, 'more');
@@ -633,7 +641,7 @@
     list.forEach((t, i) => {
       const row = document.createElement('div');
       row.className = 'row' + (i === 0 ? ' next' : '');
-      const g = window.nunsIcon(t.glyph, 'g');
+      const g = window.nunsMark(t, 'g');
       g.style.color = t.color;
       const nm = document.createElement('span');
       nm.className = 'nm';
@@ -656,7 +664,7 @@
     for (const t of list.slice(0, 4)) {
       const chip = document.createElement('span');
       chip.className = 'chip' + (bundled.has(t.id) ? ' on' : '');
-      chip.append(window.nunsIcon(t.glyph, 'g'));
+      chip.append(window.nunsMark(t, 'g'));
       const label = document.createElement('span');
       label.textContent = t.name;
       chip.append(label);
@@ -700,7 +708,7 @@
 
     if (d.type.id !== lastTypeId) {
       lastTypeId = d.type.id;
-      $('btn-now').firstChild.replaceWith(window.nunsIcon(d.type.glyph));
+      $('btn-now').firstChild.replaceWith(window.nunsMark(d.type));
     }
     renderTags(d);
 

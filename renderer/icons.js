@@ -40,6 +40,30 @@ window.nunsIcon = function nunsIcon(name, cls) {
   return svg;
 };
 
+/**
+ * 알림 표시 마크. 이모지가 있으면 이모지 텍스트를, 없으면 벡터 글리프를 만든다.
+ * @param {object|string} m  meta 객체({emoji, glyph}) 또는 글리프 이름
+ */
+window.nunsMark = function nunsMark(m, cls) {
+  const emoji = m && typeof m === 'object' ? m.emoji : null;
+  const glyph = m && typeof m === 'object' ? (m.glyph || 'custom') : m;
+  if (emoji) {
+    const s = document.createElement('span');
+    s.className = 'emoji' + (cls ? ' ' + cls : '');
+    s.textContent = emoji;
+    return s;
+  }
+  return window.nunsIcon(glyph, cls);
+};
+
+// 사용자 지정 알림에 고를 수 있는 이모지 (휴식·건강·습관 관련)
+window.NUNS_EMOJI = [
+  '💧', '👁️', '🧘', '💪', '🚶', '🫁', '💊', '👀',
+  '☕', '🍵', '🥤', '🍎', '🌿', '😴', '🙆', '🤸',
+  '✋', '🦵', '👣', '🧠', '🎯', '⏰', '🔔', '🌙',
+  '☀️', '🧴', '📵', '💤', '🪥', '🚰', '🧊', '🎧'
+];
+
 /** 채워진(fill) 글리프 — 재생 버튼 등 */
 window.nunsIconFilled = function nunsIconFilled(name, cls) {
   const svg = window.nunsIcon(name, cls);

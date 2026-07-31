@@ -125,8 +125,8 @@ function meta(id, custom) {
   if (t) return { id: t.id, name: t.name, glyph: t.glyph, color: t.color, kind: t.kind };
   const c = custom && custom[id];
   return c
-    ? { id, name: c.name || '알림', glyph: 'custom', color: c.color || '#e3c08a', kind: c.kind || 'short' }
-    : { id, name: '알림', glyph: 'custom', color: '#e3c08a', kind: 'short' };
+    ? { id, name: c.name || '알림', glyph: 'custom', emoji: c.emoji || null, color: c.color || '#e3c08a', kind: c.kind || 'short' }
+    : { id, name: '알림', glyph: 'custom', emoji: null, color: '#e3c08a', kind: 'short' };
 }
 
 /** 종류별 설정 기본값 */

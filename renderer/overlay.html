@@ -52,6 +52,8 @@
     margin-bottom: 34px;
   }
   .kicker svg { width: 17px; height: 17px; }
+  .kicker .emoji { font-size: 16px; line-height: 1; display: inline-grid; place-items: center; }
+  .list .item .g.emoji { font-size: 16px; line-height: 1; display: inline-grid; place-items: center; }
 
   /* 숨쉬는 유리 원 */
   .breath { position: relative; width: 312px; height: 312px; margin: 0 auto 36px; display: grid; place-items: center; }
@@ -196,7 +198,7 @@
     // 상단 킥커 — 묶음이면 개수 표기
     const kicker = $('kicker');
     kicker.textContent = '';
-    kicker.append(window.nunsIcon(first.glyph));
+    kicker.append(window.nunsMark(first));
     const kt = document.createElement('span');
     kt.textContent = p.grouped ? `${first.name} 외 ${p.items.length - 1}개` : first.name;
     kicker.append(kt);
@@ -215,9 +217,9 @@
     const rows = [];
     for (const item of p.items) {
       if (item.checklist && item.checklist.length) {
-        for (const text of item.checklist) rows.push({ text, glyph: item.glyph, color: item.color });
+        for (const text of item.checklist) rows.push({ text, glyph: item.glyph, emoji: item.emoji, color: item.color });
       } else {
-        rows.push({ text: item.tip ? item.tip[0] : item.headline, glyph: item.glyph, color: item.color });
+        rows.push({ text: item.tip ? item.tip[0] : item.headline, glyph: item.glyph, emoji: item.emoji, color: item.color });
       }
     }
 
@@ -233,7 +235,7 @@
       box.className = 'box';
       box.append(window.nunsIcon('check'));
 
-      el.append(box, window.nunsIcon(row.glyph, 'g'));
+      el.append(box, window.nunsMark(row, 'g'));
       const label = document.createElement('span');
       label.textContent = row.text;
       el.append(label);

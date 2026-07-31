@@ -83,6 +83,7 @@
     white-space: nowrap;
   }
   .tab svg { width: 13px; height: 13px; }
+  .tab .emoji { font-size: 12px; line-height: 1; display: inline-grid; place-items: center; }
   .tab.on { color: #08110f; box-shadow: none; }
   :root[data-theme="light"] .tab.on { color: #fff; }
 
@@ -96,11 +97,13 @@
   .d-next { font-size: 40px; font-weight: 250; letter-spacing: -0.045em; line-height: 1; font-variant-numeric: tabular-nums; }
   .d-when { font-size: 12.5px; color: var(--secondary); margin-top: 7px; }
   .d-when b { color: color-mix(in srgb, var(--accent) 82%, white); font-weight: 600; }
+  /* 버튼은 폭을 꽉 채우지 않고 내용만큼 (배너처럼 안 보이게) */
   .d-act { display: flex; gap: 8px; margin-top: 16px; }
   .btn {
-    all: unset; cursor: default; flex: 1; text-align: center;
-    padding: 9px 0; border-radius: 11px; font-size: 12.5px; font-weight: 620;
+    all: unset; cursor: default; text-align: center;
+    padding: 8px 16px; border-radius: 10px; font-size: 12.5px; font-weight: 620;
   }
+  .btn svg { width: 13px; height: 13px; vertical-align: -2px; margin-right: 4px; }
   .btn.primary { background: color-mix(in srgb, var(--accent) 88%, black); color: #08110f; }
   :root[data-theme="light"] .btn.primary { color: #fff; }
   .btn.ghost { background: var(--fill); box-shadow: inset 0 0 0 0.5px var(--separator); color: var(--secondary); }
@@ -119,8 +122,8 @@
   .grass-wrap { overflow-x: auto; margin-top: 18px; padding-bottom: 3px; }
   .grass-wrap::-webkit-scrollbar { height: 6px; }
   .grass-wrap::-webkit-scrollbar-thumb { background: var(--fill); border-radius: 3px; }
-  .grass { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 12px); gap: 2px; width: max-content; }
-  .grass .cell { width: 12px; height: 12px; border-radius: 2.5px; background: var(--grass-empty); }
+  .grass { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 15px); gap: 3px; width: max-content; }
+  .grass .cell { width: 15px; height: 15px; border-radius: 3px; background: var(--grass-empty); }
   .grass .cell.future { background: transparent; }
 
   .legend { display: flex; align-items: center; gap: 5px; font-size: 10.5px; color: var(--tertiary); margin-top: 11px; }
@@ -151,7 +154,6 @@
       <div class="d-when" id="d-when"></div>
       <div class="d-act">
         <button class="btn primary" id="d-now">지금 하기</button>
-        <button class="btn ghost" id="d-close">닫기</button>
       </div>
     </div>
 
@@ -202,7 +204,6 @@
 
   $('btn-close').append(window.nunsIcon('close'));
   $('btn-close').onclick = () => window.nunsseom.statsClose();
-  $('d-close').onclick = () => window.nunsseom.statsClose();
   window.addEventListener('keydown', (e) => { if (e.key === 'Escape') window.nunsseom.statsClose(); });
 
   function fmtLeft(sec) {
@@ -219,12 +220,12 @@
   function renderTabs(tabs) {
     const host = $('tabs');
     host.textContent = '';
-    const mk = (id, name, glyph, color) => {
+    const mk = (id, name, glyph, emoji, color) => {
       const b = document.createElement('button');
       b.className = 'tab' + ((current || null) === (id || null) ? ' on' : '');
       if (color && (current || null) === (id || null)) b.style.background = color;
-      if (glyph) {
-        const g = window.nunsIcon(glyph);
+      if (glyph || emoji) {
+        const g = window.nunsMark(emoji ? { emoji } : glyph);
         if (color) g.style.color = (current || null) === (id || null) ? 'inherit' : color;
         b.append(g);
       }
@@ -234,8 +235,8 @@
       b.onclick = () => { current = id || null; load(); };
       host.append(b);
     };
-    mk(null, '전체', 'eye', 'var(--accent)');
-    for (const t of tabs) mk(t.id, t.name, t.glyph, t.color);
+    mk(null, '전체', 'eye', null, 'var(--accent)');
+    for (const t of tabs) mk(t.id, t.name, t.glyph, t.emoji, t.color);
   }
 
   function paintGrass(cells, max, accent) {
