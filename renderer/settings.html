@@ -290,8 +290,6 @@
     <div class="sec" id="sec-off">꺼진 알림</div>
     <div class="group" id="grp-off"></div>
 
-    <div class="sec" id="sec-custom">내 알림</div>
-    <div class="group" id="grp-custom"></div>
     <button class="add-btn" id="btn-custom-add">+ 새 알림 만들기</button>
 
     <p class="foot">
@@ -529,15 +527,21 @@
     return wrap;
   }
 
-  function renderReminders() {
+  function renderReminders(openId) {
     const on = $('grp-on');
     const off = $('grp-off');
     on.textContent = '';
     off.textContent = '';
+    // 기본 알림
     for (const type of data.types) {
       const cfg = data.reminders[type.id];
       if (!cfg) continue;
       (cfg.enabled ? on : off).append(buildRow(type, cfg));
+    }
+    // 사용자 지정 알림도 같은 켜진/꺼진 목록에 섞는다
+    for (const id of Object.keys(data.custom || {})) {
+      const def = data.custom[id];
+      (def.enabled === false ? off : on).append(buildCustomRow(id, def, id === openId));
     }
     const hasOn = on.childElementCount > 0;
     const hasOff = off.childElementCount > 0;
@@ -545,18 +549,6 @@
     on.style.display = hasOn ? '' : 'none';
     $('sec-off').style.display = hasOff ? '' : 'none';
     off.style.display = hasOff ? '' : 'none';
-
-    renderCustom();
-  }
-
-  // ── 사용자 지정 알림 ───────────────────────────────
-  function renderCustom(openId) {
-    const host = $('grp-custom');
-    host.textContent = '';
-    const ids = Object.keys(data.custom || {});
-    $('sec-custom').style.display = ids.length ? '' : 'none';
-    host.style.display = ids.length ? '' : 'none';
-    for (const id of ids) host.append(buildCustomRow(id, data.custom[id], id === openId));
   }
 
   function buildCustomRow(id, def, startOpen) {
@@ -589,7 +581,7 @@
       e.stopPropagation();
       def.enabled = def.enabled === false;
       data.custom = await window.nunsseom.customUpdate(id, { enabled: def.enabled });
-      renderCustom();
+      renderReminders(); // 켜진/꺼진 목록 간 이동
     };
 
     row.append(g, nm, val, sw);
@@ -665,7 +657,7 @@
     del.onclick = async (e) => {
       e.stopPropagation();
       data.custom = await window.nunsseom.customRemove(id);
-      renderCustom();
+      renderReminders();
     };
     delRow.append(document.createElement('span'), del);
 
@@ -684,7 +676,8 @@
     });
     data.custom = custom;
     const newId = Object.keys(custom).sort().pop();
-    renderCustom(newId); // 새로 만든 것은 펼친 채로
+    renderReminders(newId); // 새로 만든 것은 켜진 목록에 펼친 채로
+    document.querySelector('.rem-wrap.open')?.scrollIntoView({ block: 'center' });
   };
 
   /** 켜기/끄기 스위치를 설정 키에 묶는다 */
