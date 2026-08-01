@@ -35,6 +35,9 @@ const DEFAULT_SETTINGS = {
   radius: 26,          // 위젯 코너 반경 (DIP)
   grassWeeks: 15,      // 기록 창 잔디 기간 (주)
   autoLaunch: false,   // Windows 로그인 시 자동 실행
+  // 이벤트 기록 — 창 크기/이동 문제를 쫓는 중이라 당분간 기본 켜짐.
+  // 끄면 비용이 0이고, 켜져 있어도 파일 크기는 evlog가 상한을 지킨다.
+  eventLog: true,
 
   // 방해 금지 — 전체화면/발표/집중지원 중이면 알림을 미룬다
   dndEnabled: true,

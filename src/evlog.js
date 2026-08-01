@@ -13,6 +13,7 @@ const path = require('path');
 
 const FLUSH_MS = 400;
 const MAX_BUFFER = 2000;      // 폭주해도 메모리를 먹지 않게
+const MAX_FILE = 4 * 1024 * 1024;  // 기본 켜짐이라 파일이 무한정 자라지 않게
 
 let file = null;
 let enabled = false;
@@ -29,7 +30,14 @@ function flush() {
   if (!file || buffer.length === 0) return;
   const chunk = buffer.join('\n') + '\n';
   buffer = [];
-  try { fs.appendFileSync(file, chunk); } catch { /* 기록 실패로 앱을 멈추지 않는다 */ }
+  try {
+    // 상한을 넘으면 처음부터 다시 쓴다. 오래된 기록보다 방금 재현한 게 중요하다.
+    if (fs.existsSync(file) && fs.statSync(file).size > MAX_FILE) {
+      fs.writeFileSync(file, `# 기록이 ${Math.round(MAX_FILE / 1024 / 1024)}MB를 넘어 새로 시작합니다`
+        + ` ${new Date().toISOString()}\n`);
+    }
+    fs.appendFileSync(file, chunk);
+  } catch { /* 기록 실패로 앱을 멈추지 않는다 */ }
 }
 
 module.exports = {

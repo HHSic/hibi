@@ -140,6 +140,10 @@ function createWidget() {
   widgetWin.loadFile(page('widget.html'), {
     query: glassQuery({ radius: String(store.settings.radius) })
   });
+  // 창은 기록을 켠 뒤에 만들어질 수 있다 — 로드가 끝나면 현재 상태를 알린다
+  widgetWin.webContents.on('did-finish-load', () => {
+    if (evlog.enabled) widgetWin.webContents.send('debug:mode', true);
+  });
 
   // 저장된 좌표가 지금 없는 모니터를 가리킬 수 있다 (모니터 구성 변경)
   ensureOnScreen(widgetWin);
@@ -414,7 +418,10 @@ function updateTray() {
       label: '이벤트 기록 (문제 재현용)',
       type: 'checkbox',
       checked: evlog.enabled,
-      click: (item) => setEventLog(item.checked)
+      click: (item) => {
+        store.setSettings({ eventLog: item.checked });
+        setEventLog(item.checked);
+      }
     },
     { label: '기록 파일 열기', click: openEventLog },
     { type: 'separator' },
@@ -467,9 +474,33 @@ function revealWidget() {
   widgetWin.focus();
 }
 
+let boundsWatch = null;
+
+/**
+ * 기록 중에는 창 크기를 짧은 주기로 직접 들여다본다.
+ * 이벤트만 믿으면 "아무도 시키지 않았는데 커진" 경우를 통째로 놓친다.
+ * 여기 찍힌 변화 옆에 set-bounds/리사이즈 줄이 없으면, 우리 코드 밖에서 창이 커진 것이다.
+ */
+function watchBounds(on) {
+  if (boundsWatch) { clearInterval(boundsWatch); boundsWatch = null; }
+  if (!on) return;
+  let last = null;
+  boundsWatch = setInterval(() => {
+    if (!widgetWin || widgetWin.isDestroyed()) return;
+    const b = widgetWin.getBounds();
+    const key = `${b.width}x${b.height}@${b.x},${b.y}`;
+    if (key === last) return;
+    const grew = last && `${b.width}x${b.height}` !== last.split('@')[0];
+    evlog.log('표본', `${key}${last ? ` (이전 ${last})` : ''}${grew ? '  ← 크기 변함' : ''}`);
+    last = key;
+  }, 120);
+  if (boundsWatch.unref) boundsWatch.unref();
+}
+
 /** 이벤트 기록 켜기/끄기 — 렌더러도 같이 알아야 포인터 이벤트를 보낸다 */
 function setEventLog(on) {
   evlog.setEnabled(on);
+  watchBounds(on);
   if (on) {
     const d = screen.getPrimaryDisplay();
     evlog.log('main', `배율 ${d.scaleFactor} · 작업영역 ${d.workAreaSize.width}x${d.workAreaSize.height}`);
@@ -815,6 +846,7 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     evlog.init(app.getPath('userData'));
     tray = new Tray(nativeImage.createFromPath(ICON));
+    if (store.settings.eventLog) setEventLog(true);
     // 트레이 아이콘을 더블클릭하면 위젯이 다시 나온다 (Windows 관례)
     tray.on('double-click', revealWidget);
     // 예전 버전에서 설정값으로만 켜 두었던 경우를 실제 바로가기로 옮긴다

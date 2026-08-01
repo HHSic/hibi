@@ -502,10 +502,26 @@
   // 창 크기 / 창 이동 / UI 스케일은 서로 다른 경로라, 한 줄로 같이 찍어야 구분된다.
   let dbg = false;
   const dlog = (src, msg) => { if (dbg) window.nunsseom.debugLog(src, msg); };
+  let rawHooked = false;
   window.nunsseom.onDebugMode?.((on) => {
     dbg = on;
-    if (on) dlog('위젯', `기록 시작 · 창 안쪽 ${window.innerWidth}x${window.innerHeight}`
+    if (!on) return;
+    dlog('위젯', `기록 시작 · 창 안쪽 ${window.innerWidth}x${window.innerHeight}`
       + ` · rem ${getComputedStyle(root).fontSize} · dpr ${window.devicePixelRatio}`);
+    if (rawHooked) return;
+    rawHooked = true;
+    // 어느 요소를 눌렀든 남긴다 — 카드/존 핸들러가 아예 안 걸리는 경우를 보려면 필요하다
+    const name = (el) => {
+      if (!el || !el.tagName) return '?';
+      const c = String((el.className && (el.className.baseVal ?? el.className)) || '').trim().split(/\s+/)[0];
+      return el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (c ? '.' + c : '');
+    };
+    for (const t of ['pointerdown', 'pointerup', 'pointercancel', 'lostpointercapture']) {
+      document.addEventListener(t, (e) => {
+        dlog('입력', `${t} 대상 ${name(e.target)} · 창안 ${Math.round(e.clientX)},${Math.round(e.clientY)}`
+          + ` · 화면 ${e.screenX},${e.screenY} · 버튼 ${e.button}`);
+      }, true);
+    }
   });
 
   function layout() {
