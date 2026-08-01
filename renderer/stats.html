@@ -71,12 +71,18 @@
   /* 탭 */
   .tabs {
     -webkit-app-region: no-drag; flex: none;
-    display: flex; gap: 4px; padding: 4px 16px 6px; overflow-x: auto;
-    scroll-behavior: smooth;
+    display: flex; gap: 4px; padding: 4px 16px 4px; overflow-x: auto;
     /* 잘린 탭이 더 있음을 알리는 양끝 페이드 */
     -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+    cursor: grab;
   }
-  .tabs::-webkit-scrollbar { display: none; }
+  .tabs.dragging { cursor: grabbing; }
+  .tabs.dragging .tab { pointer-events: none; }   /* 끄는 중엔 탭이 눌리지 않게 */
+  /* 스크롤바를 숨기면 스크롤이 된다는 걸 알 수가 없다 — 가늘게 남긴다 */
+  .tabs::-webkit-scrollbar { height: 3px; }
+  .tabs::-webkit-scrollbar-track { background: transparent; }
+  .tabs::-webkit-scrollbar-thumb { background: var(--tertiary); border-radius: 2px; }
+  .tabs:hover::-webkit-scrollbar-thumb { background: var(--secondary); }
   .tab {
     all: unset; cursor: default; flex: none;
     display: inline-flex; align-items: center; gap: 5px;
@@ -205,10 +211,36 @@
   let current = params.get('focus') || null;   // 선택된 종류 id (null = 전체)
   let weeks = 15;
 
-  // 세로 휠을 탭 가로 스크롤로 (탭이 많을 때 마우스로도 넘길 수 있게)
-  $('tabs').addEventListener('wheel', (e) => {
-    if (e.deltaY !== 0) { $('tabs').scrollLeft += e.deltaY; e.preventDefault(); }
+  // 탭 줄 넘기기 — 휠과 드래그 둘 다. 창이 좁아 탭은 거의 항상 잘린다.
+  const tabsEl = $('tabs');
+  tabsEl.addEventListener('wheel', (e) => {
+    const d = e.deltaY || e.deltaX;
+    if (d) { tabsEl.scrollLeft += d; e.preventDefault(); }
   }, { passive: false });
+
+  let tdrag = null;
+  tabsEl.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    tdrag = { x: e.clientX, left: tabsEl.scrollLeft, moved: false };
+  });
+  tabsEl.addEventListener('pointermove', (e) => {
+    if (!tdrag) return;
+    const dx = e.clientX - tdrag.x;
+    if (!tdrag.moved && Math.abs(dx) > 3) {
+      tdrag.moved = true;
+      tabsEl.classList.add('dragging');       // 끄는 중엔 탭 클릭을 막는다
+      try { tabsEl.setPointerCapture(e.pointerId); } catch {}
+    }
+    if (tdrag.moved) tabsEl.scrollLeft = tdrag.left - dx;
+  });
+  const endTabDrag = (e) => {
+    if (!tdrag) return;
+    tdrag = null;
+    tabsEl.classList.remove('dragging');
+    try { tabsEl.releasePointerCapture(e.pointerId); } catch {}
+  };
+  tabsEl.addEventListener('pointerup', endTabDrag);
+  tabsEl.addEventListener('pointercancel', endTabDrag);
 
   $('btn-close').append(window.nunsIcon('close'));
   $('btn-close').onclick = () => window.nunsseom.statsClose();
@@ -227,6 +259,7 @@
 
   // 최근 본 종류를 앞에 두기 위한 순서 (id 배열, 최근 것 먼저)
   let mru = [];
+  let lastCentered;   // 마지막으로 화면 가운데로 끌어온 탭 (선택이 바뀔 때만 갱신)
 
   function renderTabs(tabs) {
     const host = $('tabs');
@@ -263,8 +296,12 @@
     for (const t of tabs) if (byId.has(t.id)) ordered.push(t);
     for (const t of ordered) mk(t.id, t.name, t.glyph, t.emoji, t.color);
 
-    // 선택된 탭이 잘려 있으면 보이게 스크롤
-    if (onEl) onEl.scrollIntoView({ inline: 'center', block: 'nearest' });
+    // 선택이 바뀐 순간에만 그 탭을 보이게 한다.
+    // 다시 그릴 때마다 하면, 사용자가 옆으로 밀어둔 스크롤을 매번 도로 끌어당긴다.
+    if (onEl && lastCentered !== (current || null)) {
+      lastCentered = current || null;
+      onEl.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+    }
   }
 
   function paintGrass(cells, max, accent) {
