@@ -284,7 +284,10 @@
   .sheet .sh button:hover { text-decoration: underline; }
   .sheet .rows { display: flex; flex-direction: column; gap: 0.1875rem; overflow-y: auto; min-height: 0; }
   .sheet .rows::-webkit-scrollbar { width: 3px; }
-  .sheet .rows::-webkit-scrollbar-thumb { background: var(--fill-hi); border-radius: 2px; }
+  .sheet .rows::-webkit-scrollbar-thumb {
+    background: transparent; border-radius: 2px; transition: background 0.15s;
+  }
+  .sheet .rows:hover::-webkit-scrollbar-thumb { background: var(--fill-hi); }
   .sheet .row {
     display: grid; grid-template-columns: 0.875rem 1fr auto;
     align-items: center; gap: 0.4375rem;
