@@ -52,6 +52,10 @@ contextBridge.exposeInMainWorld('nunsseom', {
   calRefresh: () => ipcRenderer.invoke('cal:refresh'),
   calTest: (url) => ipcRenderer.invoke('cal:test', url),
   calClipboard: () => ipcRenderer.invoke('cal:clipboard'),
+  calMonth: (year, month) => ipcRenderer.invoke('cal:month', { year, month }),
+  calWinClose: () => ipcRenderer.send('cal:close'),
+  openCalendar: () => ipcRenderer.send('cal:open'),
+  onCalChanged: (cb) => ipcRenderer.on('cal:changed', () => cb()),
   calOpenHelp: (which) => ipcRenderer.invoke('cal:open-help', which),
 
   // 자동 실행 (OS 상태를 그대로 읽고 쓴다)

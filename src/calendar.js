@@ -327,10 +327,12 @@ async function loadOccurrences(calendars, { windowDays = 2, includeAllDay = fals
 
   const results = [];
   const errors = [];
+  const sources = [];   // 달력 화면에서 다른 달을 펼치려면 원문이 있어야 한다
   for (const cal of calendars || []) {
     if (!cal || !cal.url || cal.enabled === false) continue;
     try {
       const text = await fetchText(cal.url);
+      sources.push({ name: cal.name || '캘린더', text });
       const occ = occurrencesIn(text, from, to, { includeAllDay });
       results.push(...occ.map((o) => ({ ...o, calendar: cal.name || '캘린더' })));
     } catch (e) {
@@ -338,7 +340,19 @@ async function loadOccurrences(calendars, { windowDays = 2, includeAllDay = fals
     }
   }
   results.sort((a, b) => a.start - b.start);
-  return { occurrences: results, errors, fetchedAt: now };
+  return { occurrences: results, errors, sources, fetchedAt: now };
+}
+
+/** 이미 받아둔 원문에서 임의 구간을 펼친다 (달력에서 달을 넘길 때 다시 받지 않게) */
+function expandRange(sources, from, to, { includeAllDay = true } = {}) {
+  const out = [];
+  for (const s of sources || []) {
+    try {
+      out.push(...occurrencesIn(s.text, from, to, { includeAllDay })
+        .map((o) => ({ ...o, calendar: s.name })));
+    } catch { /* 한 캘린더가 깨져도 나머지는 보여준다 */ }
+  }
+  return out.sort((a, b) => a.start - b.start);
 }
 
 /** 지금 진행 중인 일정 (없으면 null) */
@@ -353,5 +367,5 @@ function nextEvent(occurrences, at = Date.now()) {
 
 module.exports = {
   loadOccurrences, occurrencesIn, parseEvents, currentEvent, nextEvent, fetchText,
-  normalizeUrl, looksLikeCalendar, calendarName
+  normalizeUrl, looksLikeCalendar, calendarName, expandRange
 };

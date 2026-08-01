@@ -31,6 +31,7 @@ const SNOOZE_MS = 5 * 60_000;
 let tray = null;
 let widgetWin = null;
 let widgetSize = null;   // 우리가 정한 위젯 크기 (실제 크기를 되읽지 않기 위한 기준)
+let calWin = null;
 let settingsWin = null;
 let statsWin = null;
 let overlayWins = [];
@@ -63,7 +64,7 @@ const state = {
 
 // 캘린더 일정 캐시
 const CAL_REFRESH_MS = 15 * 60 * 1000;
-const cal = { occurrences: [], errors: [], fetchedAt: 0, loading: false, hold: null };
+const cal = { occurrences: [], errors: [], sources: [], fetchedAt: 0, loading: false, hold: null };
 
 async function refreshCalendars() {
   const list = store.calendars;
@@ -76,7 +77,9 @@ async function refreshCalendars() {
     });
     cal.occurrences = r.occurrences;
     cal.errors = r.errors;
+    cal.sources = r.sources;      // 달력에서 다른 달을 펼칠 때 쓴다
     cal.fetchedAt = r.fetchedAt;
+    if (calWin && !calWin.isDestroyed()) calWin.webContents.send('cal:changed');
     if (r.errors.length) console.warn('[calendar] 일부 실패:', r.errors.map((e) => e.message).join(', '));
   } catch (e) {
     console.warn('[calendar] refresh failed:', e.message);
@@ -443,6 +446,7 @@ function updateTray() {
     { label: '위젯 숨기기', click: () => widgetWin && !widgetWin.isDestroyed() && widgetWin.hide() },
     { label: '위젯 크기 초기화', click: resetWidgetSize },
     { label: '기록 보기', click: () => openStats(null) },
+    { label: '달력 보기', click: openCalendar },
     { label: '설정', click: openSettings },
     ...(up.status === 'ready'
       ? [{ type: 'separator' }, { label: `업데이트 ${up.newVersion} 설치하고 다시 시작`, click: installUpdate }]
@@ -608,6 +612,45 @@ function openStats(focusType) {
   });
   statsWin.on('closed', () => { statsWin = null; });
 }
+
+function openCalendar() {
+  if (calWin && !calWin.isDestroyed()) { calWin.focus(); return; }
+  calWin = new BrowserWindow({
+    width: 340 + PAD,      // 7칸 달력 격자에 맞춘 폭
+    height: 470 + PAD,
+    frame: false,
+    resizable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    ...glass.windowOptions(),
+    webPreferences: { preload: PRELOAD }
+  });
+  calWin.loadFile(page('calendar.html'), { query: glassQuery({ radius: '20' }) });
+  calWin.on('closed', () => { calWin = null; });
+}
+
+/**
+ * 달력 한 달치. 앞뒤로 한 주씩 더 얹어 격자의 빈 칸(지난달·다음달)도 채운다.
+ * 이미 받아둔 ICS 원문에서 펼치므로 달을 넘겨도 다시 내려받지 않는다.
+ */
+ipcMain.handle('cal:month', (_e, { year, month }) => {
+  const first = new Date(year, month, 1);
+  const from = new Date(year, month, 1 - 7).getTime();
+  const to = new Date(year, month + 1, 7).getTime();
+  const events = calendar.expandRange(cal.sources, from, to, { includeAllDay: true })
+    .map((e) => ({ start: e.start, end: e.end, summary: e.summary || '일정',
+                   allDay: !!e.allDay, calendar: e.calendar }));
+  return {
+    year, month,
+    firstWeekday: first.getDay(),
+    daysInMonth: new Date(year, month + 1, 0).getDate(),
+    events,
+    hasCalendar: (cal.sources || []).length > 0,
+    errors: cal.errors.map((e) => ({ name: e.name, message: e.message }))
+  };
+});
+ipcMain.on('cal:close', () => calWin && calWin.close());
+ipcMain.on('cal:open', () => openCalendar());
 
 /** 기록 창이 그릴 전체 데이터 */
 function statsPayloadFull(typeId) {

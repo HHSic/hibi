@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>달력</title>
+<link rel="stylesheet" href="../node_modules/pretendard/dist/web/variable/pretendardvariable.css">
+<style>
+  :root {
+    --accent: #5ecfb6;
+    --scrim-a: 0.84;
+    --scrim: rgba(28, 28, 30, var(--scrim-a));
+    --label: rgba(255, 255, 255, 0.96);
+    --secondary: rgba(235, 235, 245, 0.62);
+    --tertiary: rgba(235, 235, 245, 0.32);
+    --separator: rgba(255, 255, 255, 0.10);
+    --fill: rgba(255, 255, 255, 0.07);
+    --fill-hi: rgba(255, 255, 255, 0.14);
+    --hairline: rgba(255, 255, 255, 0.16);
+    --sun: #ff8b8b;
+  }
+  :root[data-theme="light"] {
+    --accent: #23a58a;
+    --scrim-a: 0.82;
+    --scrim: rgba(248, 248, 250, var(--scrim-a));
+    --label: rgba(0, 0, 0, 0.90);
+    --secondary: rgba(60, 60, 67, 0.62);
+    --tertiary: rgba(60, 60, 67, 0.40);
+    --separator: rgba(60, 60, 67, 0.13);
+    --fill: rgba(0, 0, 0, 0.05);
+    --fill-hi: rgba(0, 0, 0, 0.10);
+    --hairline: rgba(0, 0, 0, 0.14);
+    --sun: #d94a4a;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
+  body {
+    font-family: 'Pretendard Variable', Pretendard, -apple-system, 'Segoe UI Variable Display', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    color: var(--label);
+    padding: var(--inset, 12px);
+  }
+
+  .card {
+    width: 100%; height: 100%;
+    background: var(--scrim);
+    border-radius: var(--r, 20px);
+    box-shadow: inset 0 0 0 0.5px var(--hairline), 0 6px 20px rgba(0, 0, 0, 0.4);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+
+  .nav {
+    -webkit-app-region: drag;
+    flex: none; display: flex; align-items: center; gap: 6px;
+    padding: 12px 12px 8px;
+  }
+  .nav .ttl { font-size: 15px; font-weight: 700; flex: 1; text-align: center; }
+  .nav button {
+    -webkit-app-region: no-drag;
+    all: unset; cursor: default;
+    width: 26px; height: 26px; border-radius: 7px;
+    display: grid; place-items: center;
+    color: var(--secondary); font-size: 15px;
+  }
+  .nav button:hover { background: var(--fill); color: var(--label); }
+
+  .wd {
+    flex: none; display: grid; grid-template-columns: repeat(7, 1fr);
+    padding: 0 12px 4px; gap: 2px;
+  }
+  .wd span { font-size: 10.5px; color: var(--tertiary); text-align: center; }
+  .wd span:first-child { color: var(--sun); }
+
+  .grid {
+    flex: none; display: grid; grid-template-columns: repeat(7, 1fr);
+    gap: 2px; padding: 0 12px;
+  }
+  .day {
+    aspect-ratio: 1 / 1;
+    border-radius: 8px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+    font-size: 12px; color: var(--label);
+    cursor: default;
+    transition: background 0.12s;
+  }
+  .day:hover { background: var(--fill); }
+  .day.out { color: var(--tertiary); }
+  .day.sun { color: var(--sun); }
+  .day.sun.out { color: color-mix(in srgb, var(--sun) 45%, transparent); }
+  .day.today { box-shadow: inset 0 0 0 1px var(--accent); font-weight: 700; }
+  .day.on { background: var(--accent); color: #06231d; font-weight: 700; }
+  .day.on.sun { color: #06231d; }
+  .dots { display: flex; gap: 2px; height: 4px; align-items: center; }
+  .dots i { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); display: block; }
+  .day.on .dots i { background: #06231d; }
+
+  .list { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 14px 14px; }
+  .list::-webkit-scrollbar { width: 6px; }
+  .list::-webkit-scrollbar-thumb {
+    background: transparent; border-radius: 3px; transition: background 0.15s;
+  }
+  .list:hover::-webkit-scrollbar-thumb { background: var(--fill-hi); }
+  .list .dt { font-size: 11.5px; color: var(--tertiary); margin-bottom: 6px; }
+  .ev {
+    display: grid; grid-template-columns: 46px 1fr;
+    gap: 8px; align-items: baseline;
+    padding: 5px 6px; margin: 0 -6px;
+    border-radius: 7px;
+    font-size: 12.5px;
+  }
+  .ev:hover { background: var(--fill); }
+  .ev .tm { font-size: 11px; color: var(--secondary); font-variant-numeric: tabular-nums; }
+  .ev .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ev .cal { font-size: 10.5px; color: var(--tertiary); }
+  .empty { font-size: 12px; color: var(--tertiary); padding: 8px 0; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="nav">
+    <button id="prev" title="이전 달">‹</button>
+    <span class="ttl" id="ttl"></span>
+    <button id="today" title="오늘">·</button>
+    <button id="next" title="다음 달">›</button>
+    <button id="close" title="닫기">✕</button>
+  </div>
+  <div class="wd">
+    <span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span>
+  </div>
+  <div class="grid" id="grid"></div>
+  <div class="list" id="list"></div>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const q = new URLSearchParams(location.search);
+  if (q.get('theme') === 'light') document.documentElement.dataset.theme = 'light';
+  if (q.get('scrim')) document.documentElement.style.setProperty('--scrim-a', q.get('scrim'));
+  if (q.get('inset')) document.documentElement.style.setProperty('--inset', q.get('inset') + 'px');
+  if (q.get('radius')) document.documentElement.style.setProperty('--r', q.get('radius') + 'px');
+
+  const now = new Date();
+  let view = { year: now.getFullYear(), month: now.getMonth() };
+  let selected = key(now);
+  let data = null;
+
+  function key(d) {
+    return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+  }
+  function hhmm(ms) {
+    const d = new Date(ms);
+    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  }
+
+  /** 하루에 걸친 일정만 골라낸다 (여러 날짜에 걸친 일정도 그 날에 포함) */
+  function eventsOn(dateObj) {
+    if (!data) return [];
+    const from = new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate()).getTime();
+    const to = from + 86400000;
+    return data.events
+      .filter((e) => e.start < to && e.end > from)
+      .sort((a, b) => (a.allDay === b.allDay ? a.start - b.start : a.allDay ? -1 : 1));
+  }
+
+  function paint() {
+    $('ttl').textContent = `${view.year}년 ${view.month + 1}월`;
+
+    const grid = $('grid');
+    grid.textContent = '';
+    const lead = data ? data.firstWeekday : new Date(view.year, view.month, 1).getDay();
+    const total = Math.ceil((lead + (data ? data.daysInMonth : 30)) / 7) * 7;
+    const todayKey = key(new Date());
+
+    for (let i = 0; i < total; i++) {
+      const d = new Date(view.year, view.month, i - lead + 1);
+      const out = d.getMonth() !== view.month;
+      const cell = document.createElement('div');
+      cell.className = 'day'
+        + (out ? ' out' : '')
+        + (d.getDay() === 0 ? ' sun' : '')
+        + (key(d) === todayKey ? ' today' : '')
+        + (key(d) === selected ? ' on' : '');
+
+      const num = document.createElement('span');
+      num.textContent = d.getDate();
+      cell.append(num);
+
+      const dots = document.createElement('span');
+      dots.className = 'dots';
+      const n = Math.min(3, eventsOn(d).length);
+      for (let k = 0; k < n; k++) dots.append(document.createElement('i'));
+      cell.append(dots);
+
+      cell.onclick = () => {
+        selected = key(d);
+        if (out) { view = { year: d.getFullYear(), month: d.getMonth() }; load(); return; }
+        paint();
+      };
+      grid.append(cell);
+    }
+
+    paintList();
+  }
+
+  function paintList() {
+    const host = $('list');
+    host.textContent = '';
+    const [y, m, dd] = selected.split('-').map(Number);
+    const d = new Date(y, m - 1, dd);
+
+    const dt = document.createElement('div');
+    dt.className = 'dt';
+    dt.textContent = `${m}월 ${dd}일 (${'일월화수목금토'[d.getDay()]})`;
+    host.append(dt);
+
+    if (data && !data.hasCalendar) {
+      const p = document.createElement('div');
+      p.className = 'empty';
+      p.textContent = '연결된 캘린더가 없어요. 설정 → 캘린더에서 추가하세요.';
+      host.append(p);
+      return;
+    }
+
+    const list = eventsOn(d);
+    if (!list.length) {
+      const p = document.createElement('div');
+      p.className = 'empty';
+      p.textContent = '일정이 없어요';
+      host.append(p);
+      return;
+    }
+    for (const e of list) {
+      const row = document.createElement('div');
+      row.className = 'ev';
+      const tm = document.createElement('span');
+      tm.className = 'tm';
+      tm.textContent = e.allDay ? '종일' : hhmm(e.start);
+      const box = document.createElement('span');
+      const nm = document.createElement('div');
+      nm.className = 'nm';
+      nm.textContent = e.summary;
+      box.append(nm);
+      if (e.calendar) {
+        const c = document.createElement('div');
+        c.className = 'cal';
+        c.textContent = e.calendar;
+        box.append(c);
+      }
+      row.append(tm, box);
+      host.append(row);
+    }
+  }
+
+  async function load() {
+    data = await window.nunsseom.calMonth(view.year, view.month);
+    paint();
+  }
+
+  $('prev').onclick = () => {
+    view = view.month === 0 ? { year: view.year - 1, month: 11 } : { ...view, month: view.month - 1 };
+    load();
+  };
+  $('next').onclick = () => {
+    view = view.month === 11 ? { year: view.year + 1, month: 0 } : { ...view, month: view.month + 1 };
+    load();
+  };
+  $('today').onclick = () => {
+    const t = new Date();
+    view = { year: t.getFullYear(), month: t.getMonth() };
+    selected = key(t);
+    load();
+  };
+  $('close').onclick = () => window.nunsseom.calWinClose();
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') window.nunsseom.calWinClose();
+    if (e.key === 'ArrowLeft') $('prev').click();
+    if (e.key === 'ArrowRight') $('next').click();
+  });
+
+  window.nunsseom.onCalChanged?.(() => load());
+  load();
+</script>
+</body>
+</html>

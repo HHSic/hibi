@@ -454,7 +454,7 @@
       <div class="sh"><span>예정된 알림</span><button id="sheet-stats">기록 보기</button></div>
       <div class="rows" id="sheet-rows"></div>
       <div class="sched" id="sched">
-        <div class="sh"><span>오늘 일정</span></div>
+        <div class="sh"><span>오늘 일정</span><button id="sheet-cal">달력</button></div>
         <div class="rows" id="sched-rows"></div>
       </div>
     </div>
@@ -848,6 +848,7 @@
   $('btn-now').onclick = () => window.nunsseom.breakNow(lastTypeId);
   $('btn-set').onclick = () => window.nunsseom.openSettings();
   $('sheet-stats').onclick = (e) => { e.stopPropagation(); window.nunsseom.openStats(null); };
+  $('sheet-cal').onclick = (e) => { e.stopPropagation(); window.nunsseom.openCalendar(); };
   $('btn-hide').onclick = () => window.nunsseom.hideWidget();
 
   // ── 카드: 클릭하면 예정된 알림 시트, 끌면 창 이동 ──
