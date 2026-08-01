@@ -386,13 +386,14 @@
   .grip {
     position: absolute; right: 0; bottom: 0;
     width: 0.9375rem; height: 0.9375rem;
-    cursor: nwse-resize;
+    /* 표시 전용 — 실제 리사이즈는 OS 네이티브 코너가 처리한다.
+       이벤트를 받으면 네이티브 리사이즈와 싸워 창이 폭주한다. */
+    pointer-events: none;
     opacity: 0;
     transition: opacity 0.15s;
     z-index: 6;
   }
   .stage:hover .grip { opacity: 0.45; }
-  .grip:hover { opacity: 0.85; }
   .grip svg { width: 100%; height: 100%; color: var(--label); }
 
   @media (prefers-reduced-motion: reduce) {
@@ -746,9 +747,13 @@
 
   cardEl.addEventListener('pointerdown', async (e) => {
     if (e.button !== 0) return;
-    // 컨트롤·그립·시트 위에서는 카드 이동/토글 로직을 돌리지 않는다.
+    // 컨트롤·시트 위에서는 카드 이동/토글 로직을 돌리지 않는다.
     // (시트를 포함하지 않으면 카드가 포인터를 가로채 시트 버튼 클릭이 먹힌다)
-    if (e.target.closest('.ctlwrap, .grip, .sheet')) return;
+    if (e.target.closest('.ctlwrap, .sheet')) return;
+    // 오른쪽아래 모서리(그립 표시 자리)는 OS 리사이즈 몫이다.
+    // 여기서 창을 움직이기 시작하면 리사이즈하려던 손이 창을 끌어버린다.
+    const gr = $('grip').getBoundingClientRect();
+    if (e.clientX >= gr.left && e.clientY >= gr.top) return;
     dragging = false;
     const pos = await window.nunsseom.getWidgetPos();
     press = { sx: e.screenX, sy: e.screenY, x: pos.x, y: pos.y };
@@ -785,30 +790,9 @@
     if (e.key === 'Escape') cardEl.classList.remove('open');
   });
 
-  // ── 그립 드래그 리사이즈 ───────────────────────────
-  const grip = $('grip');
-  let origin = null;
-
-  grip.addEventListener('pointerdown', async (e) => {
-    e.preventDefault();
-    grip.setPointerCapture(e.pointerId);
-    const size = await window.nunsseom.getWidgetSize();
-    origin = { x: e.screenX, y: e.screenY, ...size };
-  });
-  grip.addEventListener('pointermove', (e) => {
-    if (!origin) return;
-    window.nunsseom.resizeWidget({
-      width: origin.width + (e.screenX - origin.x),
-      height: origin.height + (e.screenY - origin.y)
-    });
-  });
-  const endResize = (e) => {
-    if (!origin) return;
-    origin = null;
-    try { grip.releasePointerCapture(e.pointerId); } catch {}
-  };
-  grip.addEventListener('pointerup', endResize);
-  grip.addEventListener('pointercancel', endResize);
+  // 크기 조절은 OS 네이티브 리사이즈(가장자리·모서리)에 맡긴다.
+  // 그립은 "여기를 끌면 된다"는 표시일 뿐이라 이벤트를 받지 않는다(.grip { pointer-events: none }).
+  // 예전엔 그립에서도 직접 setSize를 했는데, 네이티브 코너와 같은 자리라 둘이 싸워 창이 폭주했다.
 </script>
 </body>
 </html>

@@ -17,11 +17,11 @@ const PRELOAD = path.join(__dirname, 'preload.js');
 const page = (name) => path.join(__dirname, '..', 'renderer', name);
 
 // 창 크기 = 카드 크기 + 그림자 여백(INSET*2) + 호버 컨트롤 띠(CONTROLS).
-// 카드 기준 176x84 ~ 460x220.
+// 카드 기준 176x84 ~ 640x520. 상한이 낮으면 크게 쓰던 사람이 리사이즈에서 벽에 막힌다.
 const PAD = glass.INSET * 2;
 const PAD_H = PAD + glass.CONTROLS;
 const WIDGET_MIN = { width: 176 + PAD, height: 84 + PAD_H };
-const WIDGET_MAX = { width: 460 + PAD, height: 220 + PAD_H };
+const WIDGET_MAX = { width: 640 + PAD, height: 520 + PAD_H };
 const WIDGET_DEFAULT = { width: 244 + PAD, height: 110 + PAD_H };
 const SNOOZE_MS = 5 * 60_000;
 
@@ -124,9 +124,10 @@ function createWidget() {
     maxWidth: WIDGET_MAX.width,
     maxHeight: WIDGET_MAX.height,
     frame: false,
-    // resizable:true면 프레임 없는 창 가장자리에 OS 네이티브 리사이즈 테두리가 붙어
-    // 투명 여백을 누를 때 창이 멋대로 커진다. 그립으로 setSize는 이 값과 무관하게 동작한다.
-    resizable: false,
+    // 가장자리·모서리 리사이즈는 OS에 맡긴다 (커서도 OS가 바꿔준다).
+    // 예전에는 여기에 더해 그립에서 직접 setSize도 했는데, 그립이 네이티브
+    // 리사이즈 코너와 같은 자리라 두 리사이즈가 싸우며 창이 폭주했다.
+    resizable: true,
     alwaysOnTop: true,
     skipTaskbar: true,
     ...glass.windowOptions(),
@@ -147,6 +148,14 @@ function createWidget() {
   widgetWin.on('resize', () => {
     const [width, height] = widgetWin.getSize();
     store.setWidgetSize({ width, height });
+  });
+  // 네이티브 드래그 중에는 min/max가 늘 지켜지지는 않는다 (특히 배율이 100%가 아닐 때).
+  // 드래그가 끝난 뒤에 한 번만 바로잡는다 — 드래그 중에 고치면 OS와 싸워 창이 튄다.
+  widgetWin.on('resized', () => {
+    const [width, height] = widgetWin.getSize();
+    const w = Math.round(clamp(width, WIDGET_MIN.width, WIDGET_MAX.width));
+    const h = Math.round(clamp(height, WIDGET_MIN.height, WIDGET_MAX.height));
+    if (w !== width || h !== height) widgetWin.setSize(w, h);
   });
   widgetWin.on('closed', () => { widgetWin = null; });
 }
