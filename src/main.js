@@ -1,8 +1,9 @@
 const {
   app, BrowserWindow, Tray, Menu, ipcMain, screen,
-  powerMonitor, nativeImage, desktopCapturer, nativeTheme
+  powerMonitor, nativeImage, desktopCapturer, nativeTheme, shell, dialog
 } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const store = require('./store');
 const glass = require('./glass');
 const reminders = require('./reminders');
@@ -11,6 +12,7 @@ const calendar = require('./calendar');
 const updater = require('./updater');
 const session = require('./session');
 const autolaunch = require('./autolaunch');
+const evlog = require('./evlog');
 
 const ICON = path.join(__dirname, '..', 'assets', 'tray.png');
 const PRELOAD = path.join(__dirname, 'preload.js');
@@ -149,6 +151,8 @@ function createWidget() {
   widgetWin.on('resize', () => {
     const [width, height] = widgetWin.getSize();
     store.setWidgetSize({ width, height });
+    // 우리가 시킨 적 없는 resize가 찍히면 그건 OS가 창을 건드린 것이다
+    evlog.log('창', `resize → ${width}x${height}`);
   });
   // 네이티브 드래그 중에는 min/max가 늘 지켜지지는 않는다 (특히 배율이 100%가 아닐 때).
   // 드래그가 끝난 뒤에 한 번만 바로잡는다 — 드래그 중에 고치면 OS와 싸워 창이 튄다.
@@ -156,6 +160,8 @@ function createWidget() {
     const [width, height] = widgetWin.getSize();
     const w = Math.round(clamp(width, WIDGET_MIN.width, WIDGET_MAX.width));
     const h = Math.round(clamp(height, WIDGET_MIN.height, WIDGET_MAX.height));
+    evlog.log('창', `resized(끝) ${width}x${height}`
+      + (w !== width || h !== height ? ` → 범위로 되돌림 ${w}x${h}` : ''));
     if (w !== width || h !== height) widgetWin.setSize(w, h);
   });
   widgetWin.on('closed', () => { widgetWin = null; });
@@ -404,6 +410,14 @@ function updateTray() {
       ? [{ type: 'separator' }, { label: `업데이트 ${up.newVersion} 설치하고 다시 시작`, click: installUpdate }]
       : []),
     { type: 'separator' },
+    {
+      label: '이벤트 기록 (문제 재현용)',
+      type: 'checkbox',
+      checked: evlog.enabled,
+      click: (item) => setEventLog(item.checked)
+    },
+    { label: '기록 파일 열기', click: openEventLog },
+    { type: 'separator' },
     { label: '종료', click: () => { app.isQuitting = true; app.quit(); } }
   ]));
 }
@@ -451,6 +465,35 @@ function revealWidget() {
   widgetWin.show();
   widgetWin.setAlwaysOnTop(true);
   widgetWin.focus();
+}
+
+/** 이벤트 기록 켜기/끄기 — 렌더러도 같이 알아야 포인터 이벤트를 보낸다 */
+function setEventLog(on) {
+  evlog.setEnabled(on);
+  if (on) {
+    const d = screen.getPrimaryDisplay();
+    evlog.log('main', `배율 ${d.scaleFactor} · 작업영역 ${d.workAreaSize.width}x${d.workAreaSize.height}`);
+    if (widgetWin && !widgetWin.isDestroyed()) {
+      const b = widgetWin.getBounds();
+      evlog.log('main', `위젯 시작 상태 ${b.width}x${b.height} @${b.x},${b.y} · resizable=${widgetWin.isResizable()}`);
+    }
+  }
+  for (const w of [widgetWin, statsWin, settingsWin]) {
+    if (w && !w.isDestroyed()) w.webContents.send('debug:mode', on);
+  }
+  updateTray();
+}
+
+function openEventLog() {
+  if (!evlog.file || !fs.existsSync(evlog.file)) {
+    dialog.showMessageBox({
+      type: 'info', title: '이벤트 기록',
+      message: '아직 기록이 없습니다.',
+      detail: '트레이 메뉴에서 «이벤트 기록»을 켜고 문제를 재현한 뒤 다시 열어보세요.'
+    });
+    return;
+  }
+  shell.openPath(evlog.file);
 }
 
 function resetWidgetSize() {
@@ -569,6 +612,12 @@ ipcMain.on('widget:set-bounds', (_e, { x, y, width, height, dir }) => {
   const nx = Math.round(String(dir).includes('w') ? x + (width - w) : x);
   const ny = Math.round(String(dir).includes('n') ? y + (height - h) : y);
   widgetWin.setBounds({ x: nx, y: ny, width: w, height: h });
+  if (evlog.enabled) {
+    const got = widgetWin.getBounds();
+    const clamped = (w !== Math.round(width) || h !== Math.round(height)) ? ' [한계에 걸림]' : '';
+    evlog.log('main', `set-bounds(${dir}) 요청 ${Math.round(width)}x${Math.round(height)}`
+      + ` → 적용 ${w}x${h}${clamped} → 실제 ${got.width}x${got.height} @${got.x},${got.y}`);
+  }
 });
 // 카드를 클릭 가능하게 만들려면 -webkit-app-region: drag를 쓸 수 없어
 // 이동을 직접 처리한다 (drag 영역은 마우스 이벤트를 OS가 가져가 클릭이 안 잡힘)
@@ -580,7 +629,11 @@ ipcMain.handle('widget:get-pos', () => {
 ipcMain.on('widget:move', (_e, { x, y }) => {
   if (!widgetWin || widgetWin.isDestroyed()) return;
   widgetWin.setPosition(Math.round(x), Math.round(y));
+  evlog.log('main', `move → @${Math.round(x)},${Math.round(y)}`);
 });
+
+// 렌더러가 보내는 포인터 이벤트 기록
+ipcMain.on('debug:log', (_e, { source, message }) => evlog.log(source, message));
 
 ipcMain.handle('overlay:get-bg', (_e, id) => overlayShots.get(String(id)) || null);
 ipcMain.handle('overlay:get-payload', () => breakPayload);
@@ -760,6 +813,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', () => { if (widgetWin) { widgetWin.show(); widgetWin.focus(); } });
 
   app.whenReady().then(() => {
+    evlog.init(app.getPath('userData'));
     tray = new Tray(nativeImage.createFromPath(ICON));
     // 트레이 아이콘을 더블클릭하면 위젯이 다시 나온다 (Windows 관례)
     tray.on('double-click', revealWidget);

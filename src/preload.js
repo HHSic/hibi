@@ -23,6 +23,10 @@ contextBridge.exposeInMainWorld('nunsseom', {
   getWidgetPos: () => ipcRenderer.invoke('widget:get-pos'),
   getWidgetBounds: () => ipcRenderer.invoke('widget:get-bounds'),
   setWidgetBounds: (b) => ipcRenderer.send('widget:set-bounds', b),
+
+  // 이벤트 기록 (트레이에서 켤 때만 동작)
+  debugLog: (source, message) => ipcRenderer.send('debug:log', { source, message }),
+  onDebugMode: (cb) => ipcRenderer.on('debug:mode', (_e, on) => cb(on)),
   moveWidget: (pos) => ipcRenderer.send('widget:move', pos),
 
   // 오버레이
