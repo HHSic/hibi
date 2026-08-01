@@ -283,6 +283,7 @@
   }
   .sheet .sh button:hover { text-decoration: underline; }
   .sheet .rows { display: flex; flex-direction: column; gap: 0.1875rem; overflow-y: auto; min-height: 0; }
+  #sheet-rows { flex: 1; }   /* 남는 높이는 알림 목록이 갖고, 일정은 제 몫만 */
   .sheet .rows::-webkit-scrollbar { width: 3px; }
   .sheet .rows::-webkit-scrollbar-thumb {
     background: transparent; border-radius: 2px; transition: background 0.15s;
@@ -298,6 +299,23 @@
     transition: background 0.1s;
   }
   .sheet .row:hover { background: var(--fill); }
+
+  /* 오늘 일정 — 알림 목록 아래에 얇게 붙인다 */
+  /* 오늘 일정은 아래에 붙되, 위쪽 알림 목록을 밀어내지 않도록 제 몫만 차지한다 */
+  .sched {
+    display: none; flex: none;
+    margin-top: 0.375rem; padding-top: 0.375rem;
+    border-top: 0.5px solid var(--hairline);
+  }
+  .sched .sh { margin-bottom: 0.1875rem; }
+  .sched .rows { max-height: 5.25rem; }
+  .sheet .row.ev { grid-template-columns: 0.375rem 1fr auto; }
+  .evdot {
+    width: 0.3125rem; height: 0.3125rem; border-radius: 50%;
+    background: var(--tertiary); justify-self: center;
+  }
+  .sheet .row.ev.now .evdot { background: var(--tint); }
+  .sheet .row.ev.now .nm { color: var(--label); font-weight: 600; }
   .sheet .row .g { width: 0.875rem; height: 0.875rem; }
   .sheet .row .nm { color: var(--label); font-weight: 540; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sheet .row .tm { color: var(--secondary); font-variant-numeric: tabular-nums; font-weight: 560; }
@@ -435,6 +453,10 @@
     <div class="sheet" id="sheet">
       <div class="sh"><span>예정된 알림</span><button id="sheet-stats">기록 보기</button></div>
       <div class="rows" id="sheet-rows"></div>
+      <div class="sched" id="sched">
+        <div class="sh"><span>오늘 일정</span></div>
+        <div class="rows" id="sched-rows"></div>
+      </div>
     </div>
 
     <button class="upchip" id="upchip" title="업데이트 설치"></button>
@@ -712,6 +734,39 @@
     });
   }
 
+  // ── 오늘 일정 ──────────────────────────────────────
+  // 캘린더를 읽어놓고 음소거에만 쓰던 걸, 시트에서 눈으로도 보게 한다.
+  const hhmm = (ms) => {
+    const d = new Date(ms);
+    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  };
+
+  function renderSchedule(list) {
+    const host = $('sched-rows');
+    const sec = $('sched');
+    // CSS 기본이 none이라 ''로 비우면 도로 숨는다 — 명시적으로 켠다
+    if (!list || !list.length) { sec.style.display = 'none'; return; }
+    sec.style.display = 'block';
+    host.textContent = '';
+    // 끝난 일정은 하나까지만 남기고 접는다 — 남은 하루가 먼저 보여야 한다
+    const rest = list.filter((e) => !e.done);
+    const show = rest.length ? rest : list.slice(-1);
+    for (const e of show.slice(0, 6)) {
+      const row = document.createElement('div');
+      row.className = 'row ev' + (e.now ? ' now' : '');
+      const dot = document.createElement('span');
+      dot.className = 'evdot';
+      const nm = document.createElement('span');
+      nm.className = 'nm';
+      nm.textContent = e.summary;
+      const tm = document.createElement('span');
+      tm.className = 'tm';
+      tm.textContent = e.allDay ? '종일' : hhmm(e.start);
+      row.append(dot, nm, tm);
+      host.append(row);
+    }
+  }
+
   function renderChips(list, bundleIds) {
     const host = $('chips');
     host.textContent = '';
@@ -750,6 +805,7 @@
       root.style.setProperty('--p', '0%');
       setPauseIcon(!!d.paused);
       renderSheet([]);
+      renderSchedule(d.schedule);
       return;
     }
 
@@ -783,6 +839,7 @@
       renderChips(d.upcoming, d.bundle && d.bundle.length ? d.bundle : [d.type.id]);
       renderSheet(d.upcoming);
     }
+    renderSchedule(d.schedule);
     showUpdate(d.update);
     if (d.week) renderWeek(d.week);
   });

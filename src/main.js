@@ -13,6 +13,7 @@ const updater = require('./updater');
 const session = require('./session');
 const autolaunch = require('./autolaunch');
 const evlog = require('./evlog');
+const planner = require('./planner');
 
 const ICON = path.join(__dirname, '..', 'assets', 'tray.png');
 const PRELOAD = path.join(__dirname, 'preload.js');
@@ -62,7 +63,7 @@ const state = {
 
 // 캘린더 일정 캐시
 const CAL_REFRESH_MS = 15 * 60 * 1000;
-const cal = { occurrences: [], errors: [], fetchedAt: 0, loading: false };
+const cal = { occurrences: [], errors: [], fetchedAt: 0, loading: false, hold: null };
 
 async function refreshCalendars() {
   const list = store.calendars;
@@ -90,11 +91,22 @@ async function refreshCalendars() {
  * 매 초 네이티브 호출을 반복하지 않도록 잠깐 캐시한다.
  */
 const DND_CACHE_MS = 2000;
-let dndCache = { at: 0, reason: null };
+let dndCache = { at: 0, needMs: 0, reason: null };
 
-function holdReason() {
+/** 휴식에 필요한 시간 — 다음 일정까지 이만큼도 안 남았으면 시작하지 않는다 */
+function needMsFor(ids) {
+  if (!ids || !ids.length) return 0;
+  const secs = ids.map((id) => {
+    const c = scheduler.cfgOf(id);
+    return (c && c.durationSec) || 20;
+  });
+  return Math.max(...secs, 10) * 1000;
+}
+
+function holdReason(needMs = 0) {
   const now = Date.now();
-  if (now - dndCache.at < DND_CACHE_MS) return dndCache.reason;
+  // 필요한 시간이 달라지면 캐시를 다시 계산해야 한다 (같은 초에도 판단이 갈린다)
+  if (now - dndCache.at < DND_CACHE_MS && dndCache.needMs === needMs) return dndCache.reason;
 
   const s = store.settings;
   let reason = null;
@@ -103,11 +115,16 @@ function holdReason() {
   if (d.blocked) {
     reason = d.reason;
   } else if (s.calendarBusy) {
-    const ev = calendar.currentEvent(cal.occurrences);
-    if (ev) reason = ev.summary ? `일정: ${ev.summary}` : '일정 중';
+    // 일정 중일 때만이 아니라, 일정 직전이라 휴식이 온전히 들어갈 자리가 없을 때도 미룬다
+    const p = planner.check(cal.occurrences, now, s.calendarLead ? needMs : 0, {
+      leadMs: (s.calendarLeadMin || 0) * 60_000,
+      joinMs: (s.calendarJoinMin || 0) * 60_000
+    });
+    if (p) reason = p.label;
+    cal.hold = p;
   }
 
-  dndCache = { at: now, reason };
+  dndCache = { at: now, needMs, reason };
   return reason;
 }
 
@@ -318,9 +335,10 @@ function tick() {
     state.hold = null;
     state.dnd = null;
   } else {
-    // 알림이 밀릴 때만이 아니라 방해 금지가 켜진 동안 계속 상태를 알린다
-    state.dnd = holdReason();
+    // 알림이 밀릴 때만이 아니라 방해 금지가 켜진 동안 계속 상태를 알린다.
+    // 판단에 "이 휴식이 몇 분 걸리는지"가 필요하므로 due를 먼저 구한다.
     const due = scheduler.due(now);
+    state.dnd = holdReason(needMsFor(due));
     if (due.length) {
       // 발표·전체화면·회의 중이면 끝날 때까지 카운트다운을 붙잡아 둔다.
       // 미룬 알림은 상황이 끝나는 즉시 이어서 실행된다.
@@ -346,8 +364,11 @@ function pushTick() {
   const custom = store.custom;
   let payload;
 
+  // 오늘 일정 — 위젯 시트에서 예정된 알림과 나란히 보여준다
+  const schedule = store.settings.calendarShow ? planner.today(cal.occurrences) : [];
+
   if (!next) {
-    payload = { empty: true, paused: state.paused, today: store.todayStats() };
+    payload = { empty: true, paused: state.paused, today: store.todayStats(), schedule };
   } else {
     const cfg = scheduler.cfgOf(next.id);
     const totalSec = Math.max(1, (cfg ? cfg.intervalMin : 20) * 60);
@@ -363,6 +384,9 @@ function pushTick() {
       hold: state.hold,
       dnd: state.dnd,
       today: store.todayStats(),
+      schedule,
+      // 일정 때문에 미루는 중이면 언제 이어지는지 알려준다
+      holdUntil: state.hold && cal.hold ? cal.hold.until : null,
       upcoming: upcomingList(8),
       // 다음 휴식에 함께 묶일 종류들 — 위젯 칩에서 강조된다
       bundle: scheduler.nextBundle(),

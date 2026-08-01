@@ -47,6 +47,12 @@ const DEFAULT_SETTINGS = {
   // 캘린더 — 일정 중에는 알림을 미룬다
   calendarBusy: true,
   calendarAllDay: false,   // 종일 일정도 '바쁨'으로 볼지
+  // 일정 사이 빈 시간에 휴식을 배치한다.
+  // 회의 직전에 띄우면 쉬다 말고 들어가야 하므로, 휴식이 온전히 들어갈 자리가 없으면 미룬다.
+  calendarLead: true,
+  calendarLeadMin: 5,      // 일정 시작 이만큼 전부터는 새로 띄우지 않는다 (분)
+  calendarJoinMin: 10,     // 일정 사이가 이보다 좁으면 이어진 하나로 본다 (분)
+  calendarShow: true,      // 위젯 시트에 오늘 일정 보여주기
   autoUpdate: true         // 자동으로 업데이트 확인
 };
 
