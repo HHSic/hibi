@@ -51,6 +51,8 @@ contextBridge.exposeInMainWorld('nunsseom', {
   calRemove: (id) => ipcRenderer.invoke('cal:remove', id),
   calRefresh: () => ipcRenderer.invoke('cal:refresh'),
   calTest: (url) => ipcRenderer.invoke('cal:test', url),
+  calClipboard: () => ipcRenderer.invoke('cal:clipboard'),
+  calOpenHelp: (which) => ipcRenderer.invoke('cal:open-help', which),
 
   // 자동 실행 (OS 상태를 그대로 읽고 쓴다)
   autoLaunchGet: () => ipcRenderer.invoke('autolaunch:get'),

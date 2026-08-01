@@ -244,6 +244,23 @@
   input[type=text]:focus { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent); }
   input[type=text]::placeholder { color: var(--tertiary); }
 
+  .col .hint { font-size: 11px; color: var(--tertiary); line-height: 1.5; }
+  .col .hint b { color: var(--secondary-label); font-weight: 600; }
+  .helprow { display: flex; gap: 6px; flex-wrap: wrap; }
+  /* 클립보드에서 찾은 주소 — 여기서 바로 넣게 해 타이핑을 없앤다 */
+  .paste {
+    display: flex; align-items: center; gap: 10px;
+    margin: 0 0 8px; padding: 10px 13px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--accent) 40%, transparent);
+  }
+  .paste .ptxt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .paste .ptxt b { font-size: 12.5px; font-weight: 600; }
+  .paste .ptxt span {
+    font-size: 11px; color: var(--tertiary);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   .upline { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .upline .ver { font-size: 12.5px; color: var(--label); }
   .mini {
@@ -444,14 +461,32 @@
     <div class="group" id="cal-list"></div>
 
     <div class="sec">새로 추가</div>
+
+    <!-- 복사해 온 주소를 감지하면 한 번 눌러 넣는다 (타이핑 없음) -->
+    <div class="paste" id="cal-paste" style="display:none">
+      <div class="ptxt">
+        <b>복사한 캘린더 주소를 찾았어요</b>
+        <span id="cal-paste-url"></span>
+      </div>
+      <button class="mini go" id="btn-cal-paste">이걸로 추가</button>
+    </div>
+
     <div class="group">
       <div class="col">
-        <span class="lbl">이름</span>
-        <input type="text" id="cal-name" placeholder="회사 일정">
+        <span class="lbl">1. 캘린더에서 주소 복사하기</span>
+        <div class="helprow">
+          <button class="mini" id="btn-help-google">Google 캘린더 열기</button>
+          <button class="mini" id="btn-help-outlook">Outlook 열기</button>
+        </div>
+        <span class="hint">
+          Google — 왼쪽에서 캘린더 선택 → 아래로 내려 <b>«iCal 형식의 비공개 주소»</b> 복사<br>
+          Notion — 캘린더 뷰 오른쪽 위 ··· → 연결 → <b>«iCal로 내보내기»</b>
+        </span>
       </div>
       <div class="col">
-        <span class="lbl">iCal 주소 (.ics)</span>
-        <input type="text" id="cal-url" placeholder="https://calendar.google.com/calendar/ical/.../basic.ics">
+        <span class="lbl">2. 여기에 붙여넣기</span>
+        <input type="text" id="cal-url" placeholder="주소를 붙여넣으세요 (Ctrl+V)">
+        <span class="hint">캘린더 ID나 공유 주소를 붙여넣어도 알아서 바꿔줍니다.</span>
       </div>
       <div class="col">
         <div class="upline">
@@ -462,9 +497,7 @@
     </div>
 
     <p class="foot">
-      <b>Google 캘린더</b> — 설정 → 해당 캘린더 → "캘린더 통합" → <b>iCal 형식의 비공개 주소</b> 복사<br>
-      <b>Notion</b> — 캘린더 뷰 우측 상단 ··· → 연결 → <b>iCal로 내보내기</b><br>
-      Outlook·Apple 캘린더의 게시 주소도 같은 방식으로 됩니다. 15분마다 새로 읽어옵니다.
+      이름은 캘린더가 가진 이름을 그대로 씁니다. 15분마다 새로 읽어옵니다.
     </p>
   </div>
  </div>
@@ -934,26 +967,41 @@
     host.after(banner);
   }
 
-  $('btn-cal-add').onclick = async () => {
-    const url = $('cal-url').value.trim();
-    const name = $('cal-name').value.trim() || '캘린더';
+  // 이름은 받지 않는다 — 캘린더가 가진 이름을 메인에서 읽어 붙인다
+  async function addCalendar(url) {
     const msg = $('cal-msg');
-    if (!url) { msg.textContent = '주소를 입력하세요'; return; }
+    if (!url) { msg.textContent = '주소를 붙여넣으세요'; return; }
     msg.textContent = '확인 중…';
     $('btn-cal-add').disabled = true;
     try {
       const t = await window.nunsseom.calTest(url);
       if (!t.ok) { msg.textContent = t.message; return; }
-      const r = await window.nunsseom.calAdd(name, url);
+      const r = await window.nunsseom.calAdd('', url);
       data.calendars = r.calendars;
       renderCalendars(r.calendars, r.status);
       $('cal-url').value = '';
-      $('cal-name').value = '';
+      $('cal-paste').style.display = 'none';
       msg.textContent = t.message;
     } finally {
       $('btn-cal-add').disabled = false;
     }
-  };
+  }
+
+  $('btn-cal-add').onclick = () => addCalendar($('cal-url').value.trim());
+  $('btn-help-google').onclick = () => window.nunsseom.calOpenHelp('google');
+  $('btn-help-outlook').onclick = () => window.nunsseom.calOpenHelp('outlook');
+
+  // 복사해 온 주소가 있으면 띄워준다. 창을 열 때와 다시 활성화될 때 살핀다.
+  let pasteUrl = null;
+  async function checkClipboard() {
+    const found = await window.nunsseom.calClipboard();
+    pasteUrl = found ? found.url : null;
+    $('cal-paste').style.display = found ? 'flex' : 'none';
+    if (found) $('cal-paste-url').textContent = found.raw;
+  }
+  $('btn-cal-paste').onclick = () => { if (pasteUrl) addCalendar(pasteUrl); };
+  window.addEventListener('focus', checkClipboard);
+  checkClipboard();
 
   // ── 기록 ──────────────────────────────────────────
   function paintStats(s) {

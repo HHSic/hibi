@@ -51,6 +51,64 @@ function fetchText(url, redirects = 0) {
 
 // ── 파싱 ────────────────────────────────────────────────
 /** 접힌 줄(다음 줄이 공백으로 시작)을 펼친다 */
+/**
+ * 사람이 붙여넣는 온갖 형태를 ICS 주소로 바꾼다.
+ * "iCal 비공개 주소"를 정확히 찾아오는 사람은 드물다. 보통은 캘린더 ID나
+ * 브라우저 주소창 URL을 붙여넣는데, 그걸 거절하면 거기서 포기하게 된다.
+ */
+function normalizeUrl(input) {
+  let s = String(input || '').trim()
+    .replace(/^[<"']+|[>"']+$/g, '')   // <주소>, "주소" 처럼 감싸 붙여넣는 경우
+    .replace(/\s+/g, '');
+  if (!s) return '';
+
+  s = s.replace(/^webcal:\/\//i, 'https://');
+
+  // 캘린더 ID만 붙여넣은 경우 — abc@group.calendar.google.com, me@gmail.com
+  if (/^[^\s/:]+@[^\s/:]+\.[a-z]{2,}$/i.test(s)) {
+    return `https://calendar.google.com/calendar/ical/${encodeURIComponent(s)}/public/basic.ics`;
+  }
+
+  let u;
+  try { u = new URL(s); } catch { return s; }
+
+  if (/(^|\.)calendar\.google\.com$/i.test(u.hostname)) {
+    // 임베드/공유 주소: ...&src=<캘린더ID>
+    const src = u.searchParams.get('src');
+    if (src) {
+      return `https://calendar.google.com/calendar/ical/${encodeURIComponent(src)}/public/basic.ics`;
+    }
+    // 구독 주소: ...?cid=<base64 캘린더ID>
+    const cid = u.searchParams.get('cid');
+    if (cid) {
+      let id = cid;
+      try { id = Buffer.from(cid, 'base64').toString('utf8'); } catch { /* 평문 cid도 있다 */ }
+      if (/@/.test(id)) {
+        return `https://calendar.google.com/calendar/ical/${encodeURIComponent(id)}/public/basic.ics`;
+      }
+    }
+  }
+  return u.toString();
+}
+
+/** 붙여넣은 것이 캘린더 주소처럼 보이는가 (클립보드 감지용) */
+function looksLikeCalendar(input) {
+  const s = String(input || '').trim();
+  if (!s || s.length > 500 || /\s/.test(s)) return false;
+  return /^webcal:/i.test(s)
+    || /\.ics(\?|$)/i.test(s)
+    || /calendar\.google\.com/i.test(s)
+    || /outlook\.(office|live)\.com.*\/calendar/i.test(s)
+    || /^[^\s/:]+@(group\.calendar\.google\.com|gmail\.com)$/i.test(s);
+}
+
+/** 캘린더가 스스로 밝힌 이름 — 사용자가 이름을 지어내지 않아도 되게 */
+function calendarName(icsText) {
+  const m = unfold(String(icsText || '')).match(/^X-WR-CALNAME[^:]*:(.*)$/mi);
+  if (!m) return '';
+  return m[1].trim().replace(/\\,/g, ',').replace(/\\n/gi, ' ').slice(0, 40);
+}
+
 function unfold(text) {
   return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n[ \t]/g, '');
 }
@@ -294,5 +352,6 @@ function nextEvent(occurrences, at = Date.now()) {
 }
 
 module.exports = {
-  loadOccurrences, occurrencesIn, parseEvents, currentEvent, nextEvent, fetchText
+  loadOccurrences, occurrencesIn, parseEvents, currentEvent, nextEvent, fetchText,
+  normalizeUrl, looksLikeCalendar, calendarName
 };

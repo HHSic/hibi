@@ -1,6 +1,6 @@
 const {
   app, BrowserWindow, Tray, Menu, ipcMain, screen,
-  powerMonitor, nativeImage, desktopCapturer, nativeTheme, shell, dialog
+  powerMonitor, nativeImage, desktopCapturer, nativeTheme, shell, dialog, clipboard
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -749,9 +749,36 @@ function calendarStatus() {
 
 // ── 캘린더 ────────────────────────────────────────────────
 ipcMain.handle('cal:add', async (_e, { name, url }) => {
-  store.addCalendar({ name, url });
+  // 붙여넣은 형태가 무엇이든 ICS 주소로 바꾸고, 이름은 캘린더가 밝힌 것을 쓴다.
+  // 이름까지 지어내게 하면 거기서 그만두는 사람이 생긴다.
+  const normalized = calendar.normalizeUrl(url);
+  let finalName = String(name || '').trim();
+  if (!finalName) {
+    try { finalName = calendar.calendarName(await calendar.fetchText(normalized)); } catch { /* 이름은 없어도 된다 */ }
+  }
+  store.addCalendar({ name: finalName || '캘린더', url: normalized });
   await refreshCalendars();
   return { calendars: store.calendars, status: calendarStatus() };
+});
+
+/** 클립보드에 캘린더 주소가 있으면 알려준다 — 복사해 온 것을 한 번 눌러 넣게 */
+ipcMain.handle('cal:clipboard', () => {
+  const text = clipboard.readText();
+  if (!calendar.looksLikeCalendar(text)) return null;
+  const url = calendar.normalizeUrl(text);
+  if (store.calendars.some((c) => c.url === url)) return null;   // 이미 넣은 것
+  return { url, raw: text.slice(0, 120) };
+});
+
+/** 주소를 찾아야 하는 설정 페이지를 대신 열어준다 */
+ipcMain.handle('cal:open-help', (_e, which) => {
+  const urls = {
+    google: 'https://calendar.google.com/calendar/r/settings',
+    outlook: 'https://outlook.live.com/calendar/0/options/calendar/SharedCalendars'
+  };
+  const target = urls[which];
+  if (target) shell.openExternal(target);
+  return !!target;
 });
 ipcMain.handle('cal:update', async (_e, { id, patch }) => {
   store.updateCalendar(id, patch);
@@ -770,7 +797,7 @@ ipcMain.handle('cal:refresh', async () => {
 /** 저장 전에 주소가 실제로 읽히는지 확인 */
 ipcMain.handle('cal:test', async (_e, url) => {
   try {
-    const text = await calendar.fetchText(url);
+    const text = await calendar.fetchText(calendar.normalizeUrl(url));
     if (!/BEGIN:VCALENDAR/i.test(text)) return { ok: false, message: 'iCalendar 형식이 아닙니다' };
     const now = Date.now();
     const occ = calendar.occurrencesIn(text, now - 7 * 86400000, now + 30 * 86400000, {
