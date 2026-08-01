@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld('nunsseom', {
   resizeWidget: (size) => ipcRenderer.send('widget:resize', size),
   getWidgetSize: () => ipcRenderer.invoke('widget:get-size'),
   getWidgetPos: () => ipcRenderer.invoke('widget:get-pos'),
+  getWidgetBounds: () => ipcRenderer.invoke('widget:get-bounds'),
+  setWidgetBounds: (b) => ipcRenderer.send('widget:set-bounds', b),
   moveWidget: (pos) => ipcRenderer.send('widget:move', pos),
 
   // 오버레이

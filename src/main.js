@@ -124,10 +124,11 @@ function createWidget() {
     maxWidth: WIDGET_MAX.width,
     maxHeight: WIDGET_MAX.height,
     frame: false,
-    // 가장자리·모서리 리사이즈는 OS에 맡긴다 (커서도 OS가 바꿔준다).
-    // 예전에는 여기에 더해 그립에서 직접 setSize도 했는데, 그립이 네이티브
-    // 리사이즈 코너와 같은 자리라 두 리사이즈가 싸우며 창이 폭주했다.
-    resizable: true,
+    // OS 네이티브 리사이즈는 쓰지 않는다.
+    // 투명·프레임 없는 창을 배율 150%에서 네이티브로 리사이즈하면, 버튼을 누르고
+    // 가만히 있어도 창이 최대치까지 저 혼자 자란다 (매 메시지마다 1px씩 부풀어서).
+    // 대신 렌더러의 8방향 리사이즈 존이 widget:set-bounds로 직접 크기를 정한다.
+    resizable: false,
     alwaysOnTop: true,
     skipTaskbar: true,
     ...glass.windowOptions(),
@@ -554,6 +555,20 @@ ipcMain.handle('widget:get-size', () => {
   if (!widgetWin || widgetWin.isDestroyed()) return WIDGET_DEFAULT;
   const [width, height] = widgetWin.getSize();
   return { width, height };
+});
+ipcMain.handle('widget:get-bounds', () => {
+  if (!widgetWin || widgetWin.isDestroyed()) return { x: 0, y: 0, ...WIDGET_DEFAULT };
+  return widgetWin.getBounds();
+});
+// 가장자리·모서리 드래그 (렌더러의 리사이즈 존). dir에 w/n이 들어가면 반대쪽
+// 모서리가 제자리에 있어야 하므로, 크기가 한계에 걸린 만큼 좌표를 되돌린다.
+ipcMain.on('widget:set-bounds', (_e, { x, y, width, height, dir }) => {
+  if (!widgetWin || widgetWin.isDestroyed()) return;
+  const w = Math.round(clamp(width, WIDGET_MIN.width, WIDGET_MAX.width));
+  const h = Math.round(clamp(height, WIDGET_MIN.height, WIDGET_MAX.height));
+  const nx = Math.round(String(dir).includes('w') ? x + (width - w) : x);
+  const ny = Math.round(String(dir).includes('n') ? y + (height - h) : y);
+  widgetWin.setBounds({ x: nx, y: ny, width: w, height: h });
 });
 // 카드를 클릭 가능하게 만들려면 -webkit-app-region: drag를 쓸 수 없어
 // 이동을 직접 처리한다 (drag 영역은 마우스 이벤트를 OS가 가져가 클릭이 안 잡힘)

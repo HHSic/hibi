@@ -386,13 +386,25 @@
   .grip {
     position: absolute; right: 0; bottom: 0;
     width: 0.9375rem; height: 0.9375rem;
-    /* 표시 전용 — 실제 리사이즈는 OS 네이티브 코너가 처리한다.
-       이벤트를 받으면 네이티브 리사이즈와 싸워 창이 폭주한다. */
+    /* 표시 전용 — 실제 드래그는 아래 .rz(리사이즈 존)가 받는다 */
     pointer-events: none;
     opacity: 0;
     transition: opacity 0.15s;
     z-index: 6;
   }
+
+  /* 가장자리·모서리 리사이즈 존.
+     OS 네이티브 리사이즈는 이 창(투명·프레임 없음)에서 저 혼자 커지는 버그가 있어
+     쓰지 않는다. 카드 테두리 위에 걸치게 두어 조준하기 쉽게 한다. */
+  .rz { position: absolute; z-index: 8; }
+  .rz-n { left: 12px; right: 12px; top: -5px; height: 10px; cursor: ns-resize; }
+  .rz-s { left: 12px; right: 12px; bottom: -5px; height: 10px; cursor: ns-resize; }
+  .rz-w { top: 12px; bottom: 12px; left: -5px; width: 10px; cursor: ew-resize; }
+  .rz-e { top: 12px; bottom: 12px; right: -5px; width: 10px; cursor: ew-resize; }
+  .rz-nw { left: -5px; top: -5px; width: 17px; height: 17px; cursor: nwse-resize; }
+  .rz-ne { right: -5px; top: -5px; width: 17px; height: 17px; cursor: nesw-resize; }
+  .rz-sw { left: -5px; bottom: -5px; width: 17px; height: 17px; cursor: nesw-resize; }
+  .rz-se { right: -5px; bottom: -5px; width: 17px; height: 17px; cursor: nwse-resize; }
   .stage:hover .grip { opacity: 0.45; }
   .grip svg { width: 100%; height: 100%; color: var(--label); }
 
@@ -430,6 +442,16 @@
       </svg>
     </div>
   </div>
+
+  <!-- 가장자리·모서리 리사이즈 존 (카드 테두리 위에 걸침) -->
+  <div class="rz rz-n" data-dir="n"></div>
+  <div class="rz rz-s" data-dir="s"></div>
+  <div class="rz rz-w" data-dir="w"></div>
+  <div class="rz rz-e" data-dir="e"></div>
+  <div class="rz rz-nw" data-dir="nw"></div>
+  <div class="rz rz-ne" data-dir="ne"></div>
+  <div class="rz rz-sw" data-dir="sw"></div>
+  <div class="rz rz-se" data-dir="se"></div>
 
   <div class="ctlwrap">
     <div class="controls">
@@ -790,9 +812,42 @@
     if (e.key === 'Escape') cardEl.classList.remove('open');
   });
 
-  // 크기 조절은 OS 네이티브 리사이즈(가장자리·모서리)에 맡긴다.
-  // 그립은 "여기를 끌면 된다"는 표시일 뿐이라 이벤트를 받지 않는다(.grip { pointer-events: none }).
-  // 예전엔 그립에서도 직접 setSize를 했는데, 네이티브 코너와 같은 자리라 둘이 싸워 창이 폭주했다.
+  // ── 가장자리·모서리 리사이즈 ───────────────────────
+  // OS 네이티브 리사이즈는 쓰지 않는다. 투명·프레임 없는 창에서는 버튼을 누른 채
+  // 가만히 있어도 창이 저 혼자 최대치까지 자라는 문제가 있다. 여기서 직접 계산한다.
+  // 화면 좌표(screenX/Y) 기준이라 창이 움직여도 값이 흔들리지 않는다.
+  let rz = null;
+
+  for (const zone of document.querySelectorAll('.rz')) {
+    zone.addEventListener('pointerdown', async (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();               // 카드의 이동/토글 로직으로 새지 않게
+      try { zone.setPointerCapture(e.pointerId); } catch {}
+      const b = await window.nunsseom.getWidgetBounds();
+      rz = { dir: zone.dataset.dir, sx: e.screenX, sy: e.screenY, ...b };
+    });
+
+    zone.addEventListener('pointermove', (e) => {
+      if (!rz) return;
+      const dx = e.screenX - rz.sx;
+      const dy = e.screenY - rz.sy;
+      let { x, y, width, height } = rz;
+      if (rz.dir.includes('e')) width = rz.width + dx;
+      if (rz.dir.includes('s')) height = rz.height + dy;
+      if (rz.dir.includes('w')) { width = rz.width - dx; x = rz.x + dx; }
+      if (rz.dir.includes('n')) { height = rz.height - dy; y = rz.y + dy; }
+      window.nunsseom.setWidgetBounds({ x, y, width, height, dir: rz.dir });
+    });
+
+    const endRz = (e) => {
+      if (!rz) return;
+      rz = null;
+      try { zone.releasePointerCapture(e.pointerId); } catch {}
+    };
+    zone.addEventListener('pointerup', endRz);
+    zone.addEventListener('pointercancel', endRz);
+  }
 </script>
 </body>
 </html>
