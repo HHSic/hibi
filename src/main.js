@@ -29,6 +29,7 @@ const SNOOZE_MS = 5 * 60_000;
 
 let tray = null;
 let widgetWin = null;
+let widgetSize = null;   // 우리가 정한 위젯 크기 (실제 크기를 되읽지 않기 위한 기준)
 let settingsWin = null;
 let statsWin = null;
 let overlayWins = [];
@@ -116,6 +117,14 @@ function createWidget() {
   const size = store.widgetSize || WIDGET_DEFAULT;
   const { width: sw } = screen.getPrimaryDisplay().workAreaSize;
 
+  // 우리가 정한 창 크기. 창을 옮길 때마다 이 값을 같이 못박는다.
+  // 실제 크기(getSize)를 되읽어 쓰면 안 된다 — 배율이 100%가 아닐 때
+  // 창을 옮길 때마다 실제 크기가 1px씩 부풀어, 그 값을 다시 쓰면 끝없이 자란다.
+  widgetSize = {
+    width: Math.round(clamp(size.width, WIDGET_MIN.width, WIDGET_MAX.width)),
+    height: Math.round(clamp(size.height, WIDGET_MIN.height, WIDGET_MAX.height))
+  };
+
   widgetWin = new BrowserWindow({
     width: clamp(size.width, WIDGET_MIN.width, WIDGET_MAX.width),
     height: clamp(size.height, WIDGET_MIN.height, WIDGET_MAX.height),
@@ -154,9 +163,10 @@ function createWidget() {
   });
   widgetWin.on('resize', () => {
     const [width, height] = widgetWin.getSize();
-    store.setWidgetSize({ width, height });
-    // 우리가 시킨 적 없는 resize가 찍히면 그건 OS가 창을 건드린 것이다
-    evlog.log('창', `resize → ${width}x${height}`);
+    // 저장은 실제값이 아니라 우리가 정한 값으로 한다.
+    // 실제값은 배율 탓에 1px 부풀어 있을 수 있고, 그걸 저장하면 실행할 때마다 커진다.
+    store.setWidgetSize({ ...widgetSize });
+    evlog.log('창', `resize → ${width}x${height} (기준 ${widgetSize.width}x${widgetSize.height})`);
   });
   // 네이티브 드래그 중에는 min/max가 늘 지켜지지는 않는다 (특히 배율이 100%가 아닐 때).
   // 드래그가 끝난 뒤에 한 번만 바로잡는다 — 드래그 중에 고치면 OS와 싸워 창이 튄다.
@@ -460,7 +470,8 @@ function ensureOnScreen(win) {
   const { workArea } = screen.getPrimaryDisplay();
   const x = workArea.x + workArea.width - b.width - 20;
   const y = workArea.y + 20;
-  win.setPosition(Math.round(x), Math.round(y));
+  // setPosition은 배율 탓에 창을 부풀리므로 크기를 함께 못박는다
+  win.setBounds({ x: Math.round(x), y: Math.round(y), width: b.width, height: b.height });
   store.setWidgetPos({ x: Math.round(x), y: Math.round(y) });
   console.log('[widget] 화면 밖이라 기본 위치로 되돌렸습니다');
 }
@@ -529,6 +540,7 @@ function openEventLog() {
 
 function resetWidgetSize() {
   if (!widgetWin || widgetWin.isDestroyed()) return;
+  widgetSize = { ...WIDGET_DEFAULT };
   widgetWin.setSize(WIDGET_DEFAULT.width, WIDGET_DEFAULT.height);
   store.setWidgetSize(WIDGET_DEFAULT);
 }
@@ -642,6 +654,7 @@ ipcMain.on('widget:set-bounds', (_e, { x, y, width, height, dir }) => {
   const h = Math.round(clamp(height, WIDGET_MIN.height, WIDGET_MAX.height));
   const nx = Math.round(String(dir).includes('w') ? x + (width - w) : x);
   const ny = Math.round(String(dir).includes('n') ? y + (height - h) : y);
+  widgetSize = { width: w, height: h };   // 이후 이동은 이 크기를 못박는다
   widgetWin.setBounds({ x: nx, y: ny, width: w, height: h });
   if (evlog.enabled) {
     const got = widgetWin.getBounds();
@@ -659,8 +672,12 @@ ipcMain.handle('widget:get-pos', () => {
 });
 ipcMain.on('widget:move', (_e, { x, y }) => {
   if (!widgetWin || widgetWin.isDestroyed()) return;
-  widgetWin.setPosition(Math.round(x), Math.round(y));
-  evlog.log('main', `move → @${Math.round(x)},${Math.round(y)}`);
+  // setPosition을 쓰면 안 된다 — 배율 150%에서 호출마다 창이 1px씩 부푼다(실측).
+  // 드래그는 초당 수십 번이라 순식간에 최대치까지 자란다.
+  // 크기를 함께 지정하되, 반드시 "우리가 정한 값"이어야 한다. 실제 크기를
+  // 되읽어 넣으면 부푼 값이 다시 들어가 똑같이 폭주한다.
+  widgetWin.setBounds({ x: Math.round(x), y: Math.round(y), ...widgetSize });
+  evlog.log('main', `move → @${Math.round(x)},${Math.round(y)} (크기 ${widgetSize.width}x${widgetSize.height} 고정)`);
 });
 
 // 렌더러가 보내는 포인터 이벤트 기록
