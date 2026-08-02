@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <link rel="stylesheet" href="../assets/font/pretendard.css">
 <script src="icons.js"></script>
+<script src="sound.js"></script>
 <style>
   :root {
     --label: rgba(255, 255, 255, 0.96);
@@ -285,24 +286,11 @@
     else if (e.key === 'Escape') window.nunsseom.skip();
   });
 
-  // 잔잔한 차임 (주 모니터에서만)
+  // 알림음 (주 모니터에서만 — 여러 화면에서 같이 울리면 겹쳐 들린다)
   if (isMain) {
-    try {
-      const ctx = new AudioContext();
-      const bell = (freq, t0, dur, vol) => {
-        const o = ctx.createOscillator();
-        const g = ctx.createGain();
-        o.type = 'sine';
-        o.frequency.value = freq;
-        g.gain.setValueAtTime(0, t0);
-        g.gain.linearRampToValueAtTime(vol, t0 + 0.04);
-        g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-        o.connect(g).connect(ctx.destination);
-        o.start(t0); o.stop(t0 + dur);
-      };
-      bell(660, ctx.currentTime + 0.05, 1.6, 0.05);
-      bell(880, ctx.currentTime + 0.25, 2.0, 0.04);
-    } catch {}
+    window.nunsseom.getBreakPayload().then((p) => {
+      if (p && p.sound && p.sound.enabled) window.nunsSound.play(p.sound.name, p.sound.volume);
+    });
   }
 </script>
 </body>

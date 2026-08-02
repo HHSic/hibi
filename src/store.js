@@ -55,6 +55,11 @@ const DEFAULT_SETTINGS = {
   calendarShow: true,      // 위젯 시트에 오늘 일정 보여주기
   calendarPanel: false,    // 위젯에 달력 펼쳐두기
   calendarMode: 'month',   // 달력 보기 단위 — 'month' | 'week'
+  // 알림음 — 화면만으로는 다른 창을 보고 있을 때 놓친다
+  soundEnabled: true,
+  soundName: 'chime',      // renderer/sound.js의 LIST 참고
+  soundVolume: 55,         // 0~100
+
   autoUpdate: true         // 자동으로 업데이트 확인
 };
 

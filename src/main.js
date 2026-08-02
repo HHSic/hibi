@@ -249,7 +249,12 @@ function buildBreakPayload(ids) {
   });
   const grouped = items.length > 1;
   const anyLong = items.some((i) => i.kind === 'long');
-  return { items, grouped, mode: grouped || anyLong ? 'checklist' : 'single' };
+  const s = store.settings;
+  return {
+    items, grouped,
+    mode: grouped || anyLong ? 'checklist' : 'single',
+    sound: { enabled: s.soundEnabled, name: s.soundName, volume: s.soundVolume }
+  };
 }
 
 let breakPayload = null;

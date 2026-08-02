@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <link rel="stylesheet" href="../assets/font/pretendard.css">
 <script src="icons.js"></script>
+<script src="sound.js"></script>
 <style>
   :root {
     --accent: #0a84ff;
@@ -341,6 +342,24 @@
         <span class="nm">코너 라운드</span>
         <input type="range" id="radius" min="0" max="44" step="2">
         <span class="out" id="out-radius"></span>
+      </div>
+    </div>
+
+    <div class="sec">알림음</div>
+    <div class="group">
+      <div class="row toggle">
+        <span class="nm">휴식 시작할 때 소리<i>다른 창을 보고 있으면 화면만으로는 놓칩니다</i></span>
+        <span></span>
+        <button class="sw" id="soundEnabled" role="switch" aria-label="알림음"></button>
+      </div>
+      <div class="col">
+        <span class="lbl">소리 고르기</span>
+        <div class="helprow" id="sound-list"></div>
+      </div>
+      <div class="row">
+        <span class="nm">크기</span>
+        <input type="range" id="soundVolume" min="0" max="100" step="5">
+        <span class="out" id="out-soundVolume"></span>
       </div>
     </div>
 
@@ -1059,6 +1078,23 @@
   window.nunsseom.onUpdateStatus(paintUpdate);
 
   // ── 일반 설정 ─────────────────────────────────────
+  function renderSounds() {
+    const host = $('sound-list');
+    host.textContent = '';
+    for (const s of window.nunsSound.LIST) {
+      const b = document.createElement('button');
+      b.className = 'mini' + (data.settings.soundName === s.id ? '' : ' ghost');
+      b.textContent = s.name;
+      b.onclick = () => {
+        data.settings.soundName = s.id;
+        window.nunsseom.setApp({ soundName: s.id });
+        window.nunsSound.play(s.id, data.settings.soundVolume ?? 55);
+        renderSounds();
+      };
+      host.append(b);
+    }
+  }
+
   function bindAppRow(id, fmt, toValue, toStore) {
     const input = $(id);
     const out = $('out-' + id);
@@ -1081,8 +1117,12 @@
     bindAppRow('calendarJoinMin', (v) => (v ? `${v}분` : '없음'),
       (s) => s.calendarJoinMin ?? 10, (v) => ({ calendarJoinMin: v }));
 
+    bindAppRow('soundVolume', (v) => (v ? `${v}%` : '무음'),
+      (s) => s.soundVolume ?? 55, (v) => ({ soundVolume: v }));
+    renderSounds();
+
     for (const key of ['dndEnabled', 'autoUpdate', 'calendarBusy', 'calendarAllDay',
-                       'calendarLead', 'calendarShow']) {
+                       'calendarLead', 'calendarShow', 'soundEnabled']) {
       bindSwitch(key);
     }
     bindAutoLaunch();
