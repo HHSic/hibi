@@ -31,7 +31,6 @@ const SNOOZE_MS = 5 * 60_000;
 let tray = null;
 let widgetWin = null;
 let widgetSize = null;   // 우리가 정한 위젯 크기 (실제 크기를 되읽지 않기 위한 기준)
-let calWin = null;
 let settingsWin = null;
 let statsWin = null;
 let overlayWins = [];
@@ -79,7 +78,7 @@ async function refreshCalendars() {
     cal.errors = r.errors;
     cal.sources = r.sources;      // 달력에서 다른 달을 펼칠 때 쓴다
     cal.fetchedAt = r.fetchedAt;
-    if (calWin && !calWin.isDestroyed()) calWin.webContents.send('cal:changed');
+    if (widgetWin && !widgetWin.isDestroyed()) widgetWin.webContents.send('cal:changed');
     if (r.errors.length) console.warn('[calendar] 일부 실패:', r.errors.map((e) => e.message).join(', '));
   } catch (e) {
     console.warn('[calendar] refresh failed:', e.message);
@@ -167,7 +166,11 @@ function createWidget() {
   });
 
   widgetWin.loadFile(page('widget.html'), {
-    query: glassQuery({ radius: String(store.settings.radius) })
+    query: glassQuery({
+      radius: String(store.settings.radius),
+      calpanel: store.settings.calendarPanel ? '1' : '',
+      calmode: store.settings.calendarMode || 'month'
+    })
   });
   // 창은 기록을 켠 뒤에 만들어질 수 있다 — 로드가 끝나면 현재 상태를 알린다
   widgetWin.webContents.on('did-finish-load', () => {
@@ -446,7 +449,7 @@ function updateTray() {
     { label: '위젯 숨기기', click: () => widgetWin && !widgetWin.isDestroyed() && widgetWin.hide() },
     { label: '위젯 크기 초기화', click: resetWidgetSize },
     { label: '기록 보기', click: () => openStats(null) },
-    { label: '달력 보기', click: openCalendar },
+    { label: '달력 보기', click: showCalendarPanel },
     { label: '설정', click: openSettings },
     ...(up.status === 'ready'
       ? [{ type: 'separator' }, { label: `업데이트 ${up.newVersion} 설치하고 다시 시작`, click: installUpdate }]
@@ -613,20 +616,11 @@ function openStats(focusType) {
   statsWin.on('closed', () => { statsWin = null; });
 }
 
-function openCalendar() {
-  if (calWin && !calWin.isDestroyed()) { calWin.focus(); return; }
-  calWin = new BrowserWindow({
-    width: 340 + PAD,      // 7칸 달력 격자에 맞춘 폭
-    height: 470 + PAD,
-    frame: false,
-    resizable: false,
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    ...glass.windowOptions(),
-    webPreferences: { preload: PRELOAD }
-  });
-  calWin.loadFile(page('calendar.html'), { query: glassQuery({ radius: '20' }) });
-  calWin.on('closed', () => { calWin = null; });
+/** 위젯 안 달력을 펼친다 (별도 창을 두지 않고 위젯이 길어진다) */
+function showCalendarPanel() {
+  store.setSettings({ calendarPanel: true });
+  revealWidget();
+  if (widgetWin && !widgetWin.isDestroyed()) widgetWin.webContents.send('cal:show');
 }
 
 /**
@@ -649,8 +643,29 @@ ipcMain.handle('cal:month', (_e, { year, month }) => {
     errors: cal.errors.map((e) => ({ name: e.name, message: e.message }))
   };
 });
-ipcMain.on('cal:close', () => calWin && calWin.close());
-ipcMain.on('cal:open', () => openCalendar());
+ipcMain.on('cal:open', () => showCalendarPanel());
+
+/**
+ * 위젯 안 달력을 펼치고 접을 때 창 높이를 그만큼 늘렸다 되돌린다.
+ * 필요한 높이는 렌더러가 실제로 그려본 값을 보내온다 — 칸이 정사각형이라
+ * 폭에 따라 달라져서 여기서 계산하면 어긋난다.
+ */
+let widgetBaseHeight = null;
+ipcMain.on('cal:panel', (_e, { on, needed }) => {
+  if (!widgetWin || widgetWin.isDestroyed() || !widgetSize) return;
+  if (on) {
+    if (widgetBaseHeight == null) widgetBaseHeight = widgetSize.height;
+    const h = Math.round(clamp(widgetBaseHeight + (needed || 0) + 8,
+      WIDGET_MIN.height, WIDGET_MAX.height));
+    widgetSize = { ...widgetSize, height: h };
+  } else {
+    if (widgetBaseHeight == null) return;
+    widgetSize = { ...widgetSize, height: widgetBaseHeight };
+    widgetBaseHeight = null;
+  }
+  const [x, y] = widgetWin.getPosition();
+  widgetWin.setBounds({ x, y, ...widgetSize });
+});
 
 /** 기록 창이 그릴 전체 데이터 */
 function statsPayloadFull(typeId) {

@@ -21,6 +21,7 @@
     --fill-hi: rgba(255, 255, 255, 0.24);
     --hairline: rgba(255, 255, 255, 0.16);
     --bar: rgba(24, 24, 28, 0.90);
+    --sun: #ff8b8b;           /* 달력의 일요일 */
     --tint: #5ecfb6;          /* 다음 알림 종류 색 — JS가 갱신 */
     --p: 0%;                  /* 진행률 */
     --r: 0px;                 /* CSS 코너 반경 (투명 창일 때만 사용) */
@@ -34,6 +35,7 @@
     --fill-hi: rgba(120, 120, 128, 0.32);
     --hairline: rgba(255, 255, 255, 0.60);
     --bar: rgba(250, 250, 252, 0.92);
+    --sun: #d94a4a;
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
@@ -267,6 +269,76 @@
     overflow: hidden;
   }
   .card.open .sheet { opacity: 1; transform: none; pointer-events: auto; }
+
+  /* ── 달력 ──────────────────────────────────────────
+     별도 창으로 띄우면 창 관리가 하나 더 늘고 UI도 따로 논다.
+     카드 아래쪽에 붙여 위젯이 길어지는 방식으로 둔다. */
+  .cal {
+    display: none; flex-direction: column;
+    gap: 0.25rem;
+    padding: 0 0.75rem 0.625rem;
+    min-height: 0;
+  }
+  .card.calon .cal { display: flex; }
+  /* 카드는 grid다 — 위쪽(타이머)은 제 높이만, 남는 높이는 달력이 갖는다.
+     flex 속성을 써 봐야 grid 자식에겐 아무 효력이 없다. */
+  .card.calon { grid-template-rows: min-content 1fr; }
+  .calnav { display: flex; align-items: center; gap: 0.25rem; }
+  .calnav .cttl {
+    flex: 1; font-size: 0.75rem; font-weight: 650; color: var(--label);
+    font-variant-numeric: tabular-nums;
+  }
+  .calnav button {
+    all: unset; cursor: default;
+    width: 1.125rem; height: 1.125rem; border-radius: 0.3125rem;
+    display: grid; place-items: center;
+    color: var(--secondary); font-size: 0.8125rem; line-height: 1;
+  }
+  .calnav button:hover { background: var(--fill); color: var(--label); }
+  .segs { display: flex; gap: 0.125rem; background: var(--fill); border-radius: 0.375rem; padding: 0.0625rem; }
+  .segs .seg {
+    width: auto; padding: 0 0.3125rem; height: 1rem;
+    font-size: 0.625rem; font-weight: 600; border-radius: 0.3125rem;
+  }
+  .segs .seg.on { background: var(--fill-hi); color: var(--label); }
+
+  .calwd { display: grid; grid-template-columns: repeat(7, 1fr); gap: 0.0625rem; }
+  .calwd span { font-size: 0.5625rem; color: var(--tertiary); text-align: center; }
+  .calwd span:first-child { color: var(--sun); }
+
+  .calgrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 0.0625rem; }
+  .cday {
+    aspect-ratio: 1 / 1;
+    border-radius: 0.3125rem;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 0.09375rem;
+    font-size: 0.625rem; color: var(--label);
+    cursor: default;
+  }
+  .cday:hover { background: var(--fill); }
+  .cday.out { color: var(--tertiary); }
+  .cday.sun { color: var(--sun); }
+  .cday.today { box-shadow: inset 0 0 0 1px var(--tint); font-weight: 700; }
+  .cday.on { background: var(--tint); color: #06231d; font-weight: 700; }
+  .cdots { display: flex; gap: 0.0625rem; height: 0.1875rem; }
+  .cdots i { width: 0.1875rem; height: 0.1875rem; border-radius: 50%; background: var(--tint); }
+  .cday.on .cdots i { background: #06231d; }
+
+  .callist { overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: 0.125rem; }
+  .callist::-webkit-scrollbar { width: 3px; }
+  .callist::-webkit-scrollbar-thumb {
+    background: transparent; border-radius: 2px; transition: background 0.15s;
+  }
+  .callist:hover::-webkit-scrollbar-thumb { background: var(--fill-hi); }
+  .cev {
+    display: grid; grid-template-columns: 2.25rem 1fr; gap: 0.375rem;
+    align-items: baseline; font-size: 0.625rem;
+    padding: 0.125rem 0.1875rem; border-radius: 0.25rem;
+  }
+  .cev:hover { background: var(--fill); }
+  .cev .tm { color: var(--secondary); font-variant-numeric: tabular-nums; }
+  .cev .nm { color: var(--label); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .calempty { font-size: 0.625rem; color: var(--tertiary); padding: 0.1875rem; }
   .inner { transition: opacity 0.16s ease; }
   .card.open .inner { opacity: 0; pointer-events: none; }
   .sheet .sh {
@@ -459,6 +531,24 @@
       </div>
     </div>
 
+    <!-- 달력 — 별도 창이 아니라 카드 안에서 아래로 늘어난다 -->
+    <div class="cal" id="cal">
+      <div class="calnav">
+        <button id="cal-prev" title="이전">‹</button>
+        <span class="cttl" id="cal-ttl"></span>
+        <button id="cal-next" title="다음">›</button>
+        <span class="segs">
+          <button id="cal-week" class="seg">주</button>
+          <button id="cal-month" class="seg on">월</button>
+        </span>
+      </div>
+      <div class="calwd">
+        <span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span>
+      </div>
+      <div class="calgrid" id="cal-grid"></div>
+      <div class="callist" id="cal-list"></div>
+    </div>
+
     <button class="upchip" id="upchip" title="업데이트 설치"></button>
 
     <div class="grip" id="grip" title="드래그해서 크기 조절">
@@ -482,6 +572,7 @@
     <div class="controls">
       <button id="btn-now" class="primary" title="지금 알림 실행"><span>지금 쉬기</span></button>
       <button id="btn-pause" title="일시정지 / 재개"></button>
+      <button id="btn-cal" title="달력 보이기 / 숨기기"></button>
       <button id="btn-set" title="설정"></button>
       <button id="btn-hide" title="위젯 숨기기"></button>
     </div>
@@ -848,7 +939,173 @@
   $('btn-now').onclick = () => window.nunsseom.breakNow(lastTypeId);
   $('btn-set').onclick = () => window.nunsseom.openSettings();
   $('sheet-stats').onclick = (e) => { e.stopPropagation(); window.nunsseom.openStats(null); };
-  $('sheet-cal').onclick = (e) => { e.stopPropagation(); window.nunsseom.openCalendar(); };
+  $('sheet-cal').onclick = (e) => { e.stopPropagation(); toggleCal(true); };
+
+  // ── 달력 ────────────────────────────────────────────
+  // 카드 안에서 아래로 늘어난다. 별도 창이 아니라 위젯이 길어지는 방식.
+  const calEl = $('cal');
+  const calCard = $('card');
+  let calMode = 'month';                     // 'month' | 'week'
+  let calAnchor = new Date();                // 보고 있는 달/주의 기준 날짜
+  let calSel = dayKey(new Date());
+  let calData = null;
+
+  function dayKey(d) { return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; }
+  function fromKey(k) { const [y, m, d] = k.split('-').map(Number); return new Date(y, m - 1, d); }
+  const hh = (ms) => {
+    const d = new Date(ms);
+    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  };
+
+  function eventsOn(d) {
+    if (!calData) return [];
+    const from = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const to = from + 86400000;
+    return calData.events
+      .filter((e) => e.start < to && e.end > from)
+      .sort((a, b) => (a.allDay === b.allDay ? a.start - b.start : a.allDay ? -1 : 1));
+  }
+
+  async function loadCal() {
+    // 일정을 못 받아와도 격자는 그린다 — 빈 달력이 아무것도 없는 것보다 낫다
+    try {
+      calData = await window.nunsseom.calMonth(calAnchor.getFullYear(), calAnchor.getMonth());
+    } catch {
+      calData = { events: [], hasCalendar: false };
+    }
+    paintCal();
+  }
+
+  function paintCal() {
+    const grid = $('cal-grid');
+    grid.textContent = '';
+    const todayK = dayKey(new Date());
+
+    let cells = [];
+    if (calMode === 'week') {
+      const s = new Date(calAnchor);
+      s.setDate(s.getDate() - s.getDay());
+      for (let i = 0; i < 7; i++) cells.push(new Date(s.getFullYear(), s.getMonth(), s.getDate() + i));
+      $('cal-ttl').textContent =
+        `${cells[0].getMonth() + 1}월 ${cells[0].getDate()}일 – ${cells[6].getMonth() + 1}월 ${cells[6].getDate()}일`;
+    } else {
+      const y = calAnchor.getFullYear(), m = calAnchor.getMonth();
+      const lead = new Date(y, m, 1).getDay();
+      const days = new Date(y, m + 1, 0).getDate();
+      const total = Math.ceil((lead + days) / 7) * 7;
+      for (let i = 0; i < total; i++) cells.push(new Date(y, m, i - lead + 1));
+      $('cal-ttl').textContent = `${y}년 ${m + 1}월`;
+    }
+
+    for (const d of cells) {
+      const out = calMode === 'month' && d.getMonth() !== calAnchor.getMonth();
+      const cell = document.createElement('div');
+      cell.className = 'cday' + (out ? ' out' : '') + (d.getDay() === 0 ? ' sun' : '')
+        + (dayKey(d) === todayK ? ' today' : '') + (dayKey(d) === calSel ? ' on' : '');
+      const num = document.createElement('span');
+      num.textContent = d.getDate();
+      const dots = document.createElement('span');
+      dots.className = 'cdots';
+      for (let k = 0; k < Math.min(3, eventsOn(d).length); k++) dots.append(document.createElement('i'));
+      cell.append(num, dots);
+      cell.onclick = (e) => {
+        e.stopPropagation();
+        calSel = dayKey(d);
+        if (out) { calAnchor = new Date(d); loadCal(); return; }
+        paintCal();
+      };
+      grid.append(cell);
+    }
+
+    // 선택한 날의 일정
+    const host = $('cal-list');
+    host.textContent = '';
+    const list = eventsOn(fromKey(calSel));
+    if (calData && !calData.hasCalendar) {
+      const p = document.createElement('div');
+      p.className = 'calempty';
+      p.textContent = '설정에서 캘린더를 연결하세요';
+      host.append(p);
+      return;
+    }
+    if (!list.length) {
+      const p = document.createElement('div');
+      p.className = 'calempty';
+      p.textContent = '일정 없음';
+      host.append(p);
+      return;
+    }
+    for (const e of list) {
+      const row = document.createElement('div');
+      row.className = 'cev';
+      const tm = document.createElement('span');
+      tm.className = 'tm';
+      tm.textContent = e.allDay ? '종일' : hh(e.start);
+      const nm = document.createElement('span');
+      nm.className = 'nm';
+      nm.textContent = e.summary;
+      row.append(tm, nm);
+      host.append(row);
+    }
+  }
+
+  function shift(dir) {
+    const d = new Date(calAnchor);
+    if (calMode === 'week') d.setDate(d.getDate() + dir * 7);
+    else d.setMonth(d.getMonth() + dir, 1);
+    calAnchor = d;
+    loadCal();
+  }
+
+  function setMode(mode) {
+    calMode = mode;
+    $('cal-week').classList.toggle('on', mode === 'week');
+    $('cal-month').classList.toggle('on', mode === 'month');
+    window.nunsseom.setApp({ calendarMode: mode });
+    resizeForCal();
+    paintCal();
+  }
+
+  /** 달력을 켜고 끌 때 위젯 높이를 그만큼 늘리고 줄인다.
+      필요한 높이는 실제로 그려본 뒤 재야 정확하다 (칸이 정사각형이라 폭에 따라 달라진다) */
+  function resizeForCal() {
+    const on = calCard.classList.contains('calon');
+    requestAnimationFrame(() => {
+      const needed = on ? Math.ceil(calEl.scrollHeight) : 0;
+      window.nunsseom.calPanel({ on, needed });
+    });
+  }
+
+  function toggleCal(force) {
+    const on = force !== undefined ? force : !calCard.classList.contains('calon');
+    calCard.classList.toggle('calon', on);
+    calCard.classList.remove('open');            // 시트와 동시에 열리면 겹친다
+    window.nunsseom.setApp({ calendarPanel: on });
+    resizeForCal();
+    if (on) loadCal();
+  }
+
+  // 지난번에 켜 둔 상태를 이어간다
+  if (params.get('calmode') === 'week') {
+    calMode = 'week';
+    $('cal-week').classList.add('on');
+    $('cal-month').classList.remove('on');
+  }
+  if (params.get('calpanel') === '1') {
+    calCard.classList.add('calon');
+    loadCal().then(resizeForCal);
+  }
+
+  $('btn-cal').append(window.nunsIcon('calendar'));
+  $('btn-cal').onclick = () => toggleCal();
+  $('cal-prev').onclick = (e) => { e.stopPropagation(); shift(-1); };
+  $('cal-next').onclick = (e) => { e.stopPropagation(); shift(1); };
+  $('cal-week').onclick = (e) => { e.stopPropagation(); setMode('week'); };
+  $('cal-month').onclick = (e) => { e.stopPropagation(); setMode('month'); };
+  // 달력 안을 눌러도 카드 이동/시트 토글로 새지 않게
+  calEl.addEventListener('pointerdown', (e) => e.stopPropagation());
+  window.nunsseom.onCalChanged?.(() => { if (calCard.classList.contains('calon')) loadCal(); });
+  window.nunsseom.onCalShow?.(() => toggleCal(true));
   $('btn-hide').onclick = () => window.nunsseom.hideWidget();
 
   // ── 카드: 클릭하면 예정된 알림 시트, 끌면 창 이동 ──

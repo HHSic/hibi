@@ -53,6 +53,8 @@ const DEFAULT_SETTINGS = {
   calendarLeadMin: 5,      // 일정 시작 이만큼 전부터는 새로 띄우지 않는다 (분)
   calendarJoinMin: 10,     // 일정 사이가 이보다 좁으면 이어진 하나로 본다 (분)
   calendarShow: true,      // 위젯 시트에 오늘 일정 보여주기
+  calendarPanel: false,    // 위젯에 달력 펼쳐두기
+  calendarMode: 'month',   // 달력 보기 단위 — 'month' | 'week'
   autoUpdate: true         // 자동으로 업데이트 확인
 };
 

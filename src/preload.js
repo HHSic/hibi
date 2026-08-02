@@ -53,8 +53,9 @@ contextBridge.exposeInMainWorld('nunsseom', {
   calTest: (url) => ipcRenderer.invoke('cal:test', url),
   calClipboard: () => ipcRenderer.invoke('cal:clipboard'),
   calMonth: (year, month) => ipcRenderer.invoke('cal:month', { year, month }),
-  calWinClose: () => ipcRenderer.send('cal:close'),
   openCalendar: () => ipcRenderer.send('cal:open'),
+  calPanel: (info) => ipcRenderer.send('cal:panel', info),
+  onCalShow: (cb) => ipcRenderer.on('cal:show', () => cb()),
   onCalChanged: (cb) => ipcRenderer.on('cal:changed', () => cb()),
   calOpenHelp: (which) => ipcRenderer.invoke('cal:open-help', which),
 
