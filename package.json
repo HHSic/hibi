@@ -1,7 +1,7 @@
 {
   "name": "hibi",
   "productName": "Hibi",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "하루의 쉼과 일정을 챙기는 데스크톱 위젯",
   "main": "src/main.js",
   "author": "hyong",
@@ -11,7 +11,8 @@
     "dist": "electron-builder --win -p never",
     "release": "electron-builder --win -p always",
     "pack": "electron-builder --win --dir",
-    "ship": "node scripts/ship.js"
+    "ship": "node scripts/ship.js",
+    "icon": "electron scripts/make-icon.js"
   },
   "devDependencies": {
     "electron": "^33.0.0",
