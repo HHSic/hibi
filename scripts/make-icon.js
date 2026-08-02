@@ -15,32 +15,27 @@ const ROOT = path.join(__dirname, '..');
 const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256];
 const TRAY_SIZE = 32;
 
-// 그래파이트 — 무채색이라 어떤 바탕화면에도 붙고, 트레이에서도 조용하다
-const PALETTE = { from: '#5c6473', to: '#1c1f26', hand: '#f5a623', face: '#eaf6f4' };
+// 배경 사각형 없이 시계만 둔다.
+// 배경이 없으면 색 하나로 밝은 표시줄·어두운 표시줄·사진 바탕을 모두 견뎌야 한다.
+// 밝은 민트는 흰 배경에서 흐려지고 흰색은 아예 사라져서, 중간 톤 민트로 잡았다(실측 비교).
+const PALETTE = { body: '#4fc3a8', hand: '#f5a623' };
 
 function iconSvg(size) {
-  const { from, to, hand, face } = PALETTE;
+  const { body, hand } = PALETTE;
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="${size}" height="${size}">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="${from}"/>
-      <stop offset="1" stop-color="${to}"/>
-    </linearGradient>
-  </defs>
-  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#bg)"/>
-  <g fill="none" stroke="${face}" stroke-width="13" stroke-linecap="round">
-    <circle cx="128" cy="140" r="66" fill="${face}" stroke="none"/>
-    <circle cx="84" cy="88" r="26" fill="${face}" stroke="none"/>
-    <circle cx="172" cy="88" r="26" fill="${face}" stroke="none"/>
+  <g fill="none" stroke="${body}" stroke-width="13" stroke-linecap="round">
+    <!-- 배경으로 속을 파낼 수 없으니 테두리 원으로 그린다 -->
+    <circle cx="128" cy="140" r="60" stroke-width="15"/>
+    <circle cx="84" cy="88" r="26" fill="${body}" stroke="none"/>
+    <circle cx="172" cy="88" r="26" fill="${body}" stroke="none"/>
     <path d="M118 62h20" stroke-width="11"/>
     <path d="M74 200l-10 10M182 200l10 10" stroke-width="11"/>
   </g>
-  <circle cx="128" cy="140" r="54" fill="url(#bg)"/>
   <g stroke="${hand}" stroke-width="12" stroke-linecap="round" fill="none">
     <path d="M128 106v34"/>
     <path d="M128 140l30 10"/>
   </g>
-  <circle cx="128" cy="140" r="7" fill="${face}"/>
+  <circle cx="128" cy="140" r="7" fill="${body}"/>
 </svg>`;
 }
 
