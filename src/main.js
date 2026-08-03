@@ -15,6 +15,8 @@ const autolaunch = require('./autolaunch');
 const evlog = require('./evlog');
 const planner = require('./planner');
 const calcache = require('./calcache');
+const mail = require('./mail');
+const secret = require('./secret');
 
 const ICON = path.join(__dirname, '..', 'assets', 'tray.png');
 const PRELOAD = path.join(__dirname, 'preload.js');
@@ -108,6 +110,86 @@ async function refreshCalendars() {
   } finally {
     cal.loading = false;
   }
+}
+
+// ── 메일 ────────────────────────────────────────────────
+// "새 메일 왔다"를 즉시 들이밀면 쉼을 위한 위젯이 방해 도구가 된다.
+// 기본은 모아서 — 계속 확인은 하되, 알리는 건 정해진 시각과 휴식 때만.
+const mailState = {
+  unread: 0,
+  messages: [],
+  errors: [],
+  fetchedAt: 0,
+  loading: false,
+  lastAnnouncedAt: 0,   // 마지막으로 "새 메일 n통"을 알린 시각
+  pending: 0            // 알리지 않고 쌓아둔 새 메일 수
+};
+
+/** 저장된 계정을 실제 접속용으로 — 비밀번호를 여기서만 푼다 */
+function mailAccountsForUse() {
+  return store.mailAccounts
+    .filter((a) => a.enabled !== false && a.host && a.user)
+    .map((a) => ({ ...a, pass: secret.open(a.sealed) }))
+    .filter((a) => a.pass);
+}
+
+async function refreshMail() {
+  if (!store.settings.mailEnabled || mailState.loading) return;
+  const accounts = mailAccountsForUse();
+  if (!accounts.length) { mailState.unread = 0; mailState.messages = []; return; }
+
+  mailState.loading = true;
+  const before = mailState.unread;
+  try {
+    const errors = [];
+    let unread = 0;
+    let messages = [];
+    for (const acc of accounts) {
+      try {
+        const r = await mail.fetchSummary(acc);
+        unread += r.unread;
+        messages.push(...r.messages.map((m) => ({ ...m, account: acc.name })));
+      } catch (e) {
+        errors.push({ name: acc.name, message: mail.friendly(e) });
+      }
+    }
+    messages.sort((a, b) => b.at - a.at);
+    mailState.unread = unread;
+    mailState.messages = messages.slice(0, 10);
+    mailState.errors = errors;
+    mailState.fetchedAt = Date.now();
+    if (unread > before) mailState.pending += unread - before;
+    if (errors.length) console.warn('[mail]', errors.map((e) => `${e.name}: ${e.message}`).join(', '));
+  } finally {
+    mailState.loading = false;
+  }
+}
+
+/**
+ * 지금 "새 메일 n통"을 알릴 때인가.
+ * 모아서 모드면 설정한 시각을 막 지났을 때만 — 하루 몇 번으로 끝난다.
+ */
+function mailAnnounce(now = Date.now()) {
+  const s = store.settings;
+  if (!s.mailEnabled || !mailState.pending) return null;
+  if (s.mailMode === 'instant') return takeAnnounce();
+
+  const d = new Date(now);
+  const times = Array.isArray(s.mailTimes) ? s.mailTimes : [];
+  const hour = d.getHours();
+  if (!times.includes(hour)) return null;
+  // 같은 시각대에 한 번만
+  const slot = new Date(d.getFullYear(), d.getMonth(), d.getDate(), hour).getTime();
+  if (mailState.lastAnnouncedAt >= slot) return null;
+  mailState.lastAnnouncedAt = slot;
+  return takeAnnounce();
+}
+
+function takeAnnounce() {
+  const n = mailState.pending;
+  mailState.pending = 0;
+  mailState.lastAnnouncedAt = Date.now();
+  return n > 0 ? { count: n, unread: mailState.unread } : null;
 }
 
 /**
@@ -400,9 +482,12 @@ function pushTick() {
 
   // 오늘 일정 — 위젯 시트에서 예정된 알림과 나란히 보여준다
   const schedule = store.settings.calendarShow ? planner.today(cal.occurrences) : [];
+  const mailBox = (store.settings.mailEnabled && store.settings.mailShow)
+    ? { unread: mailState.unread, messages: mailState.messages }
+    : null;
 
   if (!next) {
-    payload = { empty: true, paused: state.paused, today: store.todayStats(), schedule };
+    payload = { empty: true, paused: state.paused, today: store.todayStats(), schedule, mail: mailBox };
   } else {
     const cfg = scheduler.cfgOf(next.id);
     const totalSec = Math.max(1, (cfg ? cfg.intervalMin : 20) * 60);
@@ -419,6 +504,7 @@ function pushTick() {
       dnd: state.dnd,
       today: store.todayStats(),
       schedule,
+      mail: mailBox,
       // 일정 때문에 미루는 중이면 언제 이어지는지 알려준다
       holdUntil: state.hold && cal.hold ? cal.hold.until : null,
       upcoming: upcomingList(8),
@@ -876,6 +962,61 @@ ipcMain.handle('cal:clipboard', () => {
   return { url, raw: text.slice(0, 120) };
 });
 
+// ── 메일 IPC ────────────────────────────────────────────
+/** 계정 목록 (비밀번호는 절대 렌더러로 보내지 않는다 — 저장 여부만 알린다) */
+function mailAccountsForUi() {
+  return store.mailAccounts.map(({ sealed, ...rest }) => ({ ...rest, hasPassword: !!sealed }));
+}
+function mailStatus() {
+  return {
+    unread: mailState.unread,
+    fetchedAt: mailState.fetchedAt,
+    errors: mailState.errors,
+    canStore: secret.available
+  };
+}
+
+ipcMain.handle('mail:get', () => ({
+  accounts: mailAccountsForUi(), status: mailStatus(), presets: mail.PRESETS
+}));
+ipcMain.handle('mail:test', async (_e, acc) => {
+  // 새로 입력한 비밀번호가 없으면 저장된 것으로 시험한다
+  const pass = acc.pass || secret.open((store.mailAccounts.find((a) => a.id === acc.id) || {}).sealed);
+  if (!pass) return { ok: false, message: '비밀번호를 입력하세요' };
+  return mail.test({ ...acc, pass });
+});
+ipcMain.handle('mail:add', async (_e, acc) => {
+  if (!secret.available) {
+    return { ok: false, message: '이 PC에서는 비밀번호를 안전하게 저장할 수 없습니다' };
+  }
+  const t = await mail.test({ ...acc, pass: acc.pass });
+  if (!t.ok) return { ok: false, message: t.message };
+  store.addMailAccount({ ...acc, sealed: secret.seal(acc.pass) });
+  refreshMail();
+  return { ok: true, message: t.message, accounts: mailAccountsForUi() };
+});
+ipcMain.handle('mail:update', (_e, { id, patch }) => {
+  const p = { ...patch };
+  if (p.pass) { p.sealed = secret.seal(p.pass); delete p.pass; }
+  store.updateMailAccount(id, p);
+  refreshMail();
+  return mailAccountsForUi();
+});
+ipcMain.handle('mail:remove', (_e, id) => {
+  store.removeMailAccount(id);
+  refreshMail();
+  return mailAccountsForUi();
+});
+ipcMain.handle('mail:refresh', async () => { await refreshMail(); return mailStatus(); });
+
+/** 우리가 넣어둔 안내 링크만 연다 — 렌더러가 임의 주소를 열지 못하게 http(s)로 제한 */
+ipcMain.handle('app:open-url', (_e, url) => {
+  const s = String(url || '');
+  if (!/^https:\/\//i.test(s)) return false;
+  shell.openExternal(s);
+  return true;
+});
+
 /** 주소를 찾아야 하는 설정 페이지를 대신 열어준다 */
 ipcMain.handle('cal:open-help', (_e, which) => {
   const urls = {
@@ -1041,6 +1182,11 @@ if (!app.requestSingleInstanceLock()) {
     createWidget();
     if (resumed && resumed.widgetHidden) widgetWin.hide();
     setInterval(tick, 1000);
+    // 메일 — 확인은 자주 하되 알리는 건 mailAnnounce가 정한다
+    if (store.settings.mailEnabled) {
+      refreshMail();
+      setInterval(refreshMail, Math.max(2, store.settings.mailPollMin || 10) * 60_000);
+    }
     setInterval(updateTray, 30_000);
 
     refreshCalendars();

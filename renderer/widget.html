@@ -529,6 +529,10 @@
         <div class="sh"><span>오늘 일정</span><button id="sheet-cal">달력</button></div>
         <div class="rows" id="sched-rows"></div>
       </div>
+      <div class="sched" id="mailbox">
+        <div class="sh"><span id="mail-ttl">새 메일</span></div>
+        <div class="rows" id="mail-rows"></div>
+      </div>
     </div>
 
     <!-- 달력 — 별도 창이 아니라 카드 안에서 아래로 늘어난다 -->
@@ -931,6 +935,7 @@
       renderSheet(d.upcoming);
     }
     renderSchedule(d.schedule);
+    renderMail(d.mail);
     showUpdate(d.update);
     if (d.week) renderWeek(d.week);
   });
@@ -1056,6 +1061,31 @@
         ev2.stopPropagation();
         window.nunsseom.calOpenEvent(e);
       };
+      host.append(row);
+    }
+  }
+
+  /** 새 메일 — 일정과 같은 모양으로 아래에 붙인다 */
+  function renderMail(box) {
+    const sec = $('mailbox');
+    if (!box || !box.messages || !box.messages.length) { sec.style.display = 'none'; return; }
+    sec.style.display = 'block';
+    $('mail-ttl').textContent = box.unread ? `새 메일 ${box.unread}통` : '새 메일';
+    const host = $('mail-rows');
+    host.textContent = '';
+    for (const m of box.messages.slice(0, 5)) {
+      const row = document.createElement('div');
+      row.className = 'row ev';
+      const dot = document.createElement('span');
+      dot.className = 'evdot';
+      const nm = document.createElement('span');
+      nm.className = 'nm';
+      nm.textContent = m.subject;
+      nm.title = m.from ? `${m.from} · ${m.subject}` : m.subject;
+      const tm = document.createElement('span');
+      tm.className = 'tm';
+      tm.textContent = m.from || '';
+      row.append(dot, nm, tm);
       host.append(row);
     }
   }

@@ -61,6 +61,15 @@ contextBridge.exposeInMainWorld('nunsseom', {
   onCalChanged: (cb) => ipcRenderer.on('cal:changed', () => cb()),
   calOpenHelp: (which) => ipcRenderer.invoke('cal:open-help', which),
 
+  // 메일 (비밀번호는 메인에서만 다룬다)
+  mailGet: () => ipcRenderer.invoke('mail:get'),
+  mailTest: (acc) => ipcRenderer.invoke('mail:test', acc),
+  mailAdd: (acc) => ipcRenderer.invoke('mail:add', acc),
+  mailUpdate: (id, patch) => ipcRenderer.invoke('mail:update', { id, patch }),
+  mailRemove: (id) => ipcRenderer.invoke('mail:remove', id),
+  mailRefresh: () => ipcRenderer.invoke('mail:refresh'),
+  openUrl: (url) => ipcRenderer.invoke('app:open-url', url),
+
   // 자동 실행 (OS 상태를 그대로 읽고 쓴다)
   autoLaunchGet: () => ipcRenderer.invoke('autolaunch:get'),
   autoLaunchSet: (on) => ipcRenderer.invoke('autolaunch:set', on),

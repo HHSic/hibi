@@ -55,6 +55,14 @@ const DEFAULT_SETTINGS = {
   calendarShow: true,      // 위젯 시트에 오늘 일정 보여주기
   calendarPanel: false,    // 위젯에 달력 펼쳐두기
   calendarMode: 'month',   // 달력 보기 단위 — 'month' | 'week'
+  // 메일 — 오는 족족 알리면 쉼을 위한 위젯이 방해 도구가 된다.
+  // 기본은 "모아서" — 정해진 시각과 휴식 때만 요약해서 보여준다.
+  mailEnabled: false,
+  mailShow: true,          // 위젯 시트에 새 메일 보여주기
+  mailMode: 'batch',       // 'batch' | 'instant'
+  mailTimes: [10, 14, 17], // 모아서 알릴 시각 (시)
+  mailPollMin: 10,         // 서버를 몇 분마다 확인할지
+
   // 알림음 — 화면만으로는 다른 창을 보고 있을 때 놓친다
   soundEnabled: true,
   soundName: 'chime',      // renderer/sound.js의 LIST 참고
@@ -78,6 +86,7 @@ function blank() {
     reminders: reminders.defaultConfig(),
     custom: {},          // 사용자 지정 알림
     calendars: [],       // [{ id, name, url, enabled }]
+    mailAccounts: [],    // [{ id, name, provider, host, port, user, sealed, enabled }]
     stats: {},           // { 'YYYY-MM-DD': { done, skipped } }
     widgetPos: null,
     widgetSize: null,
@@ -97,6 +106,7 @@ function load() {
       reminders: mergeReminders(base.reminders, raw.reminders),
       custom: raw.custom || {},
       calendars: Array.isArray(raw.calendars) ? raw.calendars : [],
+      mailAccounts: Array.isArray(raw.mailAccounts) ? raw.mailAccounts : [],
       stats: raw.stats || {},
       widgetPos: raw.widgetPos || null,
       widgetSize: raw.widgetSize || null,
@@ -235,6 +245,34 @@ module.exports = {
     s.calendars = s.calendars.filter((x) => x.id !== id);
     save();
     return s.calendars;
+  },
+
+  get mailAccounts() { return load().mailAccounts; },
+  addMailAccount(acc) {
+    const s = load();
+    const id = `m${Date.now().toString(36)}`;
+    s.mailAccounts.push({
+      id, name: acc.name || acc.user || '메일',
+      provider: acc.provider || 'custom',
+      host: acc.host, port: Number(acc.port) || 993,
+      user: acc.user, sealed: acc.sealed || null,
+      enabled: true
+    });
+    save();
+    return s.mailAccounts;
+  },
+  updateMailAccount(id, patch) {
+    const s = load();
+    const a = s.mailAccounts.find((x) => x.id === id);
+    if (a) Object.assign(a, patch);
+    save();
+    return s.mailAccounts;
+  },
+  removeMailAccount(id) {
+    const s = load();
+    s.mailAccounts = s.mailAccounts.filter((x) => x.id !== id);
+    save();
+    return s.mailAccounts;
   },
 
   get session() { return load().session; },

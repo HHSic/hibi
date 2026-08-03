@@ -147,6 +147,9 @@
   .rem .nm small { display: block; font-size: 11px; font-weight: 400; color: var(--tertiary); margin-top: 1px; }
   .rem .val { font-size: 11.5px; color: var(--tertiary); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .rem.off .g, .rem.off .nm { opacity: 0.45; }
+  /* 메일 계정 행 — 스위치 뒤에 삭제가 하나 더 붙는다 */
+  .rem.acct { grid-template-columns: 26px 1fr auto auto auto; }
+  .rem.acct .mini { white-space: nowrap; }
 
   /* 스위치 */
   .sw {
@@ -313,6 +316,7 @@
   <div class="tabs">
     <button id="tab-rem" class="on">알림</button>
     <button id="tab-cal">캘린더</button>
+    <button id="tab-mail">메일</button>
     <button id="tab-app">일반</button>
   </div>
 
@@ -327,6 +331,67 @@
     <p class="foot">
       여러 알림이 비슷한 시각에 겹치면 한 번의 휴식 화면으로 묶어 보여줍니다.<br>
       행을 눌러 펼치면 주기와 길이를 따로 조절할 수 있어요.
+    </p>
+  </div>
+
+  <div class="scroll" id="pane-mail" style="display:none">
+    <div class="sec">메일 알림</div>
+    <div class="group">
+      <div class="row toggle">
+        <span class="nm">메일 확인하기<i>안 읽은 메일 수와 제목만 읽습니다. 본문은 가져오지 않습니다</i></span>
+        <span></span>
+        <button class="sw" id="mailEnabled" role="switch" aria-label="메일 확인"></button>
+      </div>
+      <div class="row toggle">
+        <span class="nm">위젯에 새 메일 보이기</span>
+        <span></span>
+        <button class="sw" id="mailShow" role="switch" aria-label="새 메일 표시"></button>
+      </div>
+      <div class="col">
+        <span class="lbl">알리는 방식</span>
+        <div class="helprow" id="mail-mode"></div>
+        <span class="hint" id="mail-mode-hint"></span>
+      </div>
+      <div class="row">
+        <span class="nm">확인 주기</span>
+        <input type="range" id="mailPollMin" min="2" max="60" step="1">
+        <span class="out" id="out-mailPollMin"></span>
+      </div>
+    </div>
+
+    <div class="sec">계정</div>
+    <div class="group" id="mail-accounts"></div>
+
+    <div class="sec">새 계정</div>
+    <div class="group">
+      <div class="col">
+        <span class="lbl">1. 메일 종류</span>
+        <div class="helprow" id="mail-presets"></div>
+        <span class="hint" id="mail-note"></span>
+      </div>
+      <div class="col">
+        <span class="lbl">2. 서버 · 포트</span>
+        <div class="helprow">
+          <input type="text" id="mail-host" class="cust-name" placeholder="imap.example.com" style="flex:1">
+          <input type="text" id="mail-port" class="cust-name" placeholder="993" style="width:64px">
+        </div>
+      </div>
+      <div class="col">
+        <span class="lbl">3. 아이디 · 비밀번호</span>
+        <input type="text" id="mail-user" class="cust-name" placeholder="아이디 또는 메일 주소">
+        <input type="password" id="mail-pass" class="cust-name" placeholder="앱 비밀번호">
+        <span class="hint">비밀번호는 이 PC에서만 풀 수 있게 암호화해 저장합니다.</span>
+      </div>
+      <div class="col">
+        <div class="upline">
+          <span class="lbl" id="mail-msg"></span>
+          <button class="mini" id="btn-mail-add">추가</button>
+        </div>
+      </div>
+    </div>
+
+    <p class="foot">
+      제목과 보낸 사람만 읽고 본문은 가져오지 않습니다. 회사 메일은 사내 정책을 확인하세요.
     </p>
   </div>
 
@@ -1090,10 +1155,155 @@
         window.nunsseom.setApp({ soundName: s.id });
         window.nunsSound.play(s.id, data.settings.soundVolume ?? 55);
         renderSounds();
+    bindAppRow('mailPollMin', (v) => `${v}분`, (s) => s.mailPollMin ?? 10, (v) => ({ mailPollMin: v }));
+    loadMail();
       };
       host.append(b);
     }
   }
+
+  // ── 메일 ─────────────────────────────────────────
+  let mailData = { accounts: [], presets: [], status: {} };
+  let mailPreset = null;
+
+  function renderMailPresets() {
+    const host = $('mail-presets');
+    host.textContent = '';
+    for (const p of mailData.presets) {
+      const b = document.createElement('button');
+      b.className = 'mini' + (mailPreset && mailPreset.id === p.id ? '' : ' ghost');
+      b.textContent = p.name;
+      b.onclick = () => {
+        mailPreset = p;
+        if (p.host) $('mail-host').value = p.host;
+        $('mail-port').value = String(p.port || 993);
+        $('mail-note').textContent = p.note || '';
+        renderMailPresets();
+      };
+      host.append(b);
+    }
+    // 앱 비밀번호 받으러 가는 링크
+    if (mailPreset && mailPreset.help) {
+      const b = document.createElement('button');
+      b.className = 'mini';
+      b.textContent = '비밀번호 발급 페이지 열기';
+      b.onclick = () => window.nunsseom.openUrl(mailPreset.help);
+      host.append(b);
+    }
+  }
+
+  function renderMailModes() {
+    const host = $('mail-mode');
+    host.textContent = '';
+    const modes = [
+      { id: 'batch', name: '모아서', hint: '정해진 시각(10·14·17시)에만 요약해서 알립니다. 일하는 흐름을 끊지 않습니다.' },
+      { id: 'instant', name: '바로', hint: '새 메일이 오면 곧바로 알립니다.' }
+    ];
+    const cur = data.settings.mailMode || 'batch';
+    for (const m of modes) {
+      const b = document.createElement('button');
+      b.className = 'mini' + (cur === m.id ? '' : ' ghost');
+      b.textContent = m.name;
+      b.onclick = () => {
+        data.settings.mailMode = m.id;
+        window.nunsseom.setApp({ mailMode: m.id });
+        renderMailModes();
+      };
+      host.append(b);
+    }
+    const sel = modes.find((m) => m.id === cur);
+    $('mail-mode-hint').textContent = sel ? sel.hint : '';
+  }
+
+  function renderMailAccounts() {
+    const host = $('mail-accounts');
+    host.textContent = '';
+    if (!mailData.accounts.length) {
+      const p = document.createElement('div');
+      p.className = 'col';
+      p.innerHTML = '';
+      const t = document.createElement('span');
+      t.className = 'lbl';
+      t.textContent = mailData.status.canStore
+        ? '아직 없습니다. 아래에서 계정을 추가하세요.'
+        : '이 PC에서는 비밀번호를 안전하게 저장할 수 없어 메일을 쓸 수 없습니다.';
+      p.append(t);
+      host.append(p);
+      return;
+    }
+    for (const a of mailData.accounts) {
+      const row = document.createElement('div');
+      row.className = 'rem acct' + (a.enabled === false ? ' off' : '');
+      const g = document.createElement('span');
+      g.className = 'g';
+      g.append(window.nunsIcon('mail'));
+      const nm = document.createElement('span');
+      nm.className = 'nm';
+      nm.textContent = a.name;
+      const sub = document.createElement('small');
+      sub.textContent = `${a.host}:${a.port}`;
+      nm.append(sub);
+      const val = document.createElement('span');
+      val.className = 'val';
+      const err = (mailData.status.errors || []).find((e) => e.name === a.name);
+      val.textContent = err ? err.message.slice(0, 24) : '';
+      const sw = document.createElement('button');
+      sw.className = 'sw' + (a.enabled === false ? '' : ' on');
+      sw.onclick = async () => {
+        mailData.accounts = await window.nunsseom.mailUpdate(a.id, { enabled: a.enabled === false });
+        renderMailAccounts();
+      };
+      const del = document.createElement('button');
+      del.className = 'mini ghost';
+      del.textContent = '삭제';
+      del.onclick = async () => {
+        mailData.accounts = await window.nunsseom.mailRemove(a.id);
+        renderMailAccounts();
+      };
+      row.append(g, nm, val, sw, del);
+      host.append(row);
+    }
+  }
+
+  async function loadMail() {
+    mailData = await window.nunsseom.mailGet();
+    if (!mailPreset) mailPreset = mailData.presets[0] || null;
+    if (mailPreset) {
+      if (mailPreset.host) $('mail-host').value = mailPreset.host;
+      $('mail-port').value = String(mailPreset.port || 993);
+      $('mail-note').textContent = mailPreset.note || '';
+    }
+    renderMailPresets();
+    renderMailModes();
+    renderMailAccounts();
+  }
+
+  $('btn-mail-add').onclick = async () => {
+    const msg = $('mail-msg');
+    const acc = {
+      provider: mailPreset ? mailPreset.id : 'custom',
+      name: mailPreset && mailPreset.id !== 'custom' ? mailPreset.name : $('mail-host').value.trim(),
+      host: $('mail-host').value.trim(),
+      port: Number($('mail-port').value) || 993,
+      user: $('mail-user').value.trim(),
+      pass: $('mail-pass').value
+    };
+    if (!acc.host || !acc.user || !acc.pass) { msg.textContent = '서버·아이디·비밀번호를 모두 넣으세요'; return; }
+    msg.textContent = '연결 확인 중…';
+    $('btn-mail-add').disabled = true;
+    try {
+      const r = await window.nunsseom.mailAdd(acc);
+      msg.textContent = r.message;
+      if (r.ok) {
+        mailData.accounts = r.accounts;
+        $('mail-user').value = '';
+        $('mail-pass').value = '';
+        renderMailAccounts();
+      }
+    } finally {
+      $('btn-mail-add').disabled = false;
+    }
+  };
 
   function bindAppRow(id, fmt, toValue, toStore) {
     const input = $(id);
@@ -1120,9 +1330,12 @@
     bindAppRow('soundVolume', (v) => (v ? `${v}%` : '무음'),
       (s) => s.soundVolume ?? 55, (v) => ({ soundVolume: v }));
     renderSounds();
+    bindAppRow('mailPollMin', (v) => `${v}분`, (s) => s.mailPollMin ?? 10, (v) => ({ mailPollMin: v }));
+    loadMail();
 
     for (const key of ['dndEnabled', 'autoUpdate', 'calendarBusy', 'calendarAllDay',
-                       'calendarLead', 'calendarShow', 'soundEnabled']) {
+                       'calendarLead', 'calendarShow', 'soundEnabled',
+                       'mailEnabled', 'mailShow']) {
       bindSwitch(key);
     }
     bindAutoLaunch();
@@ -1135,7 +1348,7 @@
   });
 
   // ── 탭 ───────────────────────────────────────────
-  const TABS = ['rem', 'cal', 'app'];
+  const TABS = ['rem', 'cal', 'mail', 'app'];
   function showTab(which) {
     for (const t of TABS) {
       $(`tab-${t}`).classList.toggle('on', t === which);
