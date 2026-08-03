@@ -1068,8 +1068,16 @@
   }
 
   /** 새 메일 — 일정과 같은 모양으로 아래에 붙인다 */
+  let lastMailRender = '';
   function renderMail(box) {
     const sec = $('mailbox');
+    const key = box ? `${box.unread}:${(box.messages || []).length}` : 'none';
+    if (key !== lastMailRender) {
+      lastMailRender = key;
+      dlog('메일', box
+        ? `받음 · 안읽음 ${box.unread} · 목록 ${(box.messages || []).length}건`
+        : '받은 것 없음 (설정이 꺼져 있거나 계정 없음)');
+    }
     if (!box || !box.messages || !box.messages.length) { sec.style.display = 'none'; return; }
     sec.style.display = 'block';
     $('mail-ttl').textContent = box.unread ? `메일 · 안 읽음 ${box.unread}` : '메일';

@@ -4,6 +4,15 @@ const {
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
+
+// 개발용으로 실행할 때는 설치본과 데이터 폴더를 분리한다.
+// 같은 폴더를 쓰면 개발 인스턴스가 옛 설정을 들고 있다가 저장하면서
+// 사용자가 방금 넣은 계정·설정을 통째로 덮어쓴다 (실제로 겪었다).
+// store.js가 require 시점에 userData 경로를 읽으므로 반드시 그 전에 바꿔야 한다.
+if (!app.isPackaged) {
+  app.setPath('userData', path.join(app.getPath('appData'), 'Hibi (개발)'));
+}
+
 const store = require('./store');
 const glass = require('./glass');
 const reminders = require('./reminders');
@@ -134,9 +143,15 @@ function mailAccountsForUse() {
 }
 
 async function refreshMail() {
-  if (!store.settings.mailEnabled || mailState.loading) return;
+  if (!store.settings.mailEnabled) { evlog.log('메일', '건너뜀 — 메일 확인이 꺼져 있음'); return; }
+  if (mailState.loading) return;
   const accounts = mailAccountsForUse();
-  if (!accounts.length) { mailState.unread = 0; mailState.messages = []; return; }
+  if (!accounts.length) {
+    mailState.unread = 0;
+    mailState.messages = [];
+    evlog.log('메일', `건너뜀 — 쓸 수 있는 계정 없음 (저장된 계정 ${store.mailAccounts.length}개)`);
+    return;
+  }
 
   mailState.loading = true;
   const before = mailState.unread;
@@ -162,6 +177,9 @@ async function refreshMail() {
     mailState.errors = errors;
     mailState.fetchedAt = Date.now();
     if (unread > before) mailState.pending += unread - before;
+    evlog.log('메일', `확인 완료 · 계정 ${accounts.length}개 · 안읽음 ${unread}`
+      + ` · 목록 ${mailState.messages.length}건`
+      + (errors.length ? ` · 실패 ${errors.length}건: ${errors[0].message}` : ''));
     if (errors.length) console.warn('[mail]', errors.map((e) => `${e.name}: ${e.message}`).join(', '));
   } finally {
     mailState.loading = false;
@@ -476,6 +494,19 @@ function tick() {
   pushTick();
 }
 
+// 매 초 찍으면 기록이 메일로 뒤덮인다 — 내용이 바뀔 때만 남긴다
+let lastMailLog = '';
+function logMailPayload(box) {
+  if (!evlog.enabled) return;
+  const s = store.settings;
+  const key = box ? `on:${box.unread}:${box.messages.length}` : `off:${s.mailEnabled}:${s.mailShow}`;
+  if (key === lastMailLog) return;
+  lastMailLog = key;
+  evlog.log('메일', box
+    ? `위젯에 전달 · 안읽음 ${box.unread} · 목록 ${box.messages.length}건`
+    : `위젯에 안 보냄 — 메일확인=${s.mailEnabled} 위젯표시=${s.mailShow}`);
+}
+
 function pushTick() {
   if (!widgetWin || widgetWin.isDestroyed()) return;
 
@@ -488,6 +519,7 @@ function pushTick() {
   const mailBox = (store.settings.mailEnabled && store.settings.mailShow)
     ? { unread: mailState.unread, messages: mailState.messages }
     : null;
+  logMailPayload(mailBox);
 
   if (!next) {
     payload = { empty: true, paused: state.paused, today: store.todayStats(), schedule, mail: mailBox };

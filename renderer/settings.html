@@ -281,6 +281,8 @@
   }
   .mini:hover { filter: brightness(1.12); }
   .mini[disabled] { opacity: 0.45; }
+  /* 연결 확인이 끝나면 다음에 눌러야 할 버튼을 알려준다 */
+  .mini.urge { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
   .mini.ghost { background: transparent; color: var(--accent); }
   .mini.ghost:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
   .mini.danger { color: #ff6b6b; }
@@ -1361,7 +1363,10 @@
     $('btn-mail-test').disabled = true;
     try {
       const r = await window.nunsseom.mailTest(acc);
-      mailMsg(r.ok ? 'good' : 'bad', r.message);
+      // 테스트는 확인만 한다. 여기서 끝난 줄 알고 떠나면 계정이 저장되지 않는다.
+      mailMsg(r.ok ? 'good' : 'bad',
+        r.ok ? `${r.message} — 이제 «추가»를 눌러 저장하세요` : r.message);
+      $('btn-mail-add').classList.toggle('urge', r.ok);
     } finally {
       $('btn-mail-test').disabled = false;
     }
