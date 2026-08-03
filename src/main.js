@@ -295,7 +295,8 @@ function createWidget() {
     query: glassQuery({
       radius: String(store.settings.radius),
       calpanel: store.settings.calendarPanel ? '1' : '',
-      calmode: store.settings.calendarMode || 'month'
+      calmode: store.settings.calendarMode || 'month',
+      mailpanel: store.settings.mailPanel ? '1' : ''
     })
   });
   // 창은 기록을 켠 뒤에 만들어질 수 있다 — 로드가 끝나면 현재 상태를 알린다
@@ -820,11 +821,14 @@ ipcMain.handle('cal:new-event', (_e, { start, end }) => {
  * 폭에 따라 달라져서 여기서 계산하면 어긋난다.
  */
 let widgetBaseHeight = null;
-ipcMain.on('cal:panel', (_e, { on, needed }) => {
+const panelHeights = { cal: 0, mail: 0 };   // 패널이 둘이라 각자 얼마나 쓰는지 따로 센다
+ipcMain.on('cal:panel', (_e, { on, needed, which }) => {
   if (!widgetWin || widgetWin.isDestroyed() || !widgetSize) return;
-  if (on) {
+  panelHeights[which === 'mail' ? 'mail' : 'cal'] = on ? (needed || 0) : 0;
+  const extra = panelHeights.cal + panelHeights.mail;
+  if (extra > 0) {
     if (widgetBaseHeight == null) widgetBaseHeight = widgetSize.height;
-    const h = Math.round(clamp(widgetBaseHeight + (needed || 0) + 8,
+    const h = Math.round(clamp(widgetBaseHeight + extra + 8,
       WIDGET_MIN.height, WIDGET_MAX.height));
     widgetSize = { ...widgetSize, height: h };
   } else {

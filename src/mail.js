@@ -9,6 +9,7 @@
  * IMAP을 그대로 제공한다. Gmail만 언젠가 OAuth가 필요해진다.
  */
 const { ImapFlow } = require('imapflow');
+const { simpleParser } = require('mailparser');
 
 const CONNECT_TIMEOUT_MS = 20_000;
 const MAX_PREVIEW = 10;          // 제목을 몇 개까지 들고 올지
@@ -108,7 +109,48 @@ async function collect(client, range, opts, out) {
   }
 }
 
-/** HTML 메일을 글로 — 본문을 그대로 그리면 원격 이미지·스크립트가 따라온다 */
+/**
+ * 한 통의 본문을 글로만 가져오고, 원하면 읽음으로 표시한다.
+ *
+ * MIME 파싱은 직접 하지 않는다. 한글 메일은 EUC-KR인 경우가 많은데 Node의 Buffer는
+ * EUC-KR을 모르고, multipart·base64·quoted-printable·헤더 인코딩까지 겹치면
+ * 손으로 짠 파서는 반드시 어딘가에서 깨진다 (실제로 깨졌다).
+ *
+ * 본문은 글로만 보여준다 — HTML을 그대로 그리면 원격 이미지가 열람 사실을
+ * 발신자에게 알리고 스크립트가 딸려온다.
+ */
+async function fetchBody(account, uid, { markSeen = true, maxChars = 8000 } = {}) {
+  const client = connect(account);
+  await client.connect();
+  try {
+    await client.mailboxOpen(account.mailbox || 'INBOX', { readOnly: !markSeen });
+    const msg = await client.fetchOne(String(uid), { envelope: true, internalDate: true, source: true },
+      { uid: true });
+    if (!msg || !msg.source) throw new Error('메일을 찾을 수 없습니다');
+
+    const parsed = await simpleParser(msg.source, { skipImageLinks: true });
+    let text = (parsed.text || '').trim();
+    if (!text && parsed.html) text = htmlToText(parsed.html);
+    if (text.length > maxChars) text = text.slice(0, maxChars) + '\n\n…(생략)';
+
+    if (markSeen) {
+      // IMAP 플래그는 역슬래시로 시작한다 — 소스에서는 두 번 써야 한다
+      try { await client.messageFlagsAdd(String(uid), ['\\Seen'], { uid: true }); } catch { /* 실패해도 본문은 보여준다 */ }
+    }
+    return {
+      uid,
+      subject: parsed.subject || (msg.envelope && msg.envelope.subject) || '(제목 없음)',
+      from: (parsed.from && parsed.from.text) || senderOf(msg.envelope),
+      at: (parsed.date || msg.internalDate || new Date()).getTime(),
+      attachments: (parsed.attachments || []).map((a) => a.filename).filter(Boolean),
+      text
+    };
+  } finally {
+    try { await client.logout(); } catch { client.close(); }
+  }
+}
+
+/** HTML만 있는 메일을 읽을 수 있는 글로 */
 function htmlToText(html) {
   return String(html || '')
     .replace(/<style[\s\S]*?<\/style>/gi, '')
@@ -120,81 +162,6 @@ function htmlToText(html) {
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
-}
-
-/**
- * 한 통의 본문을 글로만 가져오고, 원하면 읽음으로 표시한다.
- * HTML은 그대로 그리지 않는다 — 원격 이미지가 열람 사실을 알리고 스크립트가 딸려온다.
- * text/plain을 먼저 쓰고, 없을 때만 HTML에서 태그를 걷어낸다.
- */
-async function fetchBody(account, uid, { markSeen = true, maxChars = 8000 } = {}) {
-  const client = connect(account);
-  await client.connect();
-  try {
-    await client.mailboxOpen(account.mailbox || 'INBOX', { readOnly: !markSeen });
-    const msg = await client.fetchOne(String(uid), { envelope: true, internalDate: true, source: true },
-      { uid: true });
-    if (!msg) throw new Error('메일을 찾을 수 없습니다');
-
-    const raw = msg.source ? msg.source.toString('utf8') : '';
-    let text = extractText(raw);
-    if (text.length > maxChars) text = text.slice(0, maxChars) + '\n\n…(생략)';
-
-    if (markSeen) {
-      try { await client.messageFlagsAdd(String(uid), ['\\Seen'], { uid: true }); } catch { /* 실패해도 본문은 보여준다 */ }
-    }
-    return {
-      uid,
-      subject: String((msg.envelope && msg.envelope.subject) || '(제목 없음)'),
-      from: senderOf(msg.envelope),
-      at: (msg.internalDate || new Date()).getTime(),
-      text
-    };
-  } finally {
-    try { await client.logout(); } catch { client.close(); }
-  }
-}
-
-/** 원문에서 사람이 읽을 부분만 — 전체 MIME 파서를 두지 않고 최소한으로 */
-function extractText(raw) {
-  if (!raw) return '';
-  const parts = raw.split(/\r?\n\r?\n/);
-  const body = parts.slice(1).join('\n\n');
-
-  const boundary = (raw.match(/boundary="?([^"\s;]+)"?/i) || [])[1];
-  if (!boundary) return decodePart(raw, body);
-
-  const chunks = body.split(new RegExp(`--${boundary.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
-  let plain = '';
-  let html = '';
-  for (const chunk of chunks) {
-    if (!/content-type:/i.test(chunk)) continue;
-    const head = chunk.split(/\r?\n\r?\n/)[0] || '';
-    const rest = chunk.split(/\r?\n\r?\n/).slice(1).join('\n\n');
-    if (/text\/plain/i.test(head) && !plain) plain = decodePart(head, rest);
-    else if (/text\/html/i.test(head) && !html) html = decodePart(head, rest);
-  }
-  if (plain) return plain.trim();
-  if (html) return htmlToText(html);
-  return decodePart(raw, body);
-}
-
-/** base64 / quoted-printable 정도만 푼다 */
-function decodePart(head, body) {
-  const enc = (String(head).match(/content-transfer-encoding:\s*([\w-]+)/i) || [])[1] || '';
-  const charset = (String(head).match(/charset="?([\w-]+)"?/i) || [])[1] || 'utf-8';
-  let out = String(body || '');
-  try {
-    if (/base64/i.test(enc)) {
-      out = Buffer.from(out.replace(/\s+/g, ''), 'base64')
-        .toString(/utf-?8/i.test(charset) ? 'utf8' : 'latin1');
-    } else if (/quoted-printable/i.test(enc)) {
-      out = out.replace(/=\r?\n/g, '')
-        .replace(/=([0-9A-F]{2})/gi, (_m, h) => String.fromCharCode(parseInt(h, 16)));
-      if (/utf-?8/i.test(charset)) out = Buffer.from(out, 'latin1').toString('utf8');
-    }
-  } catch { /* 못 풀면 원문 그대로 */ }
-  return out;
 }
 
 /** 연결만 확인 — 설정 화면의 "연결 테스트" */
@@ -223,4 +190,4 @@ function friendly(e) {
   return raw.slice(0, 120);
 }
 
-module.exports = { PRESETS, preset, fetchSummary, fetchBody, test, senderOf, friendly, htmlToText, extractText };
+module.exports = { PRESETS, preset, fetchSummary, fetchBody, test, senderOf, friendly, htmlToText };

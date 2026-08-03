@@ -279,7 +279,9 @@
     padding: 0 0.75rem 0.625rem;
     min-height: 0;
   }
-  .card.calon .cal { display: flex; }
+  .card.calon .cal:not(.mailpanel) { display: flex; }
+  .card.mailon .mailpanel { display: flex; }
+  .card.mailon:not(.calon) { grid-template-rows: min-content 1fr; }
   /* 카드는 grid다 — 위쪽(타이머)은 제 높이만, 남는 높이는 달력이 갖는다.
      flex 속성을 써 봐야 grid 자식에겐 아무 효력이 없다. */
   .card.calon { grid-template-rows: min-content 1fr; }
@@ -537,6 +539,12 @@
       </div>
     </div>
 
+    <!-- 메일 — 시트를 열지 않아도 보이도록 카드 안에서 아래로 늘어난다 -->
+    <div class="cal mailpanel" id="mailpanel">
+      <div class="calnav"><span class="cttl" id="mp-ttl">메일</span></div>
+      <div class="callist" id="mp-list"></div>
+    </div>
+
     <!-- 달력 — 별도 창이 아니라 카드 안에서 아래로 늘어난다 -->
     <div class="cal" id="cal">
       <div class="calnav">
@@ -579,6 +587,7 @@
       <button id="btn-now" class="primary" title="지금 알림 실행"><span>지금 쉬기</span></button>
       <button id="btn-pause" title="일시정지 / 재개"></button>
       <button id="btn-cal" title="달력 보이기 / 숨기기"></button>
+      <button id="btn-mail" title="메일 보이기 / 숨기기"></button>
       <button id="btn-set" title="설정"></button>
       <button id="btn-hide" title="위젯 숨기기"></button>
     </div>
@@ -588,6 +597,12 @@
 <script>
   const $ = (id) => document.getElementById(id);
   const root = document.documentElement;
+
+  // 틱 핸들러가 이 값들을 건드린다. 틱은 스크립트가 끝나기 전에도 도착할 수 있으므로
+  // 반드시 등록보다 위에서 선언해야 한다 (여기서 TDZ로 위젯 전체가 죽은 적이 있다).
+  const mailCard = document.getElementById('card');
+  let lastMailBox = null;
+  let lastMailRender = '';
   const params = new URLSearchParams(location.search);
 
   root.dataset.theme = params.get('theme') === 'light' ? 'light' : 'dark';
@@ -1068,10 +1083,11 @@
   }
 
   /** 새 메일 — 일정과 같은 모양으로 아래에 붙인다 */
-  let lastMailRender = '';
   function renderMail(box) {
     const sec = $('mailbox');
     const key = box ? `${box.unread}:${(box.messages || []).length}` : 'none';
+    lastMailBox = box;
+    if (mailCard.classList.contains('mailon')) paintMailPanel();
     if (key !== lastMailRender) {
       lastMailRender = key;
       dlog('메일', box
@@ -1152,6 +1168,61 @@
 
   $('btn-cal').append(window.nunsIcon('calendar'));
   $('btn-cal').onclick = () => toggleCal();
+
+  // ── 메일 패널 ──────────────────────────────────────
+  // 시트를 열어야만 보이면 "안 뜬다"가 된다. 달력과 같은 방식으로 겉면에 펼친다.
+  function paintMailPanel() {
+    const box = lastMailBox;
+    const host = $('mp-list');
+    host.textContent = '';
+    $('mp-ttl').textContent = box && box.unread ? `메일 · 안 읽음 ${box.unread}` : '메일';
+    const list = (box && box.messages) || [];
+    if (!list.length) {
+      const p = document.createElement('div');
+      p.className = 'calempty';
+      p.textContent = box ? '새 메일 없음' : '설정에서 메일을 연결하세요';
+      host.append(p);
+      return;
+    }
+    for (const m of list) {
+      const row = document.createElement('div');
+      row.className = 'cev' + (m.seen ? ' read' : '');
+      const tm = document.createElement('span');
+      tm.className = 'tm';
+      tm.textContent = m.from || '';
+      const nm = document.createElement('span');
+      nm.className = 'nm';
+      nm.textContent = m.subject;
+      nm.title = m.subject;
+      row.append(tm, nm);
+      row.ondblclick = (e) => { e.stopPropagation(); window.nunsseom.mailOpen(m); };
+      host.append(row);
+    }
+  }
+
+  function resizeForMail() {
+    const on = mailCard.classList.contains('mailon');
+    requestAnimationFrame(() => {
+      window.nunsseom.calPanel({ on, needed: on ? Math.ceil($('mailpanel').scrollHeight) : 0, which: 'mail' });
+    });
+  }
+
+  function toggleMail(force) {
+    const on = force !== undefined ? force : !mailCard.classList.contains('mailon');
+    mailCard.classList.toggle('mailon', on);
+    mailCard.classList.remove('open');
+    window.nunsseom.setApp({ mailPanel: on });
+    if (on) paintMailPanel();
+    resizeForMail();
+  }
+
+  $('btn-mail').append(window.nunsIcon('mail'));
+  $('btn-mail').onclick = () => toggleMail();
+  $('mailpanel').addEventListener('pointerdown', (e) => e.stopPropagation());
+  if (params.get('mailpanel') === '1') {
+    mailCard.classList.add('mailon');
+    setTimeout(resizeForMail, 300);
+  }
   $('cal-prev').onclick = (e) => { e.stopPropagation(); shift(-1); };
   $('cal-next').onclick = (e) => { e.stopPropagation(); shift(1); };
   $('cal-week').onclick = (e) => { e.stopPropagation(); setMode('week'); };
