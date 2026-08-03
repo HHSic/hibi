@@ -142,12 +142,34 @@ async function fetchBody(account, uid, { markSeen = true, maxChars = 8000 } = {}
       subject: parsed.subject || (msg.envelope && msg.envelope.subject) || '(제목 없음)',
       from: (parsed.from && parsed.from.text) || senderOf(msg.envelope),
       at: (parsed.date || msg.internalDate || new Date()).getTime(),
-      attachments: (parsed.attachments || []).map((a) => a.filename).filter(Boolean),
+      // 원본 버퍼는 저장할 때만 쓰므로 여기 남겨두고, 화면에는 요약만 보낸다
+      attachments: parsed.attachments || [],
       text
     };
   } finally {
     try { await client.logout(); } catch { client.close(); }
   }
+}
+
+// 메일에 들어 있는 그림만 보여준다. 인터넷에서 받아오는 그림(원격 이미지)은
+// 불러오는 순간 "이 사람이 언제 열었다"가 발신자에게 전달되므로 아예 받지 않는다.
+// 본문을 글로만 그리는 것도 같은 이유다.
+const INLINE_IMAGE_MAX = 3 * 1024 * 1024;   // 이보다 큰 그림은 목록에만 둔다
+
+/** 화면에 넘길 첨부 요약 — 원본 버퍼는 빼고, 그림만 data URL로 */
+function attachmentsForView(list) {
+  return (list || []).map((a, i) => {
+    const type = String(a.contentType || '').toLowerCase();
+    const isImage = type.startsWith('image/') && a.content && a.content.length <= INLINE_IMAGE_MAX;
+    return {
+      index: i,
+      filename: a.filename || (isImage ? `그림${i + 1}` : `첨부${i + 1}`),
+      size: a.content ? a.content.length : 0,
+      contentType: type,
+      // data URL이라 네트워크를 타지 않는다 — 열람 사실이 새지 않는다
+      dataUrl: isImage ? `data:${type};base64,${a.content.toString('base64')}` : null
+    };
+  });
 }
 
 /** HTML만 있는 메일을 읽을 수 있는 글로 */
@@ -190,4 +212,4 @@ function friendly(e) {
   return raw.slice(0, 120);
 }
 
-module.exports = { PRESETS, preset, fetchSummary, fetchBody, test, senderOf, friendly, htmlToText };
+module.exports = { PRESETS, preset, fetchSummary, fetchBody, test, senderOf, friendly, htmlToText, attachmentsForView };

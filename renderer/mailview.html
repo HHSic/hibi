@@ -71,6 +71,25 @@
   }
   .body:hover::-webkit-scrollbar-thumb { background: var(--fill-hi); }
   .note { color: var(--tertiary); font-size: 11.5px; }
+
+  /* 첨부 — 메일에 들어 있는 그림만 보여준다 (원격 이미지는 받지 않는다) */
+  .atts { flex: none; border-top: 0.5px solid var(--separator); padding: 10px 16px 12px; }
+  .atts .cap { font-size: 11px; color: var(--tertiary); margin-bottom: 8px; }
+  .shots { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+  .shots img {
+    max-width: 100%; max-height: 220px; border-radius: 8px; display: block;
+    box-shadow: inset 0 0 0 0.5px var(--hairline); cursor: default;
+  }
+  .files { display: flex; flex-wrap: wrap; gap: 6px; }
+  .file {
+    all: unset; cursor: default;
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11.5px; padding: 5px 9px; border-radius: 8px;
+    background: var(--fill); color: var(--label);
+  }
+  .file:hover { background: var(--fill-hi); }
+  .file .sz { color: var(--tertiary); font-variant-numeric: tabular-nums; }
+  .saved { font-size: 11px; color: var(--accent); margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -83,6 +102,12 @@
     <button class="close" id="close" title="닫기"></button>
   </div>
   <div class="body" id="body"></div>
+  <div class="atts" id="atts" style="display:none">
+    <div class="cap" id="atts-cap"></div>
+    <div class="shots" id="shots"></div>
+    <div class="files" id="files"></div>
+    <div class="saved" id="saved"></div>
+  </div>
 </div>
 
 <script>
@@ -105,6 +130,48 @@
       + `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   };
 
+  const kb = (n) => (n >= 1024 * 1024
+    ? (n / 1024 / 1024).toFixed(1) + 'MB'
+    : Math.max(1, Math.round(n / 1024)) + 'KB');
+
+  function renderAttachments(list) {
+    if (!list.length) return;
+    $('atts').style.display = 'block';
+    const images = list.filter((a) => a.dataUrl);
+    const files = list.filter((a) => !a.dataUrl);
+    $('atts-cap').textContent = `첨부 ${list.length}개`
+      + (images.length ? ` · 그림 ${images.length}` : '');
+
+    for (const a of images) {
+      const img = document.createElement('img');
+      img.src = a.dataUrl;          // 메일에 담겨 온 그림이라 네트워크를 타지 않는다
+      img.alt = a.filename;
+      img.title = `${a.filename} · ${kb(a.size)}`;
+      $('shots').append(img);
+    }
+    // 그림도 저장할 수 있어야 하므로 파일 칩은 전부 만든다
+    for (const a of list) {
+      const b = document.createElement('button');
+      b.className = 'file';
+      const nm = document.createElement('span');
+      nm.textContent = a.filename;
+      const sz = document.createElement('span');
+      sz.className = 'sz';
+      sz.textContent = kb(a.size);
+      b.append(nm, sz);
+      b.onclick = async () => {
+        const r = await window.nunsseom.mailSaveAttachment(a.index);
+        if (r && r.ok) {
+          $('saved').textContent = `저장했습니다 — ${r.path}`;
+          $('saved').onclick = () => window.nunsseom.mailReveal(r.path);
+        } else if (r && r.message) {
+          $('saved').textContent = r.message;
+        }
+      };
+      $('files').append(b);
+    }
+  }
+
   window.nunsseom.mailViewData().then((m) => {
     if (!m || m.error) {
       $('subject').textContent = '열 수 없습니다';
@@ -113,6 +180,7 @@
     }
     $('subject').textContent = m.subject;
     $('meta').textContent = [m.from, fmt(m.at)].filter(Boolean).join(' · ');
+    renderAttachments(m.attachments || []);
     if (m.text) {
       $('body').textContent = m.text;
     } else {

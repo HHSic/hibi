@@ -1062,6 +1062,7 @@ ipcMain.handle('mail:refresh', async () => { await refreshMail(); return mailSta
 // 본문은 이때만 받는다. 폴링에서 매번 받으면 느리고, 대부분은 열어보지도 않는다.
 let mailWin = null;
 let mailViewPayload = null;
+let mailViewFiles = [];      // 원본 버퍼 — 저장할 때만 쓰고 화면에는 보내지 않는다
 
 function openMailView(msg) {
   mailViewPayload = null;
@@ -1070,7 +1071,11 @@ function openMailView(msg) {
 
   // 본문을 받아오는 동안 창을 먼저 띄운다 — 클릭했는데 한참 아무 일도 없으면 고장 같다
   mail.fetchBody(acc, msg.uid, { markSeen: true })
-    .then((m) => { mailViewPayload = m; refreshMail(); })
+    .then((m) => {
+      mailViewFiles = m.attachments || [];
+      mailViewPayload = { ...m, attachments: mail.attachmentsForView(mailViewFiles) };
+      refreshMail();
+    })
     .catch((e) => { mailViewPayload = { error: mail.friendly(e) }; });
 
   if (mailWin && !mailWin.isDestroyed()) { mailWin.focus(); return true; }
@@ -1094,6 +1099,26 @@ ipcMain.handle('mail:view-data', async () => {
   return mailViewPayload || { error: '시간이 초과되었습니다' };
 });
 ipcMain.on('mail:view-close', () => mailWin && !mailWin.isDestroyed() && mailWin.close());
+
+/** 첨부 저장 — 어디에 저장할지는 사용자가 고른다 */
+ipcMain.handle('mail:save-attachment', async (_e, index) => {
+  const a = mailViewFiles[index];
+  if (!a || !a.content) return { ok: false, message: '첨부를 찾을 수 없습니다' };
+  const { canceled, filePath } = await dialog.showSaveDialog(mailWin || undefined, {
+    defaultPath: a.filename || '첨부파일',
+    title: '첨부 저장'
+  });
+  if (canceled || !filePath) return { ok: false };
+  try {
+    fs.writeFileSync(filePath, a.content);
+    return { ok: true, message: '저장했습니다', path: filePath };
+  } catch (e) {
+    return { ok: false, message: e.message };
+  }
+});
+
+/** 저장한 첨부를 탐색기에서 보여준다 */
+ipcMain.on('mail:reveal', (_e, p) => { if (p) shell.showItemInFolder(p); });
 
 /** 우리가 넣어둔 안내 링크만 연다 — 렌더러가 임의 주소를 열지 못하게 http(s)로 제한 */
 ipcMain.handle('app:open-url', (_e, url) => {
