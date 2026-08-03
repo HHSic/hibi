@@ -995,8 +995,13 @@ ipcMain.handle('mail:add', async (_e, acc) => {
   const t = await mail.test({ ...acc, pass: acc.pass });
   if (!t.ok) return { ok: false, message: t.message };
   store.addMailAccount({ ...acc, sealed: secret.seal(acc.pass) });
-  refreshMail();
-  return { ok: true, message: t.message, accounts: mailAccountsForUi() };
+  // 계정을 넣었는데 별도 스위치를 또 켜야 보인다면, 안 보이는 게 당연해진다
+  if (!store.settings.mailEnabled) store.setSettings({ mailEnabled: true });
+  await refreshMail();
+  return {
+    ok: true, message: t.message,
+    accounts: mailAccountsForUi(), settings: store.settings
+  };
 });
 ipcMain.handle('mail:update', (_e, { id, patch }) => {
   const p = { ...patch };
@@ -1222,11 +1227,14 @@ if (!app.requestSingleInstanceLock()) {
     createWidget();
     if (resumed && resumed.widgetHidden) widgetWin.hide();
     setInterval(tick, 1000);
-    // 메일 — 확인은 자주 하되 알리는 건 mailAnnounce가 정한다
-    if (store.settings.mailEnabled) {
-      refreshMail();
-      setInterval(refreshMail, Math.max(2, store.settings.mailPollMin || 10) * 60_000);
-    }
+    // 메일 — 타이머는 항상 돌고, 켜져 있는지·주기가 됐는지는 안에서 판단한다.
+    // 시작할 때만 거는 방식이면 나중에 메일을 켜도 재시작 전까지 확인하지 않는다.
+    if (store.settings.mailEnabled) refreshMail();
+    setInterval(() => {
+      if (!store.settings.mailEnabled) return;
+      const every = Math.max(2, store.settings.mailPollMin || 10) * 60_000;
+      if (Date.now() - mailState.fetchedAt >= every) refreshMail();
+    }, 30_000);
     setInterval(updateTray, 30_000);
 
     refreshCalendars();

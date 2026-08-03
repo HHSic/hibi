@@ -249,6 +249,12 @@
   input[type=text]::placeholder { color: var(--tertiary); }
 
   .col .hint { font-size: 11px; color: var(--tertiary); line-height: 1.5; }
+  /* 연결 실패는 작은 회색 글씨로 두면 못 본다 */
+  .msg { font-size: 12px; line-height: 1.5; display: none; border-radius: 8px; padding: 8px 10px; }
+  .msg.show { display: block; }
+  .msg.bad { background: rgba(255, 90, 90, 0.14); color: #ff9a9a; }
+  .msg.good { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+  .msg.wait { background: var(--group); color: var(--secondary); }
   .col .hint b { color: var(--secondary-label); font-weight: 600; }
   .helprow { display: flex; gap: 6px; flex-wrap: wrap; }
   /* 클립보드에서 찾은 주소 — 여기서 바로 넣게 해 타이핑을 없앤다 */
@@ -393,9 +399,13 @@
         <span class="hint">비밀번호는 이 PC에서만 풀 수 있게 암호화해 저장합니다.</span>
       </div>
       <div class="col">
+        <div class="msg" id="mail-msg"></div>
         <div class="upline">
-          <span class="lbl" id="mail-msg"></span>
-          <button class="mini" id="btn-mail-add">추가</button>
+          <span></span>
+          <span class="helprow">
+            <button class="mini ghost" id="btn-mail-test">연결 테스트</button>
+            <button class="mini" id="btn-mail-add">추가</button>
+          </span>
         </div>
       </div>
     </div>
@@ -855,7 +865,13 @@
       el.setAttribute('aria-checked', String(on));
     };
     paint();
-    el.onclick = () => { on = !on; paint(); window.nunsseom.setApp({ [key]: on }); };
+    el.onclick = () => {
+      on = !on;
+      paint();
+      window.nunsseom.setApp({ [key]: on });
+      // 메일을 켜면 다음 주기를 기다리지 않고 바로 한 번 확인한다
+      if (key === 'mailEnabled' && on) window.nunsseom.mailRefresh();
+    };
   }
 
   // ── 자동 실행 ─────────────────────────────────────
@@ -1314,9 +1330,14 @@
     renderMailAccounts();
   }
 
-  $('btn-mail-add').onclick = async () => {
-    const msg = $('mail-msg');
-    const acc = {
+  function mailMsg(kind, text) {
+    const el = $('mail-msg');
+    el.className = 'msg show ' + kind;
+    el.textContent = text;
+  }
+
+  function mailForm() {
+    return {
       provider: mailPreset ? mailPreset.id : 'custom',
       name: mailPreset && mailPreset.id !== 'custom' ? mailPreset.name : $('mail-host').value.trim(),
       host: $('mail-host').value.trim(),
@@ -1324,14 +1345,39 @@
       user: $('mail-user').value.trim(),
       pass: $('mail-pass').value
     };
-    if (!acc.host || !acc.user || !acc.pass) { msg.textContent = '서버·아이디·비밀번호를 모두 넣으세요'; return; }
-    msg.textContent = '연결 확인 중…';
+  }
+
+  function mailFormOk(acc) {
+    if (!acc.host) { mailMsg('bad', '서버 주소를 넣으세요'); return false; }
+    if (!acc.user) { mailMsg('bad', '아이디를 넣으세요'); return false; }
+    if (!acc.pass) { mailMsg('bad', '비밀번호를 넣으세요 (앱 비밀번호가 필요할 수 있어요)'); return false; }
+    return true;
+  }
+
+  $('btn-mail-test').onclick = async () => {
+    const acc = mailForm();
+    if (!mailFormOk(acc)) return;
+    mailMsg('wait', '연결 확인 중…');
+    $('btn-mail-test').disabled = true;
+    try {
+      const r = await window.nunsseom.mailTest(acc);
+      mailMsg(r.ok ? 'good' : 'bad', r.message);
+    } finally {
+      $('btn-mail-test').disabled = false;
+    }
+  };
+
+  $('btn-mail-add').onclick = async () => {
+    const acc = mailForm();
+    if (!mailFormOk(acc)) return;
+    mailMsg('wait', '연결 확인 중…');
     $('btn-mail-add').disabled = true;
     try {
       const r = await window.nunsseom.mailAdd(acc);
-      msg.textContent = r.message;
+      mailMsg(r.ok ? 'good' : 'bad', r.ok ? `${r.message} · 메일 확인을 켰습니다` : r.message);
       if (r.ok) {
         mailData.accounts = r.accounts;
+        if (r.settings) { data.settings = r.settings; bindSwitch('mailEnabled'); }
         $('mail-user').value = '';
         $('mail-pass').value = '';
         renderMailAccounts();
