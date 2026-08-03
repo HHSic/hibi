@@ -14,6 +14,7 @@ const session = require('./session');
 const autolaunch = require('./autolaunch');
 const evlog = require('./evlog');
 const planner = require('./planner');
+const calcache = require('./calcache');
 
 const ICON = path.join(__dirname, '..', 'assets', 'tray.png');
 const PRELOAD = path.join(__dirname, 'preload.js');
@@ -65,6 +66,25 @@ const state = {
 const CAL_REFRESH_MS = 15 * 60 * 1000;
 const cal = { occurrences: [], errors: [], sources: [], fetchedAt: 0, loading: false, hold: null };
 
+/**
+ * 저장해둔 원문으로 일정을 먼저 채운다.
+ * 네트워크 응답을 기다리는 동안(오프라인이면 영영) 달력이 비어 있지 않게 한다.
+ */
+function primeCalendarsFromCache() {
+  if (!store.calendars.length) return;
+  const cached = calcache.load(app.getPath('userData'));
+  if (!cached) return;
+  const now = Date.now();
+  cal.sources = cached.sources;
+  cal.fetchedAt = cached.fetchedAt;
+  cal.stale = true;                  // 갱신에 성공하면 false가 된다
+  cal.occurrences = calendar.expandRange(
+    cached.sources, now - 2 * 86400000, now + 2 * 86400000,
+    { includeAllDay: store.settings.calendarAllDay }
+  );
+  console.log(`[calendar] 저장해둔 일정 ${cal.occurrences.length}건으로 시작합니다`);
+}
+
 async function refreshCalendars() {
   const list = store.calendars;
   if (!list.length) { cal.occurrences = []; cal.errors = []; return; }
@@ -78,10 +98,13 @@ async function refreshCalendars() {
     cal.errors = r.errors;
     cal.sources = r.sources;      // 달력에서 다른 달을 펼칠 때 쓴다
     cal.fetchedAt = r.fetchedAt;
+    cal.stale = false;
+    calcache.save(app.getPath('userData'), r.sources, r.fetchedAt);
     if (widgetWin && !widgetWin.isDestroyed()) widgetWin.webContents.send('cal:changed');
     if (r.errors.length) console.warn('[calendar] 일부 실패:', r.errors.map((e) => e.message).join(', '));
   } catch (e) {
-    console.warn('[calendar] refresh failed:', e.message);
+    console.warn('[calendar] refresh failed:', e.message,
+      cal.sources.length ? '— 저장해둔 일정으로 계속합니다' : '');
   } finally {
     cal.loading = false;
   }
@@ -638,7 +661,8 @@ ipcMain.handle('cal:month', (_e, { year, month }) => {
   const to = new Date(year, month + 1, 7).getTime();
   const events = calendar.expandRange(cal.sources, from, to, { includeAllDay: true })
     .map((e) => ({ start: e.start, end: e.end, summary: e.summary || '일정',
-                   allDay: !!e.allDay, calendar: e.calendar }));
+                   allDay: !!e.allDay, calendar: e.calendar,
+                   uid: e.uid || null, url: e.url || null, calUrl: e.calUrl || null }));
   return {
     year, month,
     firstWeekday: first.getDay(),
@@ -649,6 +673,25 @@ ipcMain.handle('cal:month', (_e, { year, month }) => {
   };
 });
 ipcMain.on('cal:open', () => showCalendarPanel());
+
+/**
+ * 일정을 웹에서 연다. 쓰기 권한(OAuth)을 받는 대신 브라우저를 열어준다 —
+ * 사용자는 이미 그 캘린더에 로그인해 있으므로 거기서 고치면 된다.
+ */
+ipcMain.handle('cal:open-event', (_e, ev) => {
+  const link = calendar.eventLink(ev, ev && ev.calUrl);
+  if (!link) return false;
+  shell.openExternal(link);
+  return true;
+});
+
+/** 빈 날짜를 누르면 그 시각으로 새 일정 만들기 화면을 연다 */
+ipcMain.handle('cal:new-event', (_e, { start, end }) => {
+  const hasGoogle = store.calendars.some((c) => calendar.googleCalendarId(c.url));
+  if (!hasGoogle) return false;
+  shell.openExternal(calendar.newEventLink(start, end));
+  return true;
+});
 
 /**
  * 위젯 안 달력을 펼치고 접을 때 창 높이를 그만큼 늘렸다 되돌린다.
@@ -986,6 +1029,9 @@ if (!app.requestSingleInstanceLock()) {
       if (on !== store.settings.autoLaunch) store.setSettings({ autoLaunch: on });
       console.log('[autolaunch]', on ? '켜짐' : '꺼짐', '·', autolaunch.linkPath());
     }
+
+    // 네트워크보다 먼저 — 오프라인이어도 달력과 "빈 시간 배치"가 바로 동작한다
+    primeCalendarsFromCache();
 
     scheduler.reset();
     const resumed = restoreSession();

@@ -102,6 +102,60 @@ function looksLikeCalendar(input) {
     || /^[^\s/:]+@(group\.calendar\.google\.com|gmail\.com)$/i.test(s);
 }
 
+// ── 웹에서 열기 ─────────────────────────────────────────
+// 일정을 고치려면 원래 OAuth 쓰기 권한이 필요하다. 그런데 사용자는 이미 브라우저에서
+// 자기 캘린더에 로그인해 있다. 그 화면을 열어주기만 하면 인증 문제 없이 수정·생성이 된다.
+
+/** 구독 주소에서 Google 캘린더 ID를 뽑는다 (.../ical/<ID>/private-xxx/basic.ics) */
+function googleCalendarId(icsUrl) {
+  const m = String(icsUrl || '').match(/calendar\.google\.com\/calendar\/ical\/([^/]+)\//i);
+  if (!m) return null;
+  try { return decodeURIComponent(m[1]); } catch { return m[1]; }
+}
+
+/**
+ * 일정을 열 수 있는 웹 주소.
+ *  1) ICS가 URL을 줬으면 그대로 — 가장 확실하다
+ *  2) Google이면 UID와 캘린더 ID로 편집 주소를 조립한다 (비공식 방식이라 실패할 수 있다)
+ *  3) 둘 다 아니면 그 날짜의 캘린더 화면 — 정확하진 않아도 항상 열린다
+ */
+function eventLink(ev, icsUrl) {
+  if (!ev) return null;
+  if (ev.url) return ev.url;
+
+  const calId = googleCalendarId(icsUrl);
+  if (calId && ev.uid) {
+    const eventId = String(ev.uid).replace(/@google\.com$/i, '');
+    if (eventId) {
+      const token = Buffer.from(`${eventId} ${calId}`, 'utf8')
+        .toString('base64').replace(/=+$/, '');
+      return `https://calendar.google.com/calendar/u/0/r/eventedit/${token}`;
+    }
+  }
+  if (calId) return dayLink(ev.start);
+  return null;
+}
+
+/** 그 날짜의 Google 캘린더 화면 */
+function dayLink(at) {
+  const d = new Date(at || Date.now());
+  return `https://calendar.google.com/calendar/u/0/r/day/${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+/** 새 일정 만들기 — Google이 공식 지원하는 형식이라 안정적이다 */
+function newEventLink(start, end) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const stamp = (t) => {
+    const d = new Date(t);
+    return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}`
+      + `T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}00Z`;
+  };
+  const s = new Date(start);
+  const e = end ? new Date(end) : new Date(s.getTime() + 3600000);
+  return 'https://calendar.google.com/calendar/render?action=TEMPLATE'
+    + `&dates=${stamp(s)}/${stamp(e)}`;
+}
+
 /** 캘린더가 스스로 밝힌 이름 — 사용자가 이름을 지어내지 않아도 되게 */
 function calendarName(icsText) {
   const m = unfold(String(icsText || '')).match(/^X-WR-CALNAME[^:]*:(.*)$/mi);
@@ -210,6 +264,13 @@ function parseEvents(icsText) {
         }
         break;
       }
+      case 'UID':
+        cur.uid = p.value.trim();
+        break;
+      // 일정을 웹에서 열 수 있는 원본 링크. Notion 등은 이걸 넣어준다.
+      case 'URL':
+        if (/^https?:\/\//i.test(p.value.trim())) cur.url = p.value.trim();
+        break;
       case 'STATUS':
         cur.status = p.value.toUpperCase();
         break;
@@ -245,7 +306,15 @@ function expand(ev, from, to) {
     const s = startDate.getTime();
     if (ev.exdates.includes(s)) return;
     const e = s + durMs;
-    if (e > from && s < to) out.push({ start: s, end: e, summary: ev.summary || '(제목 없음)', allDay: !!ev.allDay });
+    if (e > from && s < to) {
+      out.push({
+        start: s, end: e,
+        summary: ev.summary || '(제목 없음)',
+        allDay: !!ev.allDay,
+        uid: ev.uid || null,
+        url: ev.url || null
+      });
+    }
   };
 
   const out = [];
@@ -332,9 +401,9 @@ async function loadOccurrences(calendars, { windowDays = 2, includeAllDay = fals
     if (!cal || !cal.url || cal.enabled === false) continue;
     try {
       const text = await fetchText(cal.url);
-      sources.push({ name: cal.name || '캘린더', text });
+      sources.push({ name: cal.name || '캘린더', url: cal.url, text });
       const occ = occurrencesIn(text, from, to, { includeAllDay });
-      results.push(...occ.map((o) => ({ ...o, calendar: cal.name || '캘린더' })));
+      results.push(...occ.map((o) => ({ ...o, calendar: cal.name || '캘린더', calUrl: cal.url })));
     } catch (e) {
       errors.push({ url: cal.url, name: cal.name, message: e.message });
     }
@@ -349,7 +418,7 @@ function expandRange(sources, from, to, { includeAllDay = true } = {}) {
   for (const s of sources || []) {
     try {
       out.push(...occurrencesIn(s.text, from, to, { includeAllDay })
-        .map((o) => ({ ...o, calendar: s.name })));
+        .map((o) => ({ ...o, calendar: s.name, calUrl: s.url })));
     } catch { /* 한 캘린더가 깨져도 나머지는 보여준다 */ }
   }
   return out.sort((a, b) => a.start - b.start);
@@ -367,5 +436,6 @@ function nextEvent(occurrences, at = Date.now()) {
 
 module.exports = {
   loadOccurrences, occurrencesIn, parseEvents, currentEvent, nextEvent, fetchText,
-  normalizeUrl, looksLikeCalendar, calendarName, expandRange
+  normalizeUrl, looksLikeCalendar, calendarName, expandRange,
+  eventLink, newEventLink, dayLink, googleCalendarId
 };

@@ -1014,6 +1014,12 @@
         if (out) { calAnchor = new Date(d); loadCal(); return; }
         paintCal();
       };
+      // 빈 날짜를 두 번 누르면 그 날 오전 10시로 새 일정 만들기 화면을 연다
+      cell.ondblclick = (e) => {
+        e.stopPropagation();
+        const s = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 10, 0);
+        window.nunsseom.calNewEvent({ start: s.getTime(), end: s.getTime() + 3600000 });
+      };
       grid.append(cell);
     }
 
@@ -1045,6 +1051,11 @@
       nm.className = 'nm';
       nm.textContent = e.summary;
       row.append(tm, nm);
+      row.title = '두 번 누르면 웹에서 엽니다';
+      row.ondblclick = (ev2) => {
+        ev2.stopPropagation();
+        window.nunsseom.calOpenEvent(e);
+      };
       host.append(row);
     }
   }
