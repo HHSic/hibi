@@ -1094,7 +1094,10 @@ function openMailView(msg) {
     frame: false,
     // 크기 조절은 렌더러의 리사이즈 존이 맡는다 (네이티브는 투명 창에서 폭주한다)
     resizable: false,
-    alwaysOnTop: true, skipTaskbar: true,
+    // 메일은 읽는 동안 다른 창을 보기도 한다 — 항상 위에 두지 않고
+    // 작업표시줄에도 올려 다시 찾아올 수 있게 한다
+    alwaysOnTop: false, skipTaskbar: false,
+    title: '메일',
     ...glass.windowOptions(),
     webPreferences: { preload: PRELOAD }
   });
@@ -1138,6 +1141,12 @@ ipcMain.handle('mail:save-attachment', async (_e, index) => {
 ipcMain.on('mail:reveal', (_e, p) => { if (p) shell.showItemInFolder(p); });
 
 /** 메일 보기 창 크기 조절 — 위젯과 같은 방식(기준 크기를 못박아 되먹임을 끊는다) */
+ipcMain.on('mailview:move', (_e, { x, y }) => {
+  if (!mailWin || mailWin.isDestroyed() || !mailViewSize) return;
+  // setPosition은 배율이 100%가 아닐 때 호출마다 창을 부풀린다 — 크기를 못박아 옮긴다
+  mailWin.setBounds({ x: Math.round(x), y: Math.round(y), ...mailViewSize });
+});
+
 ipcMain.handle('mailview:bounds', () => {
   if (!mailWin || mailWin.isDestroyed()) return { x: 0, y: 0, width: 420, height: 480 };
   return mailWin.getBounds();

@@ -164,13 +164,18 @@ function attachmentsForView(list) {
   return (list || []).map((a, i) => {
     const type = String(a.contentType || '').toLowerCase();
     const isImage = type.startsWith('image/') && a.content && a.content.length <= INLINE_IMAGE_MAX;
+    // 본문에 박혀 있는 그림은 이미 본문에서 보인다 — 아래에 또 크게 깔면
+    // 본문이 밀려나고 같은 그림이 두 번 나온다. 저장은 되게 목록에는 남긴다.
+    const inline = !!(a.related || a.cid || a.contentId
+      || String(a.contentDisposition || '').toLowerCase() === 'inline');
     return {
       index: i,
       filename: a.filename || (isImage ? `그림${i + 1}` : `첨부${i + 1}`),
       size: a.content ? a.content.length : 0,
       contentType: type,
+      inline,
       // data URL이라 네트워크를 타지 않는다 — 열람 사실이 새지 않는다
-      dataUrl: isImage ? `data:${type};base64,${a.content.toString('base64')}` : null
+      dataUrl: isImage && !inline ? `data:${type};base64,${a.content.toString('base64')}` : null
     };
   });
 }
@@ -207,19 +212,25 @@ function buildViewHtml(parsed, { allowRemote = false } = {}) {
     .replace(/(href|src)\s*=\s*"javascript:[^"]*"/gi, '$1="#"')
     .replace(/(href|src)\s*=\s*'javascript:[^']*'/gi, "$1='#'");
 
-  // 메일에 담겨 온 그림을 제자리에 — cid로 참조된 것만
-  const byCid = new Map();
+  // 메일에 담겨 온 그림을 본문 제자리에 넣는다.
+  // 같은 그림을 가리키는 이름이 cid / contentId / 파일명으로 제각각이라 전부 받아둔다 —
+  // 하나라도 어긋나면 그림이 본문에서 사라지고 첨부 목록으로 밀려난다(실제로 그랬다).
+  const byKey = new Map();
+  const key = (v) => String(v || '').replace(/^<|>$/g, '').trim().toLowerCase();
   for (const a of parsed.attachments || []) {
-    if (a.cid && a.content && String(a.contentType || '').startsWith('image/')
-      && a.content.length <= INLINE_IMAGE_MAX) {
-      byCid.set(String(a.cid).replace(/^<|>$/g, ''),
-        `data:${a.contentType};base64,${a.content.toString('base64')}`);
+    if (!a.content || !String(a.contentType || '').startsWith('image/')) continue;
+    if (a.content.length > INLINE_IMAGE_MAX) continue;
+    const url = `data:${a.contentType};base64,${a.content.toString('base64')}`;
+    for (const k of [a.cid, a.contentId, a.filename]) {
+      if (k) byKey.set(key(k), url);
     }
   }
   html = html.replace(/src\s*=\s*["']cid:([^"']+)["']/gi, (m, cid) => {
-    const url = byCid.get(String(cid).replace(/^<|>$/g, ''));
-    return url ? `src="${url}"` : 'data-blocked="cid"';
+    const url = byKey.get(key(cid));
+    return url ? `src="${url}"` : 'src="" data-missing="1"';
   });
+  // 끝내 못 찾은 그림은 빈 칸으로 남으니 지운다
+  html = html.replace(/<img\b[^>]*data-missing="1"[^>]*>/gi, '');
 
   // 인터넷에서 받아오는 그림 — 허용하면 그대로 두고, 아니면 지운다.
   // (지우는 쪽이 안전하지만, 회사 메일은 정상적인 그림도 원격인 경우가 많다)
