@@ -388,6 +388,8 @@
   }
   .sheet .row.ev.now .evdot { background: var(--tint); }
   .sheet .row.ev.now .nm { color: var(--label); font-weight: 600; }
+  .sheet .row.ev.read { opacity: 0.55; }
+  .sheet .row.ev.read .evdot { background: var(--tertiary); }
   .sheet .row .g { width: 0.875rem; height: 0.875rem; }
   .sheet .row .nm { color: var(--label); font-weight: 540; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sheet .row .tm { color: var(--secondary); font-variant-numeric: tabular-nums; font-weight: 560; }
@@ -1070,12 +1072,13 @@
     const sec = $('mailbox');
     if (!box || !box.messages || !box.messages.length) { sec.style.display = 'none'; return; }
     sec.style.display = 'block';
-    $('mail-ttl').textContent = box.unread ? `새 메일 ${box.unread}통` : '새 메일';
+    $('mail-ttl').textContent = box.unread ? `메일 · 안 읽음 ${box.unread}` : '메일';
     const host = $('mail-rows');
     host.textContent = '';
-    for (const m of box.messages.slice(0, 5)) {
+    for (const m of box.messages) {
       const row = document.createElement('div');
-      row.className = 'row ev';
+      // 읽은 메일은 한 톤 죽여서 안 읽은 것이 먼저 눈에 들어오게 한다
+      row.className = 'row ev' + (m.seen ? ' read' : ' now');
       const dot = document.createElement('span');
       dot.className = 'evdot';
       const nm = document.createElement('span');
@@ -1086,6 +1089,8 @@
       tm.className = 'tm';
       tm.textContent = m.from || '';
       row.append(dot, nm, tm);
+      row.title = '두 번 누르면 열립니다 (읽음으로 표시됩니다)';
+      row.ondblclick = (e) => { e.stopPropagation(); window.nunsseom.mailOpen(m); };
       host.append(row);
     }
   }

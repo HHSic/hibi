@@ -64,33 +64,137 @@ function connect(account) {
 }
 
 /**
- * 받은편지함의 안 읽은 메일 요약.
+ * 받은편지함 요약.
+ * @param onlyUnread 안 읽은 것만 볼지, 최근 온 것을 모두 볼지
+ * @param limit      제목을 몇 개까지 들고 올지
  * @returns { unread, total, messages: [{ uid, subject, from, at, seen }] }
  */
-async function fetchSummary(account, { limit = MAX_PREVIEW } = {}) {
+async function fetchSummary(account, { limit = MAX_PREVIEW, onlyUnread = true } = {}) {
+  const take = Math.max(1, Math.min(MAX_PREVIEW, limit));
   const client = connect(account);
   await client.connect();
   try {
     const box = await client.mailboxOpen(account.mailbox || 'INBOX', { readOnly: true });
-    const unseen = await client.search({ seen: false }, { uid: true });
-    const uids = (unseen || []).slice(-limit).reverse();
+    // 안 읽은 수는 무엇을 보여주든 항상 필요하다 (뱃지에 쓰인다)
+    const unseen = await client.search({ seen: false }, { uid: true }) || [];
 
     const messages = [];
-    if (uids.length) {
-      for await (const msg of client.fetch(uids, { envelope: true, internalDate: true }, { uid: true })) {
-        messages.push({
-          uid: msg.uid,
-          subject: String((msg.envelope && msg.envelope.subject) || '(제목 없음)').slice(0, 120),
-          from: senderOf(msg.envelope),
-          at: (msg.internalDate || new Date()).getTime()
-        });
-      }
-      messages.sort((a, b) => b.at - a.at);
+    if (onlyUnread) {
+      const uids = unseen.slice(-take).reverse();
+      if (uids.length) await collect(client, uids, { uid: true }, messages);
+    } else if (box.exists > 0) {
+      // 최근 온 것 — 읽음 여부와 무관하게 마지막 N통
+      const from = Math.max(1, box.exists - take + 1);
+      await collect(client, `${from}:*`, {}, messages);
     }
-    return { unread: (unseen || []).length, total: box.exists || 0, messages };
+    messages.sort((a, b) => b.at - a.at);
+    return { unread: unseen.length, total: box.exists || 0, messages: messages.slice(0, take) };
   } finally {
     try { await client.logout(); } catch { client.close(); }
   }
+}
+
+async function collect(client, range, opts, out) {
+  for await (const msg of client.fetch(range, { envelope: true, internalDate: true, flags: true }, opts)) {
+    const flags = msg.flags instanceof Set ? msg.flags : new Set(msg.flags || []);
+    out.push({
+      uid: msg.uid,
+      subject: String((msg.envelope && msg.envelope.subject) || '(제목 없음)').slice(0, 120),
+      from: senderOf(msg.envelope),
+      at: (msg.internalDate || new Date()).getTime(),
+      // IMAP 플래그는 역슬래시로 시작한다 ('\Seen') — 소스에서는 두 번 써야 한다
+      seen: flags.has('\\Seen')
+    });
+  }
+}
+
+/** HTML 메일을 글로 — 본문을 그대로 그리면 원격 이미지·스크립트가 따라온다 */
+function htmlToText(html) {
+  return String(html || '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<\/(p|div|tr|h[1-6]|li)>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/**
+ * 한 통의 본문을 글로만 가져오고, 원하면 읽음으로 표시한다.
+ * HTML은 그대로 그리지 않는다 — 원격 이미지가 열람 사실을 알리고 스크립트가 딸려온다.
+ * text/plain을 먼저 쓰고, 없을 때만 HTML에서 태그를 걷어낸다.
+ */
+async function fetchBody(account, uid, { markSeen = true, maxChars = 8000 } = {}) {
+  const client = connect(account);
+  await client.connect();
+  try {
+    await client.mailboxOpen(account.mailbox || 'INBOX', { readOnly: !markSeen });
+    const msg = await client.fetchOne(String(uid), { envelope: true, internalDate: true, source: true },
+      { uid: true });
+    if (!msg) throw new Error('메일을 찾을 수 없습니다');
+
+    const raw = msg.source ? msg.source.toString('utf8') : '';
+    let text = extractText(raw);
+    if (text.length > maxChars) text = text.slice(0, maxChars) + '\n\n…(생략)';
+
+    if (markSeen) {
+      try { await client.messageFlagsAdd(String(uid), ['\\Seen'], { uid: true }); } catch { /* 실패해도 본문은 보여준다 */ }
+    }
+    return {
+      uid,
+      subject: String((msg.envelope && msg.envelope.subject) || '(제목 없음)'),
+      from: senderOf(msg.envelope),
+      at: (msg.internalDate || new Date()).getTime(),
+      text
+    };
+  } finally {
+    try { await client.logout(); } catch { client.close(); }
+  }
+}
+
+/** 원문에서 사람이 읽을 부분만 — 전체 MIME 파서를 두지 않고 최소한으로 */
+function extractText(raw) {
+  if (!raw) return '';
+  const parts = raw.split(/\r?\n\r?\n/);
+  const body = parts.slice(1).join('\n\n');
+
+  const boundary = (raw.match(/boundary="?([^"\s;]+)"?/i) || [])[1];
+  if (!boundary) return decodePart(raw, body);
+
+  const chunks = body.split(new RegExp(`--${boundary.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  let plain = '';
+  let html = '';
+  for (const chunk of chunks) {
+    if (!/content-type:/i.test(chunk)) continue;
+    const head = chunk.split(/\r?\n\r?\n/)[0] || '';
+    const rest = chunk.split(/\r?\n\r?\n/).slice(1).join('\n\n');
+    if (/text\/plain/i.test(head) && !plain) plain = decodePart(head, rest);
+    else if (/text\/html/i.test(head) && !html) html = decodePart(head, rest);
+  }
+  if (plain) return plain.trim();
+  if (html) return htmlToText(html);
+  return decodePart(raw, body);
+}
+
+/** base64 / quoted-printable 정도만 푼다 */
+function decodePart(head, body) {
+  const enc = (String(head).match(/content-transfer-encoding:\s*([\w-]+)/i) || [])[1] || '';
+  const charset = (String(head).match(/charset="?([\w-]+)"?/i) || [])[1] || 'utf-8';
+  let out = String(body || '');
+  try {
+    if (/base64/i.test(enc)) {
+      out = Buffer.from(out.replace(/\s+/g, ''), 'base64')
+        .toString(/utf-?8/i.test(charset) ? 'utf8' : 'latin1');
+    } else if (/quoted-printable/i.test(enc)) {
+      out = out.replace(/=\r?\n/g, '')
+        .replace(/=([0-9A-F]{2})/gi, (_m, h) => String.fromCharCode(parseInt(h, 16)));
+      if (/utf-?8/i.test(charset)) out = Buffer.from(out, 'latin1').toString('utf8');
+    }
+  } catch { /* 못 풀면 원문 그대로 */ }
+  return out;
 }
 
 /** 연결만 확인 — 설정 화면의 "연결 테스트" */
@@ -119,4 +223,4 @@ function friendly(e) {
   return raw.slice(0, 120);
 }
 
-module.exports = { PRESETS, preset, fetchSummary, test, senderOf, friendly };
+module.exports = { PRESETS, preset, fetchSummary, fetchBody, test, senderOf, friendly, htmlToText, extractText };

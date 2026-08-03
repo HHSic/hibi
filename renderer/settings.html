@@ -348,6 +348,16 @@
         <button class="sw" id="mailShow" role="switch" aria-label="새 메일 표시"></button>
       </div>
       <div class="col">
+        <span class="lbl">무엇을 보여줄지</span>
+        <div class="helprow" id="mail-scope"></div>
+        <span class="hint" id="mail-scope-hint"></span>
+      </div>
+      <div class="row">
+        <span class="nm">보여줄 개수</span>
+        <input type="range" id="mailCount" min="1" max="10" step="1">
+        <span class="out" id="out-mailCount"></span>
+      </div>
+      <div class="col">
         <span class="lbl">알리는 방식</span>
         <div class="helprow" id="mail-mode"></div>
         <span class="hint" id="mail-mode-hint"></span>
@@ -1156,6 +1166,7 @@
         window.nunsSound.play(s.id, data.settings.soundVolume ?? 55);
         renderSounds();
     bindAppRow('mailPollMin', (v) => `${v}분`, (s) => s.mailPollMin ?? 10, (v) => ({ mailPollMin: v }));
+    bindAppRow('mailCount', (v) => `${v}통`, (s) => s.mailCount ?? 5, (v) => ({ mailCount: v }));
     loadMail();
       };
       host.append(b);
@@ -1213,6 +1224,30 @@
     }
     const sel = modes.find((m) => m.id === cur);
     $('mail-mode-hint').textContent = sel ? sel.hint : '';
+  }
+
+  function renderMailScope() {
+    const host = $('mail-scope');
+    host.textContent = '';
+    const opts = [
+      { unread: false, name: '최근 온 메일', hint: '읽었든 안 읽었든 마지막에 온 메일을 보여줍니다.' },
+      { unread: true, name: '안 읽은 것만', hint: '안 읽은 메일만 보여줍니다. 다 읽으면 목록이 비워집니다.' }
+    ];
+    const cur = data.settings.mailOnlyUnread === true;
+    for (const o of opts) {
+      const b = document.createElement('button');
+      b.className = 'mini' + (cur === o.unread ? '' : ' ghost');
+      b.textContent = o.name;
+      b.onclick = () => {
+        data.settings.mailOnlyUnread = o.unread;
+        window.nunsseom.setApp({ mailOnlyUnread: o.unread });
+        window.nunsseom.mailRefresh();
+        renderMailScope();
+      };
+      host.append(b);
+    }
+    const sel = opts.find((o) => o.unread === cur);
+    $('mail-scope-hint').textContent = sel ? sel.hint : '';
   }
 
   function renderMailAccounts() {
@@ -1274,6 +1309,7 @@
       $('mail-note').textContent = mailPreset.note || '';
     }
     renderMailPresets();
+    renderMailScope();
     renderMailModes();
     renderMailAccounts();
   }
@@ -1331,6 +1367,7 @@
       (s) => s.soundVolume ?? 55, (v) => ({ soundVolume: v }));
     renderSounds();
     bindAppRow('mailPollMin', (v) => `${v}분`, (s) => s.mailPollMin ?? 10, (v) => ({ mailPollMin: v }));
+    bindAppRow('mailCount', (v) => `${v}통`, (s) => s.mailCount ?? 5, (v) => ({ mailCount: v }));
     loadMail();
 
     for (const key of ['dndEnabled', 'autoUpdate', 'calendarBusy', 'calendarAllDay',

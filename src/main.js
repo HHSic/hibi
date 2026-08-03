@@ -146,16 +146,19 @@ async function refreshMail() {
     let messages = [];
     for (const acc of accounts) {
       try {
-        const r = await mail.fetchSummary(acc);
+        const r = await mail.fetchSummary(acc, {
+          limit: store.settings.mailCount || 5,
+          onlyUnread: store.settings.mailOnlyUnread !== false
+        });
         unread += r.unread;
-        messages.push(...r.messages.map((m) => ({ ...m, account: acc.name })));
+        messages.push(...r.messages.map((m) => ({ ...m, account: acc.name, accountId: acc.id })));
       } catch (e) {
         errors.push({ name: acc.name, message: mail.friendly(e) });
       }
     }
     messages.sort((a, b) => b.at - a.at);
     mailState.unread = unread;
-    mailState.messages = messages.slice(0, 10);
+    mailState.messages = messages.slice(0, Math.max(1, store.settings.mailCount || 5));
     mailState.errors = errors;
     mailState.fetchedAt = Date.now();
     if (unread > before) mailState.pending += unread - before;
@@ -1008,6 +1011,43 @@ ipcMain.handle('mail:remove', (_e, id) => {
   return mailAccountsForUi();
 });
 ipcMain.handle('mail:refresh', async () => { await refreshMail(); return mailStatus(); });
+
+// ── 메일 한 통 보기 ──────────────────────────────────────
+// 본문은 이때만 받는다. 폴링에서 매번 받으면 느리고, 대부분은 열어보지도 않는다.
+let mailWin = null;
+let mailViewPayload = null;
+
+function openMailView(msg) {
+  mailViewPayload = null;
+  const acc = mailAccountsForUse().find((a) => a.id === msg.accountId) || mailAccountsForUse()[0];
+  if (!acc) return false;
+
+  // 본문을 받아오는 동안 창을 먼저 띄운다 — 클릭했는데 한참 아무 일도 없으면 고장 같다
+  mail.fetchBody(acc, msg.uid, { markSeen: true })
+    .then((m) => { mailViewPayload = m; refreshMail(); })
+    .catch((e) => { mailViewPayload = { error: mail.friendly(e) }; });
+
+  if (mailWin && !mailWin.isDestroyed()) { mailWin.focus(); return true; }
+  mailWin = new BrowserWindow({
+    width: 420 + PAD, height: 480 + PAD,
+    frame: false, resizable: false, alwaysOnTop: true, skipTaskbar: true,
+    ...glass.windowOptions(),
+    webPreferences: { preload: PRELOAD }
+  });
+  mailWin.loadFile(page('mailview.html'), { query: glassQuery({ radius: '20' }) });
+  mailWin.on('closed', () => { mailWin = null; mailViewPayload = null; });
+  return true;
+}
+
+ipcMain.handle('mail:open', (_e, msg) => openMailView(msg));
+/** 렌더러가 본문을 달라고 하면, 도착할 때까지 잠깐 기다렸다 준다 */
+ipcMain.handle('mail:view-data', async () => {
+  for (let i = 0; i < 60 && !mailViewPayload; i++) {
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return mailViewPayload || { error: '시간이 초과되었습니다' };
+});
+ipcMain.on('mail:view-close', () => mailWin && !mailWin.isDestroyed() && mailWin.close());
 
 /** 우리가 넣어둔 안내 링크만 연다 — 렌더러가 임의 주소를 열지 못하게 http(s)로 제한 */
 ipcMain.handle('app:open-url', (_e, url) => {

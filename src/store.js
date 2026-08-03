@@ -58,7 +58,9 @@ const DEFAULT_SETTINGS = {
   // 메일 — 오는 족족 알리면 쉼을 위한 위젯이 방해 도구가 된다.
   // 기본은 "모아서" — 정해진 시각과 휴식 때만 요약해서 보여준다.
   mailEnabled: false,
-  mailShow: true,          // 위젯 시트에 새 메일 보여주기
+  mailShow: true,          // 위젯 시트에 메일 보여주기
+  mailOnlyUnread: false,   // 안 읽은 것만 볼지, 최근 온 것을 모두 볼지
+  mailCount: 5,            // 위젯에 몇 통까지 보여줄지
   mailMode: 'batch',       // 'batch' | 'instant'
   mailTimes: [10, 14, 17], // 모아서 알릴 시각 (시)
   mailPollMin: 10,         // 서버를 몇 분마다 확인할지

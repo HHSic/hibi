@@ -68,6 +68,9 @@ contextBridge.exposeInMainWorld('nunsseom', {
   mailUpdate: (id, patch) => ipcRenderer.invoke('mail:update', { id, patch }),
   mailRemove: (id) => ipcRenderer.invoke('mail:remove', id),
   mailRefresh: () => ipcRenderer.invoke('mail:refresh'),
+  mailOpen: (msg) => ipcRenderer.invoke('mail:open', msg),
+  mailViewData: () => ipcRenderer.invoke('mail:view-data'),
+  mailViewClose: () => ipcRenderer.send('mail:view-close'),
   openUrl: (url) => ipcRenderer.invoke('app:open-url', url),
 
   // 자동 실행 (OS 상태를 그대로 읽고 쓴다)
