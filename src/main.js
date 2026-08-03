@@ -1029,6 +1029,11 @@ ipcMain.handle('mail:add', async (_e, acc) => {
   store.addMailAccount({ ...acc, sealed: secret.seal(acc.pass) });
   // 계정을 넣었는데 별도 스위치를 또 켜야 보인다면, 안 보이는 게 당연해진다
   if (!store.settings.mailEnabled) store.setSettings({ mailEnabled: true });
+  // 저장이 실제로 파일까지 갔는지 확인한다 — 메모리에만 남으면 다음 실행에 사라진다
+  const saved = store.mailAccounts.length;
+  const onDisk = store.reloadFromDisk().mailAccounts.length;
+  evlog.log('메일', `계정 추가 · 메모리 ${saved}개 · 파일 ${onDisk}개`
+    + (saved !== onDisk ? ' ← 파일에 저장되지 않았습니다' : ''));
   await refreshMail();
   return {
     ok: true, message: t.message,

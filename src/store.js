@@ -171,12 +171,35 @@ function mergeReminders(defaults, saved) {
   return out;
 }
 
+/**
+ * 설정 저장.
+ *
+ * 예전에는 실패해도 콘솔에만 찍고 넘어갔다. 그래서 "설정을 바꿨는데 다음에 켜면
+ * 사라진다"는 증상이 생겨도 원인을 알 길이 없었다. 이제 기록에 남긴다.
+ *
+ * 임시 파일에 쓰고 바꿔치기한다 — 쓰는 도중에 앱이 죽어도 설정이 반쯤 잘리지 않고,
+ * 백신·동기화 프로그램이 원본을 잠깐 잡고 있어도 덜 실패한다.
+ */
 function save() {
+  const target = FILE();
+  const tmp = target + '.tmp';
   try {
-    fs.writeFileSync(FILE(), JSON.stringify(cache, null, 2));
+    const body = JSON.stringify(cache, null, 2);
+    fs.writeFileSync(tmp, body);
+    fs.renameSync(tmp, target);
   } catch (e) {
-    console.error('store save failed:', e);
+    // 바꿔치기가 막히면 곧바로 덮어쓰기라도 시도한다
+    try {
+      fs.writeFileSync(target, JSON.stringify(cache, null, 2));
+    } catch (e2) {
+      console.error('store save failed:', e2);
+      try { require('./evlog').log('저장', `설정 저장 실패 — ${e2.code || ''} ${e2.message}`); } catch {}
+      return false;
+    } finally {
+      try { fs.unlinkSync(tmp); } catch {}
+    }
   }
+  return true;
 }
 
 function todayKey() {
@@ -185,6 +208,11 @@ function todayKey() {
 }
 
 module.exports = {
+  /** 파일에 실제로 무엇이 들어 있는지 (저장이 됐는지 확인용) */
+  reloadFromDisk() {
+    try { return JSON.parse(fs.readFileSync(FILE(), 'utf8')); } catch { return { mailAccounts: [] }; }
+  },
+
   get settings() { return load().settings; },
   setSettings(patch) {
     const s = load();
