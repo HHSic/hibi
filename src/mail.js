@@ -110,14 +110,13 @@ async function collect(client, range, opts, out) {
 }
 
 /**
- * 한 통의 본문을 글로만 가져오고, 원하면 읽음으로 표시한다.
+ * 한 통을 가져오고, 원하면 읽음으로 표시한다.
  *
  * MIME 파싱은 직접 하지 않는다. 한글 메일은 EUC-KR인 경우가 많은데 Node의 Buffer는
  * EUC-KR을 모르고, multipart·base64·quoted-printable·헤더 인코딩까지 겹치면
  * 손으로 짠 파서는 반드시 어딘가에서 깨진다 (실제로 깨졌다).
  *
- * 본문은 글로만 보여준다 — HTML을 그대로 그리면 원격 이미지가 열람 사실을
- * 발신자에게 알리고 스크립트가 딸려온다.
+ * 본문은 메일 원래 모양대로 보여주되(buildViewHtml), 위험한 것과 원격 이미지는 걷어낸다.
  */
 async function fetchBody(account, uid, { markSeen = true, maxChars = 8000 } = {}) {
   const client = connect(account);
@@ -129,6 +128,8 @@ async function fetchBody(account, uid, { markSeen = true, maxChars = 8000 } = {}
     if (!msg || !msg.source) throw new Error('메일을 찾을 수 없습니다');
 
     const parsed = await simpleParser(msg.source, { skipImageLinks: true });
+    // 원래 모양대로 보여주는 게 우선 — HTML이 없을 때만 글로 떨어진다
+    const view = buildViewHtml(parsed);
     let text = (parsed.text || '').trim();
     if (!text && parsed.html) text = htmlToText(parsed.html);
     if (text.length > maxChars) text = text.slice(0, maxChars) + '\n\n…(생략)';
@@ -144,6 +145,8 @@ async function fetchBody(account, uid, { markSeen = true, maxChars = 8000 } = {}
       at: (parsed.date || msg.internalDate || new Date()).getTime(),
       // 원본 버퍼는 저장할 때만 쓰므로 여기 남겨두고, 화면에는 요약만 보낸다
       attachments: parsed.attachments || [],
+      html: view.html,
+      blockedRemote: view.blockedRemote,
       text
     };
   } finally {
@@ -170,6 +173,63 @@ function attachmentsForView(list) {
       dataUrl: isImage ? `data:${type};base64,${a.content.toString('base64')}` : null
     };
   });
+}
+
+/**
+ * 메일 원래 모양대로 보여주기 위한 HTML 만들기.
+ *
+ * 글로만 바꾸면 그림이 아래로 몰리고 표·서식이 다 사라진다. 그래서 HTML을 쓰되,
+ * 위험한 것만 걷어낸다:
+ *  - 스크립트·프레임·외부 리소스 태그 제거
+ *  - on* 이벤트 속성, javascript: 링크 제거
+ *  - 메일에 담겨 온 그림(cid:)만 data URL로 바꿔 제자리에 넣는다
+ *  - 인터넷에서 받아오는 그림은 지운다 (열람 사실이 발신자에게 전달된다)
+ *
+ * 여기서 놓치더라도 보기 창의 CSP가 외부 요청 자체를 막는다 — 이중 방어다.
+ */
+function buildViewHtml(parsed) {
+  let html = String(parsed.html || '');
+  if (!html) return { html: '', blockedRemote: 0 };
+
+  // 통째로 위험한 태그
+  html = html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
+    .replace(/<(object|embed|applet)[\s\S]*?<\/\1>/gi, '')
+    .replace(/<(link|meta|base)\b[^>]*>/gi, '')
+    .replace(/@import[^;]+;/gi, '');
+
+  // 이벤트 속성과 javascript: 링크
+  html = html
+    .replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, '')
+    .replace(/\son[a-z]+\s*=\s*'[^']*'/gi, '')
+    .replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, '')
+    .replace(/(href|src)\s*=\s*"javascript:[^"]*"/gi, '$1="#"')
+    .replace(/(href|src)\s*=\s*'javascript:[^']*'/gi, "$1='#'");
+
+  // 메일에 담겨 온 그림을 제자리에 — cid로 참조된 것만
+  const byCid = new Map();
+  for (const a of parsed.attachments || []) {
+    if (a.cid && a.content && String(a.contentType || '').startsWith('image/')
+      && a.content.length <= INLINE_IMAGE_MAX) {
+      byCid.set(String(a.cid).replace(/^<|>$/g, ''),
+        `data:${a.contentType};base64,${a.content.toString('base64')}`);
+    }
+  }
+  html = html.replace(/src\s*=\s*["']cid:([^"']+)["']/gi, (m, cid) => {
+    const url = byCid.get(String(cid).replace(/^<|>$/g, ''));
+    return url ? `src="${url}"` : 'data-blocked="cid"';
+  });
+
+  // 인터넷에서 받아오는 그림은 지운다
+  let blockedRemote = 0;
+  html = html.replace(/<img\b[^>]*>/gi, (tag) => {
+    if (/src\s*=\s*["']data:/i.test(tag)) return tag;
+    blockedRemote += 1;
+    return '';
+  });
+
+  return { html, blockedRemote };
 }
 
 /** HTML만 있는 메일을 읽을 수 있는 글로 */
@@ -212,4 +272,4 @@ function friendly(e) {
   return raw.slice(0, 120);
 }
 
-module.exports = { PRESETS, preset, fetchSummary, fetchBody, test, senderOf, friendly, htmlToText, attachmentsForView };
+module.exports = { PRESETS, preset, fetchSummary, fetchBody, test, senderOf, friendly, htmlToText, attachmentsForView, buildViewHtml };

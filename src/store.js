@@ -62,6 +62,7 @@ const DEFAULT_SETTINGS = {
   mailOnlyUnread: false,   // 안 읽은 것만 볼지, 최근 온 것을 모두 볼지
   mailCount: 5,            // 위젯에 몇 통까지 보여줄지
   mailPanel: false,        // 위젯 겉면에 메일 펼쳐두기 (클릭 없이 보이게)
+  mailViewSize: null,      // 메일 보기 창을 마지막으로 조절한 크기
   mailMode: 'batch',       // 'batch' | 'instant'
   mailTimes: [10, 14, 17], // 모아서 알릴 시각 (시)
   mailPollMin: 10,         // 서버를 몇 분마다 확인할지

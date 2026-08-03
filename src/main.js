@@ -910,6 +910,12 @@ ipcMain.on('widget:set-bounds', (_e, { x, y, width, height, dir }) => {
   const nx = Math.round(String(dir).includes('w') ? x + (width - w) : x);
   const ny = Math.round(String(dir).includes('n') ? y + (height - h) : y);
   widgetSize = { width: w, height: h };   // 이후 이동은 이 크기를 못박는다
+  // 사람이 직접 조절한 크기가 새 기준이 된다. 이걸 갱신하지 않으면
+  // 패널을 접을 때 조절하기 전 크기로 되돌아간다.
+  if (widgetBaseHeight != null) {
+    widgetBaseHeight = Math.max(WIDGET_MIN.height,
+      h - (panelHeights.cal + panelHeights.mail) - 8);
+  }
   widgetWin.setBounds({ x: nx, y: ny, width: w, height: h });
   if (evlog.enabled) {
     const got = widgetWin.getBounds();
@@ -1063,6 +1069,7 @@ ipcMain.handle('mail:refresh', async () => { await refreshMail(); return mailSta
 let mailWin = null;
 let mailViewPayload = null;
 let mailViewFiles = [];      // 원본 버퍼 — 저장할 때만 쓰고 화면에는 보내지 않는다
+let mailViewSize = null;     // 메일 보기 창의 기준 크기 (위젯과 같은 이유로 되읽지 않는다)
 
 function openMailView(msg) {
   mailViewPayload = null;
@@ -1079,14 +1086,21 @@ function openMailView(msg) {
     .catch((e) => { mailViewPayload = { error: mail.friendly(e) }; });
 
   if (mailWin && !mailWin.isDestroyed()) { mailWin.focus(); return true; }
+  const saved = store.settings.mailViewSize;
   mailWin = new BrowserWindow({
-    width: 420 + PAD, height: 480 + PAD,
-    frame: false, resizable: false, alwaysOnTop: true, skipTaskbar: true,
+    width: (saved && saved.width) || 420 + PAD,
+    height: (saved && saved.height) || 480 + PAD,
+    minWidth: 320, minHeight: 260,
+    frame: false,
+    // 크기 조절은 렌더러의 리사이즈 존이 맡는다 (네이티브는 투명 창에서 폭주한다)
+    resizable: false,
+    alwaysOnTop: true, skipTaskbar: true,
     ...glass.windowOptions(),
     webPreferences: { preload: PRELOAD }
   });
+  mailViewSize = { width: mailWin.getSize()[0], height: mailWin.getSize()[1] };
   mailWin.loadFile(page('mailview.html'), { query: glassQuery({ radius: '20' }) });
-  mailWin.on('closed', () => { mailWin = null; mailViewPayload = null; });
+  mailWin.on('closed', () => { mailWin = null; mailViewPayload = null; mailViewFiles = []; });
   return true;
 }
 
@@ -1119,6 +1133,22 @@ ipcMain.handle('mail:save-attachment', async (_e, index) => {
 
 /** 저장한 첨부를 탐색기에서 보여준다 */
 ipcMain.on('mail:reveal', (_e, p) => { if (p) shell.showItemInFolder(p); });
+
+/** 메일 보기 창 크기 조절 — 위젯과 같은 방식(기준 크기를 못박아 되먹임을 끊는다) */
+ipcMain.handle('mailview:bounds', () => {
+  if (!mailWin || mailWin.isDestroyed()) return { x: 0, y: 0, width: 420, height: 480 };
+  return mailWin.getBounds();
+});
+ipcMain.on('mailview:set-bounds', (_e, { x, y, width, height, dir }) => {
+  if (!mailWin || mailWin.isDestroyed()) return;
+  const w = Math.round(clamp(width, 320, 900));
+  const h = Math.round(clamp(height, 260, 1000));
+  const nx = Math.round(String(dir).includes('w') ? x + (width - w) : x);
+  const ny = Math.round(String(dir).includes('n') ? y + (height - h) : y);
+  mailViewSize = { width: w, height: h };
+  mailWin.setBounds({ x: nx, y: ny, width: w, height: h });
+  store.setSettings({ mailViewSize });   // 다음에 열 때 이 크기로
+});
 
 /** 우리가 넣어둔 안내 링크만 연다 — 렌더러가 임의 주소를 열지 못하게 http(s)로 제한 */
 ipcMain.handle('app:open-url', (_e, url) => {

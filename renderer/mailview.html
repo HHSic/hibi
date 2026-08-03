@@ -2,6 +2,14 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
+<!-- 본문은 메일에서 온 HTML이다. 여기서 외부 요청을 전부 막는다 —
+     그림은 data: 만, 스크립트·글꼴·프레임은 아예 불가. -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none';
+               script-src file: 'unsafe-inline';
+               style-src file: 'unsafe-inline';
+               font-src file:;
+               img-src data:">
 <title>메일</title>
 <link rel="stylesheet" href="../assets/font/pretendard.css">
 <script src="icons.js"></script>
@@ -65,6 +73,18 @@
     white-space: pre-wrap; word-break: break-word;
     user-select: text;
   }
+  /* 메일 원본 HTML을 그릴 때는 pre-wrap을 풀고 메일이 정한 서식을 살린다 */
+  .body.rich { white-space: normal; color: var(--label); }
+  .body.rich img { max-width: 100%; height: auto; }
+  .body.rich table { max-width: 100%; border-collapse: collapse; }
+  .body.rich td, .body.rich th { padding: 2px 6px; }
+  .body.rich a { color: var(--accent); }
+  .body.rich * { max-width: 100%; }
+  .blocked {
+    font-size: 11px; color: var(--tertiary);
+    background: var(--fill); border-radius: 8px;
+    padding: 6px 10px; margin: 0 16px 10px;
+  }
   .body::-webkit-scrollbar { width: 8px; }
   .body::-webkit-scrollbar-thumb {
     background: transparent; border-radius: 4px; transition: background 0.15s;
@@ -90,6 +110,17 @@
   .file:hover { background: var(--fill-hi); }
   .file .sz { color: var(--tertiary); font-variant-numeric: tabular-nums; }
   .saved { font-size: 11px; color: var(--accent); margin-top: 8px; }
+
+  /* 가장자리 리사이즈 — 위젯과 같은 방식 (네이티브는 투명 창에서 폭주한다) */
+  .rz { position: absolute; z-index: 9; }
+  .rz-n { left: 12px; right: 12px; top: -4px; height: 10px; cursor: ns-resize; }
+  .rz-s { left: 12px; right: 12px; bottom: -4px; height: 10px; cursor: ns-resize; }
+  .rz-w { top: 12px; bottom: 12px; left: -4px; width: 10px; cursor: ew-resize; }
+  .rz-e { top: 12px; bottom: 12px; right: -4px; width: 10px; cursor: ew-resize; }
+  .rz-nw { left: -4px; top: -4px; width: 16px; height: 16px; cursor: nwse-resize; }
+  .rz-ne { right: -4px; top: -4px; width: 16px; height: 16px; cursor: nesw-resize; }
+  .rz-sw { left: -4px; bottom: -4px; width: 16px; height: 16px; cursor: nesw-resize; }
+  .rz-se { right: -4px; bottom: -4px; width: 16px; height: 16px; cursor: nwse-resize; }
 </style>
 </head>
 <body>
@@ -102,6 +133,7 @@
     <button class="close" id="close" title="닫기"></button>
   </div>
   <div class="body" id="body"></div>
+  <div class="blocked" id="blocked" style="display:none"></div>
   <div class="atts" id="atts" style="display:none">
     <div class="cap" id="atts-cap"></div>
     <div class="shots" id="shots"></div>
@@ -109,6 +141,14 @@
     <div class="saved" id="saved"></div>
   </div>
 </div>
+<div class="rz rz-n" data-dir="n"></div>
+<div class="rz rz-s" data-dir="s"></div>
+<div class="rz rz-w" data-dir="w"></div>
+<div class="rz rz-e" data-dir="e"></div>
+<div class="rz rz-nw" data-dir="nw"></div>
+<div class="rz rz-ne" data-dir="ne"></div>
+<div class="rz rz-sw" data-dir="sw"></div>
+<div class="rz rz-se" data-dir="se"></div>
 
 <script>
   const $ = (id) => document.getElementById(id);
@@ -123,6 +163,36 @@
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') window.nunsseom.mailViewClose();
   });
+
+  // 가장자리 드래그로 창 크기 조절 — 조절한 크기는 메인이 저장한다
+  let rz = null;
+  for (const zone of document.querySelectorAll('.rz')) {
+    zone.addEventListener('pointerdown', async (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      try { zone.setPointerCapture(e.pointerId); } catch {}
+      const b = await window.nunsseom.mailViewBounds();
+      rz = { dir: zone.dataset.dir, sx: e.screenX, sy: e.screenY, ...b };
+    });
+    zone.addEventListener('pointermove', (e) => {
+      if (!rz) return;
+      const dx = e.screenX - rz.sx;
+      const dy = e.screenY - rz.sy;
+      let { x, y, width, height } = rz;
+      if (rz.dir.includes('e')) width = rz.width + dx;
+      if (rz.dir.includes('s')) height = rz.height + dy;
+      if (rz.dir.includes('w')) { width = rz.width - dx; x = rz.x + dx; }
+      if (rz.dir.includes('n')) { height = rz.height - dy; y = rz.y + dy; }
+      window.nunsseom.mailViewSetBounds({ x, y, width, height, dir: rz.dir });
+    });
+    const end = (e) => {
+      if (!rz) return;
+      rz = null;
+      try { zone.releasePointerCapture(e.pointerId); } catch {}
+    };
+    zone.addEventListener('pointerup', end);
+    zone.addEventListener('pointercancel', end);
+  }
 
   const fmt = (ms) => {
     const d = new Date(ms);
@@ -181,7 +251,17 @@
     $('subject').textContent = m.subject;
     $('meta').textContent = [m.from, fmt(m.at)].filter(Boolean).join(' · ');
     renderAttachments(m.attachments || []);
-    if (m.text) {
+    if (m.blockedRemote) {
+      $('blocked').style.display = 'block';
+      $('blocked').textContent =
+        `인터넷에서 받아오는 그림 ${m.blockedRemote}개는 표시하지 않았습니다`
+        + ' (열어본 사실이 보낸 사람에게 전달될 수 있어요)';
+    }
+    if (m.html) {
+      // 메인에서 위험한 태그를 걷어냈고, 이 창의 CSP가 외부 요청을 한 번 더 막는다
+      $('body').classList.add('rich');
+      $('body').innerHTML = m.html;
+    } else if (m.text) {
       $('body').textContent = m.text;
     } else {
       const p = document.createElement('div');

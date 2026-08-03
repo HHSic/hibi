@@ -73,6 +73,8 @@ contextBridge.exposeInMainWorld('nunsseom', {
   mailViewClose: () => ipcRenderer.send('mail:view-close'),
   mailSaveAttachment: (i) => ipcRenderer.invoke('mail:save-attachment', i),
   mailReveal: (p) => ipcRenderer.send('mail:reveal', p),
+  mailViewBounds: () => ipcRenderer.invoke('mailview:bounds'),
+  mailViewSetBounds: (b) => ipcRenderer.send('mailview:set-bounds', b),
   openUrl: (url) => ipcRenderer.invoke('app:open-url', url),
 
   // 자동 실행 (OS 상태를 그대로 읽고 쓴다)
