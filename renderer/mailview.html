@@ -4,12 +4,14 @@
 <meta charset="utf-8">
 <!-- 본문은 메일에서 온 HTML이다. 여기서 외부 요청을 전부 막는다 —
      그림은 data: 만, 스크립트·글꼴·프레임은 아예 불가. -->
-<meta http-equiv="Content-Security-Policy"
+<!-- 본문은 메일에서 온 HTML이다. 스크립트·프레임·외부 연결은 어떤 경우에도 막고,
+     그림만 설정에 따라 열어준다 (아래 스크립트가 img-src를 조정한다). -->
+<meta http-equiv="Content-Security-Policy" id="csp"
       content="default-src 'none';
                script-src file: 'unsafe-inline';
                style-src file: 'unsafe-inline';
                font-src file:;
-               img-src data:">
+               img-src data: https: http:">
 <title>메일</title>
 <link rel="stylesheet" href="../assets/font/pretendard.css">
 <script src="icons.js"></script>
@@ -45,6 +47,8 @@
     color: var(--label);
     padding: var(--inset, 12px);
   }
+  /* 리사이즈 존의 기준 — 없으면 존이 창 밖에 놓여 잡히지 않는다 */
+  .stage { position: relative; width: 100%; height: 100%; }
   .card {
     width: 100%; height: 100%;
     display: flex; flex-direction: column;
@@ -73,8 +77,14 @@
     white-space: pre-wrap; word-break: break-word;
     user-select: text;
   }
-  /* 메일 원본 HTML을 그릴 때는 pre-wrap을 풀고 메일이 정한 서식을 살린다 */
-  .body.rich { white-space: normal; color: var(--label); }
+  /* 메일 원본 HTML을 그릴 때는 pre-wrap을 풀고 메일이 정한 서식을 살린다.
+     배경은 흰색으로 둔다 — 메일은 흰 배경을 전제로 글자색을 정하므로
+     어두운 카드 위에 그대로 얹으면 검은 글씨가 안 보인다. */
+  .body.rich {
+    white-space: normal;
+    background: #fff; color: #1a1a1a;
+    margin: 0; padding: 14px 16px;
+  }
   .body.rich img { max-width: 100%; height: auto; }
   .body.rich table { max-width: 100%; border-collapse: collapse; }
   .body.rich td, .body.rich th { padding: 2px 6px; }
@@ -124,6 +134,7 @@
 </style>
 </head>
 <body>
+<div class="stage">
 <div class="card">
   <div class="head">
     <div class="box">
@@ -149,6 +160,7 @@
 <div class="rz rz-ne" data-dir="ne"></div>
 <div class="rz rz-sw" data-dir="sw"></div>
 <div class="rz rz-se" data-dir="se"></div>
+</div>
 
 <script>
   const $ = (id) => document.getElementById(id);

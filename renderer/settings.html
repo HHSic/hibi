@@ -355,6 +355,11 @@
         <span></span>
         <button class="sw" id="mailShow" role="switch" aria-label="새 메일 표시"></button>
       </div>
+      <div class="row toggle">
+        <span class="nm">인터넷 그림 보이기<i>끄면 열어본 사실이 보낸 사람에게 전달되지 않지만, 정상적인 그림도 안 보입니다</i></span>
+        <span></span>
+        <button class="sw" id="mailRemoteImages" role="switch" aria-label="인터넷 그림"></button>
+      </div>
       <div class="col">
         <span class="lbl">무엇을 보여줄지</span>
         <div class="helprow" id="mail-scope"></div>
@@ -1423,7 +1428,7 @@
 
     for (const key of ['dndEnabled', 'autoUpdate', 'calendarBusy', 'calendarAllDay',
                        'calendarLead', 'calendarShow', 'soundEnabled',
-                       'mailEnabled', 'mailShow']) {
+                       'mailEnabled', 'mailShow', 'mailRemoteImages']) {
       bindSwitch(key);
     }
     bindAutoLaunch();

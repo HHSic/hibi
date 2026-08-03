@@ -118,7 +118,7 @@ async function collect(client, range, opts, out) {
  *
  * 본문은 메일 원래 모양대로 보여주되(buildViewHtml), 위험한 것과 원격 이미지는 걷어낸다.
  */
-async function fetchBody(account, uid, { markSeen = true, maxChars = 8000 } = {}) {
+async function fetchBody(account, uid, { markSeen = true, maxChars = 8000, allowRemote = false } = {}) {
   const client = connect(account);
   await client.connect();
   try {
@@ -129,7 +129,7 @@ async function fetchBody(account, uid, { markSeen = true, maxChars = 8000 } = {}
 
     const parsed = await simpleParser(msg.source, { skipImageLinks: true });
     // 원래 모양대로 보여주는 게 우선 — HTML이 없을 때만 글로 떨어진다
-    const view = buildViewHtml(parsed);
+    const view = buildViewHtml(parsed, { allowRemote });
     let text = (parsed.text || '').trim();
     if (!text && parsed.html) text = htmlToText(parsed.html);
     if (text.length > maxChars) text = text.slice(0, maxChars) + '\n\n…(생략)';
@@ -187,7 +187,7 @@ function attachmentsForView(list) {
  *
  * 여기서 놓치더라도 보기 창의 CSP가 외부 요청 자체를 막는다 — 이중 방어다.
  */
-function buildViewHtml(parsed) {
+function buildViewHtml(parsed, { allowRemote = false } = {}) {
   let html = String(parsed.html || '');
   if (!html) return { html: '', blockedRemote: 0 };
 
@@ -221,13 +221,16 @@ function buildViewHtml(parsed) {
     return url ? `src="${url}"` : 'data-blocked="cid"';
   });
 
-  // 인터넷에서 받아오는 그림은 지운다
+  // 인터넷에서 받아오는 그림 — 허용하면 그대로 두고, 아니면 지운다.
+  // (지우는 쪽이 안전하지만, 회사 메일은 정상적인 그림도 원격인 경우가 많다)
   let blockedRemote = 0;
-  html = html.replace(/<img\b[^>]*>/gi, (tag) => {
-    if (/src\s*=\s*["']data:/i.test(tag)) return tag;
-    blockedRemote += 1;
-    return '';
-  });
+  if (!allowRemote) {
+    html = html.replace(/<img\b[^>]*>/gi, (tag) => {
+      if (/src\s*=\s*["']data:/i.test(tag)) return tag;
+      blockedRemote += 1;
+      return '';
+    });
+  }
 
   return { html, blockedRemote };
 }

@@ -1077,7 +1077,7 @@ function openMailView(msg) {
   if (!acc) return false;
 
   // 본문을 받아오는 동안 창을 먼저 띄운다 — 클릭했는데 한참 아무 일도 없으면 고장 같다
-  mail.fetchBody(acc, msg.uid, { markSeen: true })
+  mail.fetchBody(acc, msg.uid, { markSeen: true, allowRemote: store.settings.mailRemoteImages !== false })
     .then((m) => {
       mailViewFiles = m.attachments || [];
       mailViewPayload = { ...m, attachments: mail.attachmentsForView(mailViewFiles) };
@@ -1099,7 +1099,10 @@ function openMailView(msg) {
     webPreferences: { preload: PRELOAD }
   });
   mailViewSize = { width: mailWin.getSize()[0], height: mailWin.getSize()[1] };
-  mailWin.loadFile(page('mailview.html'), { query: glassQuery({ radius: '20' }) });
+  mailWin.loadFile(page('mailview.html'), {
+    query: glassQuery({ radius: '20',
+      remote: store.settings.mailRemoteImages !== false ? '1' : '' })
+  });
   mailWin.on('closed', () => { mailWin = null; mailViewPayload = null; mailViewFiles = []; });
   return true;
 }

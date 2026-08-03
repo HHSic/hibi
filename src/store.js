@@ -63,6 +63,9 @@ const DEFAULT_SETTINGS = {
   mailCount: 5,            // 위젯에 몇 통까지 보여줄지
   mailPanel: false,        // 위젯 겉면에 메일 펼쳐두기 (클릭 없이 보이게)
   mailViewSize: null,      // 메일 보기 창을 마지막으로 조절한 크기
+  // 인터넷에서 받아오는 그림. 켜면 메일이 원래대로 보이지만,
+  // 불러오는 순간 "열어봤다"가 보낸 사람에게 전달된다.
+  mailRemoteImages: true,
   mailMode: 'batch',       // 'batch' | 'instant'
   mailTimes: [10, 14, 17], // 모아서 알릴 시각 (시)
   mailPollMin: 10,         // 서버를 몇 분마다 확인할지
