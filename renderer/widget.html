@@ -297,6 +297,11 @@
     color: var(--secondary); font-size: 0.8125rem; line-height: 1;
   }
   .calnav button:hover { background: var(--fill); color: var(--label); }
+  /* 글자가 든 버튼은 정사각형 칸에 가둘 수 없다 */
+  .calnav button.txt {
+    width: auto; padding: 0 0.375rem; height: 1rem;
+    font-size: 0.625rem; font-weight: 600;
+  }
   .segs { display: flex; gap: 0.125rem; background: var(--fill); border-radius: 0.375rem; padding: 0.0625rem; }
   .segs .seg {
     width: auto; padding: 0 0.3125rem; height: 1rem;
@@ -536,14 +541,20 @@
         <div class="rows" id="sched-rows"></div>
       </div>
       <div class="sched" id="mailbox">
-        <div class="sh"><span id="mail-ttl">새 메일</span></div>
+        <div class="sh">
+          <span id="mail-ttl">새 메일</span>
+          <button id="mail-allread" type="button">모두 읽음</button>
+        </div>
         <div class="rows" id="mail-rows"></div>
       </div>
     </div>
 
     <!-- 메일 — 시트를 열지 않아도 보이도록 카드 안에서 아래로 늘어난다 -->
     <div class="cal mailpanel" id="mailpanel">
-      <div class="calnav"><span class="cttl" id="mp-ttl">메일</span></div>
+      <div class="calnav">
+        <span class="cttl" id="mp-ttl">메일</span>
+        <button class="txt" id="mp-allread" title="안 읽은 메일을 모두 읽음으로 표시">모두 읽음</button>
+      </div>
       <div class="callist" id="mp-list"></div>
     </div>
 
@@ -1084,6 +1095,29 @@
     }
   }
 
+  // 열어보지 않고 뱃지만 지우고 싶을 때가 있다 (광고 메일).
+  // 목록에서 오른쪽 클릭하면 그 한 통이, 머리글의 «모두 읽음»을 누르면 전부 읽음이 된다.
+  let markingRead = false;
+
+  async function markRead(opts) {
+    if (markingRead) return;
+    markingRead = true;
+    try { await window.nunsseom.mailMarkRead(opts); } finally { markingRead = false; }
+  }
+
+  function attachMailRow(row, m) {
+    row.ondblclick = (e) => { e.stopPropagation(); window.nunsseom.mailOpen(m); };
+    row.oncontextmenu = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      // m.seen은 마지막으로 그렸을 때의 값이다. 방금 눌러 흐려진 줄을 또 누르면
+      // 틱이 오기 전이라 m.seen은 아직 false다 — 화면 상태도 같이 봐야 한다.
+      if (m.seen || row.classList.contains('read')) return;
+      row.classList.add('read');           // 서버 응답을 기다리지 않고 바로 흐리게
+      markRead({ accountId: m.accountId, uids: [m.uid] });
+    };
+  }
+
   /** 새 메일 — 일정과 같은 모양으로 아래에 붙인다 */
   function renderMail(box) {
     const sec = $('mailbox');
@@ -1103,6 +1137,7 @@
     }
     sec.style.display = 'block';
     $('mail-ttl').textContent = box.unread ? `메일 · 안 읽음 ${box.unread}` : '메일';
+    $('mail-allread').style.display = box.unread ? '' : 'none';
     const host = $('mail-rows');
     host.textContent = '';
     for (const m of box.messages) {
@@ -1116,8 +1151,8 @@
       nm.textContent = m.subject;
       nm.title = m.from ? `${m.from} · ${m.subject}` : m.subject;
       row.append(dot, nm);
-      row.title = '두 번 누르면 열립니다 (읽음으로 표시됩니다)';
-      row.ondblclick = (e) => { e.stopPropagation(); window.nunsseom.mailOpen(m); };
+      row.title = '두 번 누르면 열립니다 · 오른쪽 클릭하면 읽음으로만 표시합니다';
+      attachMailRow(row, m);
       host.append(row);
     }
   }
@@ -1179,6 +1214,7 @@
     const host = $('mp-list');
     host.textContent = '';
     $('mp-ttl').textContent = box && box.unread ? `메일 · 안 읽음 ${box.unread}` : '메일';
+    $('mp-allread').style.display = box && box.unread ? '' : 'none';
     const list = (box && box.messages) || [];
     if (!list.length) {
       const p = document.createElement('div');
@@ -1196,7 +1232,8 @@
       // 보낸 사람은 좁은 위젯에서 제목 자리를 잡아먹는다 — 열어보면 나온다
       nm.title = m.from ? `${m.from} · ${m.subject}` : m.subject;
       row.append(nm);
-      row.ondblclick = (e) => { e.stopPropagation(); window.nunsseom.mailOpen(m); };
+      row.title = '두 번 누르면 열립니다 · 오른쪽 클릭하면 읽음으로만 표시합니다';
+      attachMailRow(row, m);
       host.append(row);
     }
   }
@@ -1224,6 +1261,11 @@
 
   $('btn-mail').append(window.nunsIcon('mail'));
   $('btn-mail').onclick = () => toggleMail();
+  for (const id of ['mail-allread', 'mp-allread']) {
+    $(id).onclick = (e) => { e.stopPropagation(); markRead({}); };
+    // 시트가 열려 있을 때 눌러도 시트가 닫히면 안 된다
+    $(id).addEventListener('pointerdown', (e) => e.stopPropagation());
+  }
   $('mailpanel').addEventListener('pointerdown', (e) => e.stopPropagation());
   if (params.get('mailpanel') === '1') {
     mailCard.classList.add('mailon');

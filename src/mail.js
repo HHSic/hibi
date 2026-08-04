@@ -96,6 +96,29 @@ async function fetchSummary(account, { limit = 5, onlyUnread = true } = {}) {
   }
 }
 
+/**
+ * 읽음으로 표시한다 (본문은 가져오지 않는다).
+ * 열어보지 않고 뱃지만 지우고 싶을 때가 있다 — 광고 메일이 대표적이다.
+ * @param uids 비우면 안 읽은 것 전부
+ */
+async function markRead(account, uids) {
+  const client = connect(account);
+  await client.connect();
+  try {
+    // 플래그를 바꿔야 하므로 읽기 전용으로 열면 안 된다
+    await client.mailboxOpen(account.mailbox || 'INBOX', { readOnly: false });
+    const list = (uids && uids.length)
+      ? uids.map(Number).filter((n) => Number.isFinite(n))
+      : (await client.search({ seen: false }, { uid: true }) || []);
+    if (!list.length) return { changed: 0 };
+    // IMAP 플래그는 역슬래시로 시작한다 — 소스에서는 두 번 써야 한다
+    await client.messageFlagsAdd(list, ['\\Seen'], { uid: true });
+    return { changed: list.length };
+  } finally {
+    try { await client.logout(); } catch { client.close(); }
+  }
+}
+
 async function collect(client, range, opts, out) {
   for await (const msg of client.fetch(range, { envelope: true, internalDate: true, flags: true }, opts)) {
     const flags = msg.flags instanceof Set ? msg.flags : new Set(msg.flags || []);
@@ -144,7 +167,12 @@ async function fetchBody(account, uid, { markSeen = true, maxChars = 8000, allow
       subject: parsed.subject || (msg.envelope && msg.envelope.subject) || '(제목 없음)',
       from: (parsed.from && parsed.from.text) || senderOf(msg.envelope),
       at: (parsed.date || msg.internalDate || new Date()).getTime(),
+      // 백업 파일 이름은 서버가 받은 시각으로 짓는다. 보낸 사람이 적은 날짜(Date: 헤더)를
+      // 쓰면 전체 백업이 지은 이름과 어긋나 같은 메일이 두 번 저장된다.
+      receivedAt: (msg.internalDate || new Date()).getTime(),
+      mailbox: account.mailbox || 'INBOX',
       // 원본 버퍼는 저장할 때만 쓰므로 여기 남겨두고, 화면에는 요약만 보낸다
+      source: msg.source,
       attachments: parsed.attachments || [],
       html: view.html,
       blockedRemote: view.blockedRemote,
@@ -287,4 +315,4 @@ function friendly(e) {
   return raw.slice(0, 120);
 }
 
-module.exports = { PRESETS, preset, connect, fetchSummary, fetchBody, test, senderOf, friendly, htmlToText, attachmentsForView, buildViewHtml };
+module.exports = { PRESETS, preset, connect, fetchSummary, fetchBody, markRead, test, senderOf, friendly, htmlToText, attachmentsForView, buildViewHtml };

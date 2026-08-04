@@ -185,6 +185,8 @@ async function refreshMail() {
   } finally {
     mailState.loading = false;
   }
+  // 새로 온 것을 파일로 남긴다. 기다리지 않는다 — 메일 목록은 이미 화면에 올라가야 한다.
+  autoBackupNew();
 }
 
 /**
@@ -1065,6 +1067,26 @@ ipcMain.handle('mail:remove', (_e, id) => {
 });
 ipcMain.handle('mail:refresh', async () => { await refreshMail(); return mailStatus(); });
 
+/**
+ * 열어보지 않고 읽음으로만 표시한다.
+ * uids가 없으면 그 계정의 안 읽은 것 전부, accountId가 없으면 모든 계정.
+ */
+ipcMain.handle('mail:mark-read', async (_e, { accountId, uids } = {}) => {
+  const accounts = mailAccountsForUse().filter((a) => !accountId || a.id === accountId);
+  let changed = 0;
+  for (const acc of accounts) {
+    try {
+      const r = await mail.markRead(acc, uids);
+      changed += r.changed;
+    } catch (e) {
+      evlog.log('메일', `읽음 표시 실패 · ${acc.name} · ${mail.friendly(e)}`);
+    }
+  }
+  if (changed) evlog.log('메일', `읽음 표시 · ${changed}통`);
+  await refreshMail();
+  return { changed, ...mailStatus() };
+});
+
 // ── 메일 백업 ───────────────────────────────────────────
 // 서버에 있는 메일을 .eml 파일로 내 PC에 내려둔다. 회사를 옮기거나 계정이 닫히면
 // 웹메일에 있던 것은 같이 사라진다 — 파일로 남겨두면 그때도 열린다.
@@ -1075,13 +1097,115 @@ const backup = {
   saved: 0, skipped: 0, message: '', at: 0, dir: null
 };
 
+// 자동 백업은 사용자가 보고 있지 않을 때 도는 일이라 수동 진행률과 섞지 않는다.
+// 여기 값만 따로 보여준다 — "언제 몇 통을 저장했는가".
+const autoBackup = { at: 0, saved: 0, total: 0, error: null, seeded: 0 };
+
 function backupStatus() {
-  return { ...backup, dir: store.settings.mailBackupDir || null };
+  return {
+    ...backup,
+    dir: store.settings.mailBackupDir || null,
+    auto: store.settings.mailAutoBackup === true,
+    autoAt: autoBackup.at,
+    autoSaved: autoBackup.saved,
+    autoTotal: autoBackup.total,
+    autoSeeded: autoBackup.seeded,
+    autoError: autoBackup.error
+  };
+}
+
+// ── 자동 백업 ───────────────────────────────────────────
+// 두 순간에 저장한다.
+//  1) 새 메일이 들어왔을 때 — 폴링이 끝나면 새로 생긴 UID만 받아 둔다
+//  2) 사용자가 메일을 열었을 때 — 본문을 이미 받아왔으므로 서버를 더 부르지 않는다
+//
+// 켜자마자 몇 년치를 몰래 받지는 않는다(onlyNew). 지난 메일은 «백업 시작»의 몫이다.
+const AUTO_GAP_MS = 2 * 60_000;   // 폴링이 잦아도 이보다 자주 돌지 않는다
+let autoRunAt = 0;
+
+/**
+ * 자동 백업이 실제로 돌 수 있는 상태인가.
+ * 메일 확인이 꺼져 있으면 폴링이 없어 새 메일을 알 방법이 없다 — 화면에도 그대로 알린다.
+ */
+function autoBackupOn() {
+  return store.settings.mailAutoBackup === true
+    && !!store.settings.mailBackupDir
+    && store.settings.mailEnabled === true;
+}
+
+/** 열어본 메일 한 통 — 이미 받아온 원문을 그대로 파일로 남긴다 */
+async function autoBackupOne(acc, m) {
+  if (!autoBackupOn() || !m || !m.source) return;
+  // 전체 백업이 도는 중이면 손대지 않는다. 그쪽은 폴더 목록을 미리 읽어두고 쓰는데
+  // 그 사이에 파일을 끼워 넣으면 같은 메일이 두 번 저장된다. 어차피 그쪽이 받아간다.
+  if (backup.running || autoBackup.running) return;
+  try {
+    const r = await mailbackup.saveOne(acc, store.settings.mailBackupDir, {
+      mailbox: m.mailbox, uid: m.uid, receivedAt: m.receivedAt,
+      subject: m.subject, source: m.source
+    });
+    if (r.saved) {
+      autoBackup.at = Date.now();
+      autoBackup.saved = 1;
+      autoBackup.total += 1;
+      autoBackup.error = null;
+      evlog.log('메일', `자동 백업 · 열어본 메일 저장 (uid ${m.uid})`);
+    }
+  } catch (e) {
+    autoBackup.error = e.message;
+    evlog.log('메일', `자동 백업 실패 · ${e.message}`);
+  }
+}
+
+/**
+ * 폴링 뒤 — 새로 들어온 것만 받아 둔다.
+ * @param now 켜자마자 한 번은 간격을 무시하고 돈다 (그래야 «지금부터»가 진짜 지금이다)
+ */
+async function autoBackupNew({ now = false } = {}) {
+  // 수동 백업이 도는 중이면 비켜준다. 같은 폴더에 둘이 쓰면 서로를 밟는다.
+  if (!autoBackupOn() || backup.running || autoBackup.running) return;
+  if (!now && Date.now() - autoRunAt < AUTO_GAP_MS) return;
+  autoRunAt = Date.now();
+
+  const dir = store.settings.mailBackupDir;
+  const accounts = mailAccountsForUse();
+  if (!accounts.length) return;
+
+  autoBackup.running = true;
+  let saved = 0;
+  let seeded = 0;
+  const failed = [];
+  for (const acc of accounts) {
+    // 계정 하나가 넘어져도 나머지는 받는다
+    try {
+      const r = await mailbackup.backupAccount(acc, dir, { onlyNew: true });
+      saved += r.saved;
+      seeded += r.seeded;
+    } catch (e) {
+      failed.push(`${acc.name || acc.user}: ${mail.friendly(e)}`);
+    }
+  }
+  autoBackup.running = false;
+  autoBackup.at = Date.now();
+  autoBackup.saved = saved;
+  autoBackup.total += saved;
+  autoBackup.seeded = seeded;
+  autoBackup.error = failed.length ? failed[0] : null;
+  if (saved || seeded || failed.length) {
+    evlog.log('메일', `자동 백업 · 새 메일 ${saved}통 저장`
+      + (seeded ? ` · 폴더 ${seeded}곳을 «지금부터»로 표시 (지난 메일은 받지 않음)` : '')
+      + (failed.length ? ` · 실패 ${failed.join(' / ')}` : ''));
+  }
 }
 
 ipcMain.handle('mail:backup-status', () => backupStatus());
 
 ipcMain.handle('mail:backup-pick', async () => {
+  // 도는 중에 폴더를 바꾸면 절반은 저쪽, 절반은 이쪽에 남는다
+  if (backup.running || autoBackup.running) {
+    backup.message = '백업이 도는 중에는 폴더를 바꿀 수 없습니다';
+    return backupStatus();
+  }
   const { canceled, filePaths } = await dialog.showOpenDialog({
     title: '메일을 저장할 폴더',
     properties: ['openDirectory', 'createDirectory'],
@@ -1098,11 +1222,27 @@ ipcMain.on('mail:backup-open', () => {
 });
 
 ipcMain.handle('mail:backup-start', async () => {
+  // 자리를 먼저 잡는다. await 뒤에 검사하면 두 번 빠르게 누른 사이에 둘 다 통과해
+  // 같은 폴더에 백업이 두 개 돈다.
   if (backup.running) return backupStatus();
+  backup.running = true;
+  try {
+    // 자동 백업이 돌고 있으면 끝나기를 잠깐 기다린다 — 같은 폴더를 둘이 쓰면 안 된다
+    for (let i = 0; i < 60 && autoBackup.running; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    if (autoBackup.running) throw new Error('자동 백업이 도는 중입니다. 잠시 뒤 다시 눌러주세요');
+    if (!store.settings.mailBackupDir) throw new Error('저장할 폴더를 먼저 고르세요');
+    if (!mailAccountsForUse().length) throw new Error('쓸 수 있는 계정이 없습니다');
+  } catch (e) {
+    backup.running = false;
+    backup.message = e.message;
+    return backupStatus();
+  }
+
+  // 도는 동안 폴더가 바뀌어도 시작할 때 고른 곳에 끝까지 쓴다
   const dir = store.settings.mailBackupDir;
-  if (!dir) { backup.message = '저장할 폴더를 먼저 고르세요'; return backupStatus(); }
   const accounts = mailAccountsForUse();
-  if (!accounts.length) { backup.message = '쓸 수 있는 계정이 없습니다'; return backupStatus(); }
 
   Object.assign(backup, {
     running: true, stop: false, account: '', mailbox: '',
@@ -1116,23 +1256,35 @@ ipcMain.handle('mail:backup-start', async () => {
       // 계정마다 0부터 세므로, 화면에 보이는 숫자는 여기서 합산한다
       let saved = 0;
       let skipped = 0;
+      let missing = 0;
+      const failed = [];
       for (const acc of accounts) {
         if (backup.stop) break;
         backup.account = acc.name || acc.user;
-        const r = await mailbackup.backupAccount(acc, dir, {
-          onProgress: (p) => Object.assign(backup, p,
-            { saved: saved + p.saved, skipped: skipped + p.skipped }),
-          shouldStop: () => backup.stop
-        });
-        saved += r.saved;
-        skipped += r.skipped;
+        // 한 계정이 넘어져도 나머지는 받아야 한다. 여기서 통째로 중단하면
+        // 비밀번호가 만료된 계정 하나 때문에 나머지 계정은 영영 백업되지 않는다.
+        try {
+          const r = await mailbackup.backupAccount(acc, dir, {
+            onProgress: (p) => Object.assign(backup, p,
+              { saved: saved + p.saved, skipped: skipped + p.skipped }),
+            shouldStop: () => backup.stop
+          });
+          saved += r.saved;
+          skipped += r.skipped;
+          missing += r.missing;
+          if (r.stateError) failed.push(`${backup.account}: 진행 기록 저장 실패 (${r.stateError})`);
+        } catch (e) {
+          failed.push(`${backup.account}: ${mail.friendly(e)}`);
+          evlog.log('메일', `백업 실패 · ${backup.account} · ${mail.friendly(e)}`);
+        }
         backup.saved = saved;
         backup.skipped = skipped;
       }
-      backup.message = backup.stop
-        ? `멈췄습니다 — ${backup.saved}통 저장`
-        : `끝났습니다 — ${backup.saved}통 저장`;
-      evlog.log('메일', `백업 ${backup.stop ? '중단' : '완료'} · ${backup.saved}통`);
+      backup.message = (backup.stop ? `멈췄습니다 — ${saved}통 저장` : `끝났습니다 — ${saved}통 저장`)
+        + (missing ? ` · ${missing}통은 서버가 원문을 주지 않았습니다` : '')
+        + (failed.length ? ` · 실패 ${failed.length}건: ${failed[0]}` : '');
+      evlog.log('메일', `백업 ${backup.stop ? '중단' : '완료'} · ${saved}통`
+        + (failed.length ? ` · 실패 ${failed.join(' / ')}` : ''));
     } catch (e) {
       backup.message = mail.friendly(e);
       evlog.log('메일', `백업 실패 · ${backup.message}`);
@@ -1152,25 +1304,44 @@ let mailViewPayload = null;
 let mailViewFiles = [];      // 원본 버퍼 — 저장할 때만 쓰고 화면에는 보내지 않는다
 let mailViewSize = null;     // 메일 보기 창의 기준 크기 (위젯과 같은 이유로 되읽지 않는다)
 
+let mailViewSeq = 0;   // 늦게 도착한 예전 요청이 지금 보고 있는 메일을 덮어쓰지 못하게
+
 function openMailView(msg) {
   mailViewPayload = null;
-  const acc = mailAccountsForUse().find((a) => a.id === msg.accountId) || mailAccountsForUse()[0];
-  if (!acc) return false;
+  // 계정이 안 맞으면 그냥 실패시킨다. 예전에는 첫 계정으로 넘어갔는데,
+  // 그러면 엉뚱한 계정에서 같은 번호의 메일을 열고 읽음 표시까지 해 버린다.
+  const acc = mailAccountsForUse().find((a) => a.id === msg.accountId);
+  if (!acc) {
+    mailViewPayload = { error: '이 메일의 계정을 찾을 수 없습니다' };
+    if (!mailWin || mailWin.isDestroyed()) return false;
+  }
 
+  const seq = ++mailViewSeq;
   // 본문을 받아오는 동안 창을 먼저 띄운다 — 클릭했는데 한참 아무 일도 없으면 고장 같다
-  mail.fetchBody(acc, msg.uid, { markSeen: true, allowRemote: store.settings.mailRemoteImages !== false })
-    .then((m) => {
-      mailViewFiles = m.attachments || [];
-      mailViewPayload = { ...m, attachments: mail.attachmentsForView(mailViewFiles) };
-      refreshMail();
-    })
-    .catch((e) => { mailViewPayload = { error: mail.friendly(e) }; });
+  if (acc) {
+    mail.fetchBody(acc, msg.uid, { markSeen: true, allowRemote: store.settings.mailRemoteImages !== false })
+      .then((m) => {
+        // 원문 버퍼는 화면으로 보내지 않는다 — 백업에만 쓰고 여기서 떼어낸다
+        const { source, ...forView } = m;
+        autoBackupOne(acc, { ...forView, source });
+        if (seq !== mailViewSeq) return;   // 그 사이 다른 메일을 열었다
+        mailViewFiles = m.attachments || [];
+        mailViewPayload = { ...forView, attachments: mail.attachmentsForView(mailViewFiles) };
+        refreshMail();
+      })
+      .catch((e) => {
+        if (seq !== mailViewSeq) return;
+        mailViewPayload = { error: mail.friendly(e) };
+      });
+  }
 
   if (mailWin && !mailWin.isDestroyed()) { mailWin.focus(); return true; }
   const saved = store.settings.mailViewSize;
+  // 큰 모니터에서 키워 둔 크기를 작은 화면에서 그대로 쓰면 창이 화면 밖으로 나간다
+  const cap = mailViewMax();
   mailWin = new BrowserWindow({
-    width: (saved && saved.width) || 420 + PAD,
-    height: (saved && saved.height) || 480 + PAD,
+    width: Math.round(clamp((saved && saved.width) || 420 + PAD, 320, cap.width)),
+    height: Math.round(clamp((saved && saved.height) || 480 + PAD, 260, cap.height)),
     minWidth: 320, minHeight: 260,
     frame: false,
     // 크기 조절은 렌더러의 리사이즈 존이 맡는다 (네이티브는 투명 창에서 폭주한다)
@@ -1232,10 +1403,27 @@ ipcMain.handle('mailview:bounds', () => {
   if (!mailWin || mailWin.isDestroyed()) return { x: 0, y: 0, width: 420, height: 480 };
   return mailWin.getBounds();
 });
+/**
+ * 얼마나 크게 늘릴 수 있나. 고정 숫자로 막으면 큰 화면에서 답답하다 —
+ * 그 창이 놓인 모니터의 작업 영역만큼 허용한다.
+ * 창에는 그림자 여백(PAD)이 붙어 있으므로 그만큼 더해야 보이는 카드가 화면을 꽉 채운다.
+ */
+function mailViewMax() {
+  try {
+    const d = mailWin && !mailWin.isDestroyed()
+      ? screen.getDisplayMatching(mailWin.getBounds())
+      : screen.getPrimaryDisplay();
+    return { width: d.workAreaSize.width + PAD, height: d.workAreaSize.height + PAD };
+  } catch {
+    return { width: 2400, height: 1600 };
+  }
+}
+
 ipcMain.on('mailview:set-bounds', (_e, { x, y, width, height, dir }) => {
   if (!mailWin || mailWin.isDestroyed()) return;
-  const w = Math.round(clamp(width, 320, 900));
-  const h = Math.round(clamp(height, 260, 1000));
+  const max = mailViewMax();
+  const w = Math.round(clamp(width, 320, max.width));
+  const h = Math.round(clamp(height, 260, max.height));
   const nx = Math.round(String(dir).includes('w') ? x + (width - w) : x);
   const ny = Math.round(String(dir).includes('n') ? y + (height - h) : y);
   mailViewSize = { width: w, height: h };
@@ -1359,6 +1547,9 @@ ipcMain.on('settings:set-app', (_e, patch) => {
   store.setSettings(patch);
   if (patch.autoUpdate != null) updater.startAuto(patch.autoUpdate);
   if (patch.calendarAllDay != null) refreshCalendars();
+  // «지금부터»의 기준점을 바로 찍는다. 다음 폴링까지 기다리면 그 사이에 온 메일이
+  // 지난 메일로 분류되어 자동 백업 대상에서 빠진다.
+  if (patch.mailAutoBackup === true) autoBackupNew({ now: true });
   if (widgetWin && !widgetWin.isDestroyed()) {
     if (patch.scrim != null) widgetWin.webContents.send('scrim', patch.scrim);
     if (patch.radius != null) widgetWin.webContents.send('radius', patch.radius);

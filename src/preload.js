@@ -69,6 +69,7 @@ contextBridge.exposeInMainWorld('nunsseom', {
   mailUpdate: (id, patch) => ipcRenderer.invoke('mail:update', { id, patch }),
   mailRemove: (id) => ipcRenderer.invoke('mail:remove', id),
   mailRefresh: () => ipcRenderer.invoke('mail:refresh'),
+  mailMarkRead: (opts) => ipcRenderer.invoke('mail:mark-read', opts || {}),
   mailBackupStatus: () => ipcRenderer.invoke('mail:backup-status'),
   mailBackupPick: () => ipcRenderer.invoke('mail:backup-pick'),
   mailBackupStart: () => ipcRenderer.invoke('mail:backup-start'),

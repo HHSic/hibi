@@ -371,7 +371,7 @@
     <div class="sec">메일 알림</div>
     <div class="group">
       <div class="row toggle">
-        <span class="nm">메일 확인하기<i>안 읽은 메일 수와 제목만 읽습니다. 본문은 가져오지 않습니다</i></span>
+        <span class="nm">메일 확인하기<i>주기적으로 안 읽은 메일 수와 제목을 읽습니다</i></span>
         <span></span>
         <button class="sw" id="mailEnabled" role="switch" aria-label="메일 확인"></button>
       </div>
@@ -457,6 +457,14 @@
         </div>
         <span class="path" id="backup-dir">아직 정하지 않았습니다</span>
       </div>
+      <div class="row toggle">
+        <span class="nm">자동으로 백업<i>새로 오는 메일과 열어본 메일을 그때그때 저장합니다</i></span>
+        <span></span>
+        <button class="sw" id="mailAutoBackup" role="switch" aria-label="자동 백업"></button>
+      </div>
+      <div class="col">
+        <span class="hint" id="backup-auto">지난 메일은 아래 «백업 시작»을 한 번 눌러주세요.</span>
+      </div>
       <div class="col">
         <div class="bar"><i id="backup-bar"></i></div>
         <span class="hint" id="backup-state">메일 한 통이 파일 하나(.eml)로 저장됩니다.</span>
@@ -471,7 +479,8 @@
     </div>
 
     <p class="foot">
-      제목과 보낸 사람만 읽고 본문은 가져오지 않습니다. 회사 메일은 사내 정책을 확인하세요.<br>
+      평소에는 제목과 보낸 사람만 읽습니다. 본문과 원문은 메일을 열어볼 때와 백업할 때만 받습니다.
+      회사 메일은 사내 정책을 확인하세요.<br>
       백업은 <b>새로 온 것만</b> 받습니다. 처음 한 번만 오래 걸리고, 중간에 멈춰도 다음에 이어서 받아요.
     </p>
   </div>
@@ -944,6 +953,8 @@
       window.nunsseom.setApp({ [key]: on });
       // 메일을 켜면 다음 주기를 기다리지 않고 바로 한 번 확인한다
       if (key === 'mailEnabled' && on) window.nunsseom.mailRefresh();
+      // 켜자마자 무슨 일이 일어나는지 바로 알려준다
+      if (key === 'mailAutoBackup') loadBackup();
     };
   }
 
@@ -1469,8 +1480,46 @@
   // 몇 시간 걸릴 수도 있는 작업이라, 열려 있는 동안만 상태를 물어본다.
   let backupTimer = null;
 
+  /** "몇 분 전" — 자동 백업이 살아 있다는 걸 보여주는 게 목적이라 대충이면 된다 */
+  function agoText(at) {
+    const min = Math.floor((Date.now() - at) / 60000);
+    if (min < 1) return '방금';
+    if (min < 60) return `${min}분 전`;
+    const h = Math.floor(min / 60);
+    return h < 24 ? `${h}시간 전` : `${Math.floor(h / 24)}일 전`;
+  }
+
+  function paintAuto(st) {
+    const el = $('backup-auto');
+    if (!st.auto) {
+      el.textContent = '지난 메일은 아래 «백업 시작»을 한 번 눌러주세요.';
+      return;
+    }
+    if (!st.dir) {
+      el.textContent = '저장할 폴더를 먼저 골라야 자동 백업이 돕니다.';
+      return;
+    }
+    // 폴링이 없으면 새 메일이 온 것도 모른다 — «도는 중»이라고 말하면 거짓말이 된다
+    if (!data.settings.mailEnabled) {
+      el.textContent = '위쪽 «메일 확인하기»가 꺼져 있어 새 메일을 자동 저장하지 못합니다.';
+      return;
+    }
+    if (st.autoError) {
+      el.textContent = `자동 백업 실패 — ${st.autoError}`;
+      return;
+    }
+    if (!st.autoAt) {
+      el.textContent = '켜졌습니다. 지금부터 오는 메일과 열어본 메일을 저장합니다'
+        + ' (지난 메일은 «백업 시작»을 눌러주세요).';
+      return;
+    }
+    el.textContent = `자동 저장 중 · ${agoText(st.autoAt)} ${st.autoSaved}통`
+      + (st.autoTotal ? ` · 켠 뒤 모두 ${st.autoTotal}통` : '');
+  }
+
   function paintBackup(st) {
     $('backup-dir').textContent = st.dir || '아직 정하지 않았습니다';
+    paintAuto(st);
     $('btn-backup-open').style.display = st.dir ? '' : 'none';
     $('btn-backup-start').style.display = st.running ? 'none' : '';
     $('btn-backup-stop').style.display = st.running ? '' : 'none';
@@ -1491,9 +1540,10 @@
       $('backup-state').textContent = '메일 한 통이 파일 하나(.eml)로 저장됩니다.';
     }
 
-    // 도는 동안만 계속 물어본다
+    // 도는 동안은 자주, 자동 백업만 켜져 있으면 가끔 — 화면이 멈춰 보이지 않을 만큼만
     clearTimeout(backupTimer);
     if (st.running) backupTimer = setTimeout(loadBackup, 800);
+    else if (st.auto && st.dir) backupTimer = setTimeout(loadBackup, 20000);
   }
 
   async function loadBackup() {
@@ -1560,7 +1610,7 @@
 
     for (const key of ['dndEnabled', 'autoUpdate', 'calendarBusy', 'calendarAllDay',
                        'calendarLead', 'calendarShow', 'soundEnabled',
-                       'mailEnabled', 'mailShow', 'mailRemoteImages']) {
+                       'mailEnabled', 'mailShow', 'mailRemoteImages', 'mailAutoBackup']) {
       bindSwitch(key);
     }
     bindAutoLaunch();
