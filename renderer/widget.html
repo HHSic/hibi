@@ -23,6 +23,9 @@
     --bar: rgba(24, 24, 28, 0.90);
     --sun: #ff8b8b;           /* 달력의 일요일 */
     --tint: #5ecfb6;          /* 다음 알림 종류 색 — JS가 갱신 */
+    /* 안 읽은 메일 — 민트(tint)의 반대편 색. 아이콘의 시곗바늘과 같은 계열이라
+       이 위젯 안에서 «아직 안 본 것»이 한눈에 튄다. */
+    --unread: #f5a623;
     --p: 0%;                  /* 진행률 */
     --r: 0px;                 /* CSS 코너 반경 (투명 창일 때만 사용) */
   }
@@ -36,6 +39,7 @@
     --hairline: rgba(255, 255, 255, 0.60);
     --bar: rgba(250, 250, 252, 0.92);
     --sun: #d94a4a;
+    --unread: #c76a00;        /* 흰 배경에서는 한 단계 눌러야 읽힌다 */
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
@@ -347,9 +351,17 @@
   .cev:hover { background: var(--fill); }
   .cev .tm { color: var(--secondary); font-variant-numeric: tabular-nums; }
   .cev .nm { color: var(--label); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 안 읽은 메일만 색으로 튀게 한다. 읽은 것은 평소 글자색으로 가라앉힌다 —
+     둘 다 강조하면 아무것도 강조되지 않는다. */
+  .cev.mailrow .nm { color: var(--unread); font-weight: 600; }
+  .cev.mailrow.read .nm { color: var(--secondary); font-weight: 400; }
   .calempty { font-size: 0.625rem; color: var(--tertiary); padding: 0.1875rem; }
   .inner { transition: opacity 0.16s ease; }
   .card.open .inner { opacity: 0; pointer-events: none; }
+  /* 시트는 제 배경이 없다(카드의 유리를 그대로 쓴다). 그래서 시트를 열면 뒤에 있는 것을
+     같이 숨겨야 한다 — .inner만 숨기고 달력·메일 패널을 두면 글자가 겹쳐 보인다. */
+  .cal { transition: opacity 0.16s ease; }
+  .card.open .cal { opacity: 0; pointer-events: none; }
   .sheet .sh {
     display: flex; align-items: center; justify-content: space-between;
     font-size: 0.625rem; font-weight: 650; letter-spacing: 0.02em;
@@ -398,6 +410,11 @@
   .sheet .row.ev.now .evdot { background: var(--tint); }
   .sheet .row.ev.now .nm { color: var(--label); font-weight: 600; }
   .sheet .row.ev.read { opacity: 0.55; }
+  /* 시트의 메일 줄도 같은 규칙 — 안 읽은 것만 색이 다르다 */
+  .sheet .row.ev.mail .nm { color: var(--unread); font-weight: 600; }
+  .sheet .row.ev.mail.read .nm { color: var(--label); font-weight: 400; }
+  .sheet .row.ev.mail .evdot { background: var(--unread); }
+  .sheet .row.ev.mail.read .evdot { background: var(--tertiary); }
   .sheet .row.ev.read .evdot { background: var(--tertiary); }
   .sheet .row .g { width: 0.875rem; height: 0.875rem; }
   .sheet .row .nm { color: var(--label); font-weight: 540; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1102,7 +1119,19 @@
   async function markRead(opts) {
     if (markingRead) return;
     markingRead = true;
-    try { await window.nunsseom.mailMarkRead(opts); } finally { markingRead = false; }
+    try {
+      const r = await window.nunsseom.mailMarkRead(opts);
+      // 실패를 조용히 삼키면 "눌렀는데 아무 일도 없다"가 된다 — 머리글에 그대로 띄운다
+      if (r && r.ok === false && r.message) {
+        for (const id of ['mail-ttl', 'mp-ttl']) $(id).textContent = `읽음 표시 실패 · ${r.message}`;
+        // 다음 틱이 제 글자로 되돌린다
+      }
+      dlog('메일', r && r.ok === false
+        ? `읽음 표시 실패 · ${r.message}`
+        : `읽음 표시 · ${(r && r.changed) || 0}통`);
+    } finally {
+      markingRead = false;
+    }
   }
 
   function attachMailRow(row, m) {
@@ -1143,7 +1172,7 @@
     for (const m of box.messages) {
       const row = document.createElement('div');
       // 읽은 메일은 한 톤 죽여서 안 읽은 것이 먼저 눈에 들어오게 한다
-      row.className = 'row ev' + (m.seen ? ' read' : ' now');
+      row.className = 'row ev mail' + (m.seen ? ' read' : ' now');
       const dot = document.createElement('span');
       dot.className = 'evdot';
       const nm = document.createElement('span');

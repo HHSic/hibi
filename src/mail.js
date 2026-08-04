@@ -101,7 +101,7 @@ async function fetchSummary(account, { limit = 5, onlyUnread = true } = {}) {
  * 열어보지 않고 뱃지만 지우고 싶을 때가 있다 — 광고 메일이 대표적이다.
  * @param uids 비우면 안 읽은 것 전부
  */
-async function markRead(account, uids) {
+async function markRead(account, uids, { read = true } = {}) {
   const client = connect(account);
   await client.connect();
   try {
@@ -109,10 +109,14 @@ async function markRead(account, uids) {
     await client.mailboxOpen(account.mailbox || 'INBOX', { readOnly: false });
     const list = (uids && uids.length)
       ? uids.map(Number).filter((n) => Number.isFinite(n))
-      : (await client.search({ seen: false }, { uid: true }) || []);
+      : (await client.search({ seen: !read }, { uid: true }) || []);
     if (!list.length) return { changed: 0 };
     // IMAP 플래그는 역슬래시로 시작한다 — 소스에서는 두 번 써야 한다
-    await client.messageFlagsAdd(list, ['\\Seen'], { uid: true });
+    // 서버가 false를 돌려주면 아무것도 안 바뀐 것이다 — 성공으로 셈하면 안 된다
+    const okFlag = read
+      ? await client.messageFlagsAdd(list, ['\\Seen'], { uid: true })
+      : await client.messageFlagsRemove(list, ['\\Seen'], { uid: true });
+    if (okFlag === false) throw new Error('서버가 읽음 표시를 받아들이지 않았습니다');
     return { changed: list.length };
   } finally {
     try { await client.logout(); } catch { client.close(); }
@@ -147,9 +151,11 @@ async function fetchBody(account, uid, { markSeen = true, maxChars = 8000, allow
   await client.connect();
   try {
     await client.mailboxOpen(account.mailbox || 'INBOX', { readOnly: !markSeen });
-    const msg = await client.fetchOne(String(uid), { envelope: true, internalDate: true, source: true },
-      { uid: true });
+    const msg = await client.fetchOne(String(uid),
+      { envelope: true, internalDate: true, source: true, flags: true }, { uid: true });
     if (!msg || !msg.source) throw new Error('메일을 찾을 수 없습니다');
+    const flags = msg.flags instanceof Set ? msg.flags : new Set(msg.flags || []);
+    const wasSeen = flags.has('\\Seen');
 
     const parsed = await simpleParser(msg.source, { skipImageLinks: true });
     // 원래 모양대로 보여주는 게 우선 — HTML이 없을 때만 글로 떨어진다
@@ -171,6 +177,8 @@ async function fetchBody(account, uid, { markSeen = true, maxChars = 8000, allow
       // 쓰면 전체 백업이 지은 이름과 어긋나 같은 메일이 두 번 저장된다.
       receivedAt: (msg.internalDate || new Date()).getTime(),
       mailbox: account.mailbox || 'INBOX',
+      // 열었다고 무조건 읽음으로 바꾸지 않는다 — 창에서 직접 누르게 한다
+      seen: markSeen ? true : wasSeen,
       // 원본 버퍼는 저장할 때만 쓰므로 여기 남겨두고, 화면에는 요약만 보낸다
       source: msg.source,
       attachments: parsed.attachments || [],

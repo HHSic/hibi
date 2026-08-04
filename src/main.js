@@ -143,9 +143,20 @@ function mailAccountsForUse() {
     .filter((a) => a.pass);
 }
 
-async function refreshMail() {
+/**
+ * @param force 이미 도는 중이면 그게 끝나기를 기다렸다 다시 읽는다.
+ *   읽음 표시처럼 "방금 서버를 바꿔놓고 숫자를 맞춰야 하는" 경우에 쓴다.
+ *   그냥 넘기면 화면이 다음 주기(몇 분)까지 옛 숫자를 들고 있는다.
+ */
+async function refreshMail({ force = false } = {}) {
   if (!store.settings.mailEnabled) { evlog.log('메일', '건너뜀 — 메일 확인이 꺼져 있음'); return; }
-  if (mailState.loading) return;
+  if (mailState.loading) {
+    if (!force) return;
+    for (let i = 0; i < 60 && mailState.loading; i++) {
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    if (mailState.loading) return;
+  }
   const accounts = mailAccountsForUse();
   if (!accounts.length) {
     mailState.unread = 0;
@@ -1071,20 +1082,32 @@ ipcMain.handle('mail:refresh', async () => { await refreshMail(); return mailSta
  * 열어보지 않고 읽음으로만 표시한다.
  * uids가 없으면 그 계정의 안 읽은 것 전부, accountId가 없으면 모든 계정.
  */
-ipcMain.handle('mail:mark-read', async (_e, { accountId, uids } = {}) => {
+ipcMain.handle('mail:mark-read', async (_e, { accountId, uids, read = true } = {}) => {
   const accounts = mailAccountsForUse().filter((a) => !accountId || a.id === accountId);
+  if (!accounts.length) {
+    return { ok: false, changed: 0, message: '쓸 수 있는 계정이 없습니다', ...mailStatus() };
+  }
   let changed = 0;
+  const failed = [];
   for (const acc of accounts) {
     try {
-      const r = await mail.markRead(acc, uids);
+      const r = await mail.markRead(acc, uids, { read });
       changed += r.changed;
     } catch (e) {
-      evlog.log('메일', `읽음 표시 실패 · ${acc.name} · ${mail.friendly(e)}`);
+      failed.push(`${acc.name || acc.user}: ${mail.friendly(e)}`);
     }
   }
-  if (changed) evlog.log('메일', `읽음 표시 · ${changed}통`);
-  await refreshMail();
-  return { changed, ...mailStatus() };
+  evlog.log('메일', `${read ? '읽음' : '안 읽음'} 표시 · ${changed}통`
+    + (failed.length ? ` · 실패 ${failed.join(' / ')}` : ''));
+  // 서버 쪽이 바뀌었으니 화면 숫자도 바로 맞춘다. 마침 폴링이 돌고 있으면
+  // 그게 끝나기를 기다렸다가 다시 부른다 — 그냥 넘기면 다음 주기(몇 분)까지 숫자가 안 바뀐다.
+  await refreshMail({ force: true });
+  return {
+    ok: failed.length === 0,
+    changed,
+    message: failed.length ? failed[0] : '',
+    ...mailStatus()
+  };
 });
 
 // ── 메일 백업 ───────────────────────────────────────────
@@ -1319,14 +1342,18 @@ function openMailView(msg) {
   const seq = ++mailViewSeq;
   // 본문을 받아오는 동안 창을 먼저 띄운다 — 클릭했는데 한참 아무 일도 없으면 고장 같다
   if (acc) {
-    mail.fetchBody(acc, msg.uid, { markSeen: true, allowRemote: store.settings.mailRemoteImages !== false })
+    // 열었다고 바로 읽음으로 바꾸지 않는다. 창의 «안 읽음» 칩을 눌러 사용자가 정한다 —
+    // 목록을 훑다가 잘못 연 메일까지 읽음이 되면 다시 찾아내기 어렵다.
+    mail.fetchBody(acc, msg.uid, { markSeen: false, allowRemote: store.settings.mailRemoteImages !== false })
       .then((m) => {
         // 원문 버퍼는 화면으로 보내지 않는다 — 백업에만 쓰고 여기서 떼어낸다
         const { source, ...forView } = m;
         autoBackupOne(acc, { ...forView, source });
         if (seq !== mailViewSeq) return;   // 그 사이 다른 메일을 열었다
         mailViewFiles = m.attachments || [];
-        mailViewPayload = { ...forView, attachments: mail.attachmentsForView(mailViewFiles) };
+        // 창에서 읽음 표시를 누르려면 어느 계정의 몇 번 메일인지 알아야 한다
+        mailViewPayload = { ...forView, accountId: acc.id,
+          attachments: mail.attachmentsForView(mailViewFiles) };
         refreshMail();
       })
       .catch((e) => {
