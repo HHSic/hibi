@@ -12,7 +12,8 @@ const { ImapFlow } = require('imapflow');
 const { simpleParser } = require('mailparser');
 
 const CONNECT_TIMEOUT_MS = 20_000;
-const MAX_PREVIEW = 10;          // 제목을 몇 개까지 들고 올지
+// 몇 통까지 들고 올지는 사용자가 정한다. 여기 상한은 실수로 수만 통을 부르는 걸 막는 안전장치일 뿐이다.
+const PREVIEW_HARD_MAX = 500;
 
 /** 제공자별 서버 — 사용자가 서버 주소를 몰라도 되게 */
 const PRESETS = [
@@ -70,8 +71,8 @@ function connect(account) {
  * @param limit      제목을 몇 개까지 들고 올지
  * @returns { unread, total, messages: [{ uid, subject, from, at, seen }] }
  */
-async function fetchSummary(account, { limit = MAX_PREVIEW, onlyUnread = true } = {}) {
-  const take = Math.max(1, Math.min(MAX_PREVIEW, limit));
+async function fetchSummary(account, { limit = 5, onlyUnread = true } = {}) {
+  const take = Math.max(1, Math.min(PREVIEW_HARD_MAX, Math.round(limit) || 5));
   const client = connect(account);
   await client.connect();
   try {
@@ -286,4 +287,4 @@ function friendly(e) {
   return raw.slice(0, 120);
 }
 
-module.exports = { PRESETS, preset, fetchSummary, fetchBody, test, senderOf, friendly, htmlToText, attachmentsForView, buildViewHtml };
+module.exports = { PRESETS, preset, connect, fetchSummary, fetchBody, test, senderOf, friendly, htmlToText, attachmentsForView, buildViewHtml };

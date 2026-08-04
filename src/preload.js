@@ -60,6 +60,7 @@ contextBridge.exposeInMainWorld('nunsseom', {
   onCalShow: (cb) => ipcRenderer.on('cal:show', () => cb()),
   onCalChanged: (cb) => ipcRenderer.on('cal:changed', () => cb()),
   calOpenHelp: (which) => ipcRenderer.invoke('cal:open-help', which),
+  calPickFile: () => ipcRenderer.invoke('cal:pick-file'),
 
   // 메일 (비밀번호는 메인에서만 다룬다)
   mailGet: () => ipcRenderer.invoke('mail:get'),
@@ -68,6 +69,11 @@ contextBridge.exposeInMainWorld('nunsseom', {
   mailUpdate: (id, patch) => ipcRenderer.invoke('mail:update', { id, patch }),
   mailRemove: (id) => ipcRenderer.invoke('mail:remove', id),
   mailRefresh: () => ipcRenderer.invoke('mail:refresh'),
+  mailBackupStatus: () => ipcRenderer.invoke('mail:backup-status'),
+  mailBackupPick: () => ipcRenderer.invoke('mail:backup-pick'),
+  mailBackupStart: () => ipcRenderer.invoke('mail:backup-start'),
+  mailBackupStop: () => ipcRenderer.send('mail:backup-stop'),
+  mailBackupOpen: () => ipcRenderer.send('mail:backup-open'),
   mailOpen: (msg) => ipcRenderer.invoke('mail:open', msg),
   mailViewData: () => ipcRenderer.invoke('mail:view-data'),
   mailViewClose: () => ipcRenderer.send('mail:view-close'),

@@ -1201,10 +1201,15 @@
     }
   }
 
+  // 보여줄 개수에 상한이 없으므로, 목록이 길다고 위젯이 화면 끝까지 자라면 안 된다.
+  // 여기까지만 늘리고 나머지는 목록 안에서 굴린다.
+  const MAIL_PANEL_MAX = 300;
+
   function resizeForMail() {
     const on = mailCard.classList.contains('mailon');
     requestAnimationFrame(() => {
-      window.nunsseom.calPanel({ on, needed: on ? Math.ceil($('mailpanel').scrollHeight) : 0, which: 'mail' });
+      const needed = on ? Math.min(MAIL_PANEL_MAX, Math.ceil($('mailpanel').scrollHeight)) : 0;
+      window.nunsseom.calPanel({ on, needed, which: 'mail' });
     });
   }
 

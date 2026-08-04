@@ -230,6 +230,31 @@
   .row.toggle { grid-template-columns: 1fr auto auto; }
   .row.toggle .sw { justify-self: end; }
 
+  /* 숫자 입력 (−/+ 붙은 칸) — 상한이 없는 값은 슬라이더로 못 고른다 */
+  .spin { display: flex; align-items: center; gap: 4px; justify-self: start; }
+  .spin .mini { width: 24px; padding: 4px 0; text-align: center; font-size: 14px; line-height: 1; }
+  .spin .unit { font-size: 11.5px; color: var(--tertiary); margin-left: 2px; }
+  .spin input[type=number] {
+    all: unset;
+    font-family: inherit; font-size: 12.5px; color: var(--label);
+    background: rgba(255, 255, 255, 0.07);
+    box-shadow: inset 0 0 0 0.5px var(--separator);
+    border-radius: 8px; padding: 6px 8px;
+    width: 52px; text-align: center; font-variant-numeric: tabular-nums;
+    -moz-appearance: textfield;
+  }
+  :root[data-theme="light"] .spin input[type=number] { background: rgba(0,0,0,0.05); }
+  .spin input[type=number]::-webkit-outer-spin-button,
+  .spin input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .spin input[type=number]:focus { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent); }
+
+  /* 백업 진행 막대 */
+  .bar { height: 4px; border-radius: 999px; background: var(--track); overflow: hidden; }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.3s; }
+  .path {
+    font-size: 11px; color: var(--secondary); word-break: break-all; line-height: 1.5;
+  }
+
   .foot { font-size: 11.5px; line-height: 1.55; color: var(--tertiary); margin: 10px 4px 0; }
   .foot b { color: var(--secondary-label); font-weight: 600; }
 
@@ -365,10 +390,15 @@
         <div class="helprow" id="mail-scope"></div>
         <span class="hint" id="mail-scope-hint"></span>
       </div>
-      <div class="row">
-        <span class="nm">보여줄 개수</span>
-        <input type="range" id="mailCount" min="1" max="10" step="1">
-        <span class="out" id="out-mailCount"></span>
+      <div class="row wide">
+        <span class="nm">보여줄 개수<i>상한은 없습니다. 많이 가져올수록 확인이 느려져요</i></span>
+        <span class="spin">
+          <button class="mini ghost" id="mailCount-dn" aria-label="줄이기">−</button>
+          <input type="number" id="mailCount" min="1" step="1" inputmode="numeric">
+          <button class="mini ghost" id="mailCount-up" aria-label="늘리기">+</button>
+          <span class="unit">통</span>
+        </span>
+        <span></span>
       </div>
       <div class="col">
         <span class="lbl">알리는 방식</span>
@@ -417,8 +447,32 @@
       </div>
     </div>
 
+    <div class="sec">메일 백업</div>
+    <div class="group">
+      <div class="col">
+        <span class="lbl">저장할 폴더</span>
+        <div class="helprow">
+          <button class="mini" id="btn-backup-pick">폴더 고르기</button>
+          <button class="mini ghost" id="btn-backup-open">폴더 열기</button>
+        </div>
+        <span class="path" id="backup-dir">아직 정하지 않았습니다</span>
+      </div>
+      <div class="col">
+        <div class="bar"><i id="backup-bar"></i></div>
+        <span class="hint" id="backup-state">메일 한 통이 파일 하나(.eml)로 저장됩니다.</span>
+        <div class="upline">
+          <span></span>
+          <span class="helprow">
+            <button class="mini ghost" id="btn-backup-stop" style="display:none">멈추기</button>
+            <button class="mini" id="btn-backup-start">백업 시작</button>
+          </span>
+        </div>
+      </div>
+    </div>
+
     <p class="foot">
-      제목과 보낸 사람만 읽고 본문은 가져오지 않습니다. 회사 메일은 사내 정책을 확인하세요.
+      제목과 보낸 사람만 읽고 본문은 가져오지 않습니다. 회사 메일은 사내 정책을 확인하세요.<br>
+      백업은 <b>새로 온 것만</b> 받습니다. 처음 한 번만 오래 걸리고, 중간에 멈춰도 다음에 이어서 받아요.
     </p>
   </div>
 
@@ -586,18 +640,30 @@
       <div class="col">
         <span class="lbl">1. 캘린더에서 주소 복사하기</span>
         <div class="helprow">
-          <button class="mini" id="btn-help-google">Google 캘린더 열기</button>
+          <button class="mini" id="btn-help-google">Google 열기</button>
+          <button class="mini" id="btn-help-notion">Notion 열기</button>
           <button class="mini" id="btn-help-outlook">Outlook 열기</button>
         </div>
         <span class="hint">
           Google — 왼쪽에서 캘린더 선택 → 아래로 내려 <b>«iCal 형식의 비공개 주소»</b> 복사<br>
-          Notion — 캘린더 뷰 오른쪽 위 ··· → 연결 → <b>«iCal로 내보내기»</b>
+          Notion — 캘린더 <b>뷰</b> 오른쪽 위 ··· → 연결 → <b>«iCal로 내보내기»</b><br>
+          Outlook·Microsoft 365 — 설정 → 캘린더 → 공유 및 사용 권한 → <b>«게시»</b> 후 ICS 주소 복사
+        </span>
+        <span class="hint">
+          Notion 캘린더 <b>앱</b>은 Google·iCloud 일정을 비춰 보여줄 뿐이라 자체 주소가 없습니다.
+          그때는 원래 계정(Google 등)의 주소를 넣으세요.
         </span>
       </div>
       <div class="col">
         <span class="lbl">2. 여기에 붙여넣기</span>
         <input type="text" id="cal-url" placeholder="주소를 붙여넣으세요 (Ctrl+V)">
         <span class="hint">캘린더 ID나 공유 주소를 붙여넣어도 알아서 바꿔줍니다.</span>
+        <div class="helprow">
+          <button class="mini ghost" id="btn-cal-file">내 PC의 .ics 파일 고르기</button>
+        </div>
+        <span class="hint">
+          Outlook·Thunderbird 등에서 내보낸 캘린더 파일도 그대로 씁니다. 인터넷 없이 동작합니다.
+        </span>
       </div>
       <div class="col">
         <div class="upline">
@@ -1106,7 +1172,12 @@
 
   $('btn-cal-add').onclick = () => addCalendar($('cal-url').value.trim());
   $('btn-help-google').onclick = () => window.nunsseom.calOpenHelp('google');
+  $('btn-help-notion').onclick = () => window.nunsseom.calOpenHelp('notion');
   $('btn-help-outlook').onclick = () => window.nunsseom.calOpenHelp('outlook');
+  $('btn-cal-file').onclick = async () => {
+    const p = await window.nunsseom.calPickFile();
+    if (p) { $('cal-url').value = p; addCalendar(p); }
+  };
 
   // 복사해 온 주소가 있으면 띄워준다. 창을 열 때와 다시 활성화될 때 살핀다.
   let pasteUrl = null;
@@ -1188,9 +1259,6 @@
         window.nunsseom.setApp({ soundName: s.id });
         window.nunsSound.play(s.id, data.settings.soundVolume ?? 55);
         renderSounds();
-    bindAppRow('mailPollMin', (v) => `${v}분`, (s) => s.mailPollMin ?? 10, (v) => ({ mailPollMin: v }));
-    bindAppRow('mailCount', (v) => `${v}통`, (s) => s.mailCount ?? 5, (v) => ({ mailCount: v }));
-    loadMail();
       };
       host.append(b);
     }
@@ -1397,6 +1465,46 @@
     }
   };
 
+  // ── 메일 백업 ────────────────────────────────────
+  // 몇 시간 걸릴 수도 있는 작업이라, 열려 있는 동안만 상태를 물어본다.
+  let backupTimer = null;
+
+  function paintBackup(st) {
+    $('backup-dir').textContent = st.dir || '아직 정하지 않았습니다';
+    $('btn-backup-open').style.display = st.dir ? '' : 'none';
+    $('btn-backup-start').style.display = st.running ? 'none' : '';
+    $('btn-backup-stop').style.display = st.running ? '' : 'none';
+    $('btn-backup-start').disabled = !st.dir;
+
+    // 끝난 뒤에도 막대를 비우지 않는다 — 어디까지 갔는지가 결과의 일부다
+    const pct = st.total ? Math.min(100, (st.done / st.total) * 100) : 0;
+    $('backup-bar').style.width = `${pct}%`;
+
+    if (st.running) {
+      const where = [st.account, st.mailbox].filter(Boolean).join(' · ');
+      $('backup-state').textContent = st.total
+        ? `${where} — ${st.done}/${st.total} · 저장 ${st.saved}통`
+        : `${where || '연결 중'} — 저장 ${st.saved}통`;
+    } else if (st.message) {
+      $('backup-state').textContent = st.message;
+    } else {
+      $('backup-state').textContent = '메일 한 통이 파일 하나(.eml)로 저장됩니다.';
+    }
+
+    // 도는 동안만 계속 물어본다
+    clearTimeout(backupTimer);
+    if (st.running) backupTimer = setTimeout(loadBackup, 800);
+  }
+
+  async function loadBackup() {
+    paintBackup(await window.nunsseom.mailBackupStatus());
+  }
+
+  $('btn-backup-pick').onclick = async () => paintBackup(await window.nunsseom.mailBackupPick());
+  $('btn-backup-open').onclick = () => window.nunsseom.mailBackupOpen();
+  $('btn-backup-start').onclick = async () => paintBackup(await window.nunsseom.mailBackupStart());
+  $('btn-backup-stop').onclick = () => { window.nunsseom.mailBackupStop(); loadBackup(); };
+
   function bindAppRow(id, fmt, toValue, toStore) {
     const input = $(id);
     const out = $('out-' + id);
@@ -1405,6 +1513,25 @@
     paint();
     input.oninput = paint;
     input.onchange = () => window.nunsseom.setApp(toStore(Number(input.value)));
+  }
+
+  /**
+   * −/+ 가 붙은 숫자 칸. 상한이 없는 값에 쓴다.
+   * 빈 칸이나 글자를 넣고 나가면 min으로 되돌린다 — 숫자가 아닌 값이 저장되면
+   * 다음 실행에서 목록이 통째로 비어 보인다.
+   */
+  function bindAppNum(id, { min = 1, max = Infinity, toValue, toStore }) {
+    const input = $(id);
+    const clamp = (v) => Math.max(min, Math.min(max, Math.round(v) || min));
+    input.value = clamp(toValue(data.settings));
+    const commit = (v) => {
+      input.value = clamp(v);
+      window.nunsseom.setApp(toStore(Number(input.value)));
+    };
+    input.onchange = () => commit(Number(input.value));
+    input.onblur = () => { input.value = clamp(Number(input.value)); };
+    $(id + '-dn').onclick = () => commit(Number(input.value) - 1);
+    $(id + '-up').onclick = () => commit(Number(input.value) + 1);
   }
 
   window.nunsseom.getSettings().then((d) => {
@@ -1423,8 +1550,13 @@
       (s) => s.soundVolume ?? 55, (v) => ({ soundVolume: v }));
     renderSounds();
     bindAppRow('mailPollMin', (v) => `${v}분`, (s) => s.mailPollMin ?? 10, (v) => ({ mailPollMin: v }));
-    bindAppRow('mailCount', (v) => `${v}통`, (s) => s.mailCount ?? 5, (v) => ({ mailCount: v }));
+    bindAppNum('mailCount', {
+      min: 1,
+      toValue: (s) => s.mailCount ?? 5,
+      toStore: (v) => ({ mailCount: v })
+    });
     loadMail();
+    loadBackup();
 
     for (const key of ['dndEnabled', 'autoUpdate', 'calendarBusy', 'calendarAllDay',
                        'calendarLead', 'calendarShow', 'soundEnabled',

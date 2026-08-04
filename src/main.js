@@ -25,6 +25,7 @@ const evlog = require('./evlog');
 const planner = require('./planner');
 const calcache = require('./calcache');
 const mail = require('./mail');
+const mailbackup = require('./mailbackup');
 const secret = require('./secret');
 
 const ICON = path.join(__dirname, '..', 'assets', 'tray.png');
@@ -173,7 +174,7 @@ async function refreshMail() {
     }
     messages.sort((a, b) => b.at - a.at);
     mailState.unread = unread;
-    mailState.messages = messages.slice(0, Math.max(1, store.settings.mailCount || 5));
+    mailState.messages = messages.slice(0, Math.max(1, Math.round(store.settings.mailCount) || 5));
     mailState.errors = errors;
     mailState.fetchedAt = Date.now();
     if (unread > before) mailState.pending += unread - before;
@@ -1064,6 +1065,86 @@ ipcMain.handle('mail:remove', (_e, id) => {
 });
 ipcMain.handle('mail:refresh', async () => { await refreshMail(); return mailStatus(); });
 
+// ── 메일 백업 ───────────────────────────────────────────
+// 서버에 있는 메일을 .eml 파일로 내 PC에 내려둔다. 회사를 옮기거나 계정이 닫히면
+// 웹메일에 있던 것은 같이 사라진다 — 파일로 남겨두면 그때도 열린다.
+// 오래 걸리는 작업이라 상태를 남기고, 설정 화면이 그걸 들여다본다.
+const backup = {
+  running: false, stop: false,
+  account: '', mailbox: '', done: 0, total: 0,
+  saved: 0, skipped: 0, message: '', at: 0, dir: null
+};
+
+function backupStatus() {
+  return { ...backup, dir: store.settings.mailBackupDir || null };
+}
+
+ipcMain.handle('mail:backup-status', () => backupStatus());
+
+ipcMain.handle('mail:backup-pick', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    title: '메일을 저장할 폴더',
+    properties: ['openDirectory', 'createDirectory'],
+    defaultPath: store.settings.mailBackupDir || app.getPath('documents')
+  });
+  if (canceled || !filePaths[0]) return backupStatus();
+  store.setSettings({ mailBackupDir: filePaths[0] });
+  return backupStatus();
+});
+
+ipcMain.on('mail:backup-stop', () => { backup.stop = true; });
+ipcMain.on('mail:backup-open', () => {
+  if (store.settings.mailBackupDir) shell.openPath(store.settings.mailBackupDir);
+});
+
+ipcMain.handle('mail:backup-start', async () => {
+  if (backup.running) return backupStatus();
+  const dir = store.settings.mailBackupDir;
+  if (!dir) { backup.message = '저장할 폴더를 먼저 고르세요'; return backupStatus(); }
+  const accounts = mailAccountsForUse();
+  if (!accounts.length) { backup.message = '쓸 수 있는 계정이 없습니다'; return backupStatus(); }
+
+  Object.assign(backup, {
+    running: true, stop: false, account: '', mailbox: '',
+    done: 0, total: 0, saved: 0, skipped: 0, message: '', at: Date.now()
+  });
+  evlog.log('메일', `백업 시작 · 계정 ${accounts.length}개 · ${dir}`);
+
+  // 기다리지 않고 바로 상태를 돌려준다 — 몇 시간짜리가 될 수도 있다
+  (async () => {
+    try {
+      // 계정마다 0부터 세므로, 화면에 보이는 숫자는 여기서 합산한다
+      let saved = 0;
+      let skipped = 0;
+      for (const acc of accounts) {
+        if (backup.stop) break;
+        backup.account = acc.name || acc.user;
+        const r = await mailbackup.backupAccount(acc, dir, {
+          onProgress: (p) => Object.assign(backup, p,
+            { saved: saved + p.saved, skipped: skipped + p.skipped }),
+          shouldStop: () => backup.stop
+        });
+        saved += r.saved;
+        skipped += r.skipped;
+        backup.saved = saved;
+        backup.skipped = skipped;
+      }
+      backup.message = backup.stop
+        ? `멈췄습니다 — ${backup.saved}통 저장`
+        : `끝났습니다 — ${backup.saved}통 저장`;
+      evlog.log('메일', `백업 ${backup.stop ? '중단' : '완료'} · ${backup.saved}통`);
+    } catch (e) {
+      backup.message = mail.friendly(e);
+      evlog.log('메일', `백업 실패 · ${backup.message}`);
+    } finally {
+      backup.running = false;
+      backup.mailbox = '';
+    }
+  })();
+
+  return backupStatus();
+});
+
 // ── 메일 한 통 보기 ──────────────────────────────────────
 // 본문은 이때만 받는다. 폴링에서 매번 받으면 느리고, 대부분은 열어보지도 않는다.
 let mailWin = null;
@@ -1174,11 +1255,24 @@ ipcMain.handle('app:open-url', (_e, url) => {
 ipcMain.handle('cal:open-help', (_e, which) => {
   const urls = {
     google: 'https://calendar.google.com/calendar/r/settings',
+    // Notion 캘린더 앱(옛 Cron)은 일정을 자기가 갖고 있지 않고 Google·iCloud를 비춰 보여줄 뿐이라
+    // 거기서는 구독 주소가 나오지 않는다. 주소가 나오는 건 Notion 데이터베이스의 캘린더 뷰다.
+    notion: 'https://www.notion.so',
     outlook: 'https://outlook.live.com/calendar/0/options/calendar/SharedCalendars'
   };
   const target = urls[which];
   if (target) shell.openExternal(target);
   return !!target;
+});
+
+/** 내 PC에 있는 .ics 파일을 캘린더로 쓴다 (인터넷·계정 연동 없이) */
+ipcMain.handle('cal:pick-file', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    title: '캘린더 파일 고르기',
+    filters: [{ name: '캘린더', extensions: ['ics', 'ical', 'ifb'] }],
+    properties: ['openFile']
+  });
+  return canceled ? null : filePaths[0];
 });
 ipcMain.handle('cal:update', async (_e, { id, patch }) => {
   store.updateCalendar(id, patch);

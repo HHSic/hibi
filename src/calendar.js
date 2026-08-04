@@ -9,12 +9,38 @@
 
 const https = require('https');
 const http = require('http');
+const fs = require('fs');
 
 const MAX_BYTES = 4 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 15_000;
 
+/**
+ * 내 PC에 있는 .ics 파일인가.
+ * 로컬 캘린더 앱(Outlook·Thunderbird 등)에서 내보낸 파일을 그대로 쓰게 해준다.
+ * 인터넷이 없어도 되고, 계정 연동도 필요 없다.
+ */
+function isLocalPath(s) {
+  const t = String(s || '').trim();
+  return /^[a-z]:[\\/]/i.test(t)      // C:\...
+    || /^\\\\/.test(t)                 // \\서버\공유
+    || /^file:\/\//i.test(t);
+}
+
+function localPath(s) {
+  const t = String(s || '').trim();
+  if (!/^file:\/\//i.test(t)) return t;
+  try { return decodeURIComponent(new URL(t).pathname.replace(/^\/([a-z]:)/i, '$1')); }
+  catch { return t; }
+}
+
 // ── 가져오기 ────────────────────────────────────────────
 function fetchText(url, redirects = 0) {
+  if (isLocalPath(url)) {
+    return fs.promises.readFile(localPath(url), 'utf8').then((text) => {
+      if (text.length > MAX_BYTES) throw new Error('파일이 너무 큽니다');
+      return text;
+    });
+  }
   return new Promise((resolve, reject) => {
     if (redirects > 5) return reject(new Error('리디렉션이 너무 많습니다'));
     let mod;
@@ -58,8 +84,12 @@ function fetchText(url, redirects = 0) {
  */
 function normalizeUrl(input) {
   let s = String(input || '').trim()
-    .replace(/^[<"']+|[>"']+$/g, '')   // <주소>, "주소" 처럼 감싸 붙여넣는 경우
-    .replace(/\s+/g, '');
+    .replace(/^[<"']+|[>"']+$/g, '');  // <주소>, "주소" 처럼 감싸 붙여넣는 경우
+
+  // 내 PC의 파일은 손대지 않는다 — 폴더 이름에 공백이 흔하다
+  if (isLocalPath(s)) return localPath(s);
+
+  s = s.replace(/\s+/g, '');
   if (!s) return '';
 
   s = s.replace(/^webcal:\/\//i, 'https://');
@@ -436,6 +466,6 @@ function nextEvent(occurrences, at = Date.now()) {
 
 module.exports = {
   loadOccurrences, occurrencesIn, parseEvents, currentEvent, nextEvent, fetchText,
-  normalizeUrl, looksLikeCalendar, calendarName, expandRange,
+  normalizeUrl, looksLikeCalendar, calendarName, expandRange, isLocalPath,
   eventLink, newEventLink, dayLink, googleCalendarId
 };

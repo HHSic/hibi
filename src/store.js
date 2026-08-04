@@ -60,7 +60,8 @@ const DEFAULT_SETTINGS = {
   mailEnabled: false,
   mailShow: true,          // 위젯 시트에 메일 보여주기
   mailOnlyUnread: false,   // 안 읽은 것만 볼지, 최근 온 것을 모두 볼지
-  mailCount: 5,            // 위젯에 몇 통까지 보여줄지
+  mailCount: 5,            // 위젯에 몇 통까지 보여줄지 (상한 없음 — 많으면 그만큼 느려질 뿐)
+  mailBackupDir: null,     // 메일 백업 폴더 (없으면 아직 정하지 않음)
   mailPanel: false,        // 위젯 겉면에 메일 펼쳐두기 (클릭 없이 보이게)
   mailViewSize: null,      // 메일 보기 창을 마지막으로 조절한 크기
   // 인터넷에서 받아오는 그림. 켜면 메일이 원래대로 보이지만,
