@@ -26,6 +26,7 @@ const planner = require('./planner');
 const calcache = require('./calcache');
 const mail = require('./mail');
 const mailbackup = require('./mailbackup');
+const send = require('./send');
 const secret = require('./secret');
 
 const ICON = path.join(__dirname, '..', 'assets', 'tray.png');
@@ -1140,6 +1141,197 @@ ipcMain.handle('mail:mark-read', async (_e, { accountId, uids, read = true } = {
   };
 });
 
+// ── 메일 쓰기 ───────────────────────────────────────────
+// 받기(IMAP)와 보내기(SMTP)는 서버가 다르다. 창은 하나만 띄운다 —
+// 쓰던 글이 있는데 새 창이 겹쳐 뜨면 어느 쪽에 쓰고 있었는지 잃는다.
+let composeWin = null;
+let composePayload = null;
+let composeSize = null;
+
+function openCompose(payload) {
+  if (composeWin && !composeWin.isDestroyed()) {
+    // 쓰던 글이 있는데 새 초안으로 갈아끼우면 그 글은 그대로 사라진다.
+    // 화면에 물어보고, 아니라고 하면 쓰던 것을 그대로 둔다.
+    composeWin.focus();
+    composeWin.webContents.send('compose:replace', payload);
+    return true;
+  }
+  composePayload = payload;
+  const saved = store.settings.composeSize;
+  const cap = mailViewMax();
+  composeWin = new BrowserWindow({
+    width: Math.round(clamp((saved && saved.width) || 520 + PAD, 380, cap.width)),
+    height: Math.round(clamp((saved && saved.height) || 520 + PAD, 320, cap.height)),
+    minWidth: 380, minHeight: 320,
+    frame: false,
+    resizable: false,            // 크기 조절은 렌더러의 리사이즈 존이 맡는다
+    alwaysOnTop: false, skipTaskbar: false,
+    title: '메일 쓰기',
+    ...glass.windowOptions(),
+    webPreferences: { preload: PRELOAD }
+  });
+  composeSize = { width: composeWin.getSize()[0], height: composeWin.getSize()[1] };
+  lockToOurPage(composeWin);
+  composeWin.loadFile(page('compose.html'), { query: glassQuery({ radius: '20' }) });
+  composeWin.on('closed', () => { composeWin = null; composePayload = null; });
+  return true;
+}
+
+/** 새 메일 / 답장 / 전달 — 어느 쪽이든 초안을 만들어 창을 연다 */
+ipcMain.handle('compose:open', (_e, { kind = 'new', accountId, source } = {}) => {
+  const accounts = mailAccountsForUse();
+  if (!accounts.length) return { ok: false, message: '쓸 수 있는 계정이 없습니다' };
+
+  // 답장·전달은 반드시 그 메일을 받은 계정으로 써야 한다. 못 찾았다고 첫 계정으로 넘기면
+  // 개인 메일에 회사 주소로 답장이 나간다 — 받는 사람 눈에는 그게 내 정체다.
+  const asked = accounts.find((a) => a.id === accountId);
+  if (!asked && kind !== 'new') {
+    return { ok: false, message: '이 메일을 받은 계정을 쓸 수 없습니다 (꺼져 있거나 지워졌습니다)' };
+  }
+  const acc = asked || accounts[0];
+
+  const draft = kind === 'new' ? { to: '', subject: '', text: '' } : send.draftFrom(kind, source);
+  const ok = openCompose({
+    accountId: acc.id,
+    title: kind === 'reply' ? '답장' : kind === 'forward' ? '전달' : '새 메일',
+    // 새 메일은 어느 계정으로 보낼지 고를 수 있어야 한다 — 안 그러면 «마지막에 온 메일의
+    // 계정»으로 정해져서, 받은 순서가 내 발신 주소를 결정하게 된다
+    pickable: kind === 'new',
+    accounts: accounts.map((a) => {
+      const f = mail.fromOf(a);
+      return { id: a.id, name: a.name || a.user, from: f.address, label: f.name };
+    }),
+    ...draft
+  });
+  return { ok, message: '' };
+});
+
+ipcMain.handle('compose:data', () => composePayload);
+ipcMain.on('compose:close', () => composeWin && !composeWin.isDestroyed() && composeWin.close());
+/** 화면이 «갈아끼워도 좋다»고 하면 그때 초안을 바꾼다 */
+ipcMain.on('compose:accept-replace', (_e, payload) => { composePayload = payload; });
+/** 새 메일에서 보낼 계정을 바꾼다 */
+ipcMain.on('compose:set-account', (_e, id) => {
+  if (composePayload && mailAccountsForUse().some((a) => a.id === id)) composePayload.accountId = id;
+});
+
+// 화면이 «이 파일을 붙여라»라고 말한 것을 그대로 믿으면, 렌더러가 뚫렸을 때 이 PC의
+// 아무 파일이나 메일로 실어 보낼 수 있다. 대화상자로 사용자가 직접 고른 것만 기억해 둔다.
+const attachOk = new Set();
+
+ipcMain.handle('compose:attach', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(composeWin || undefined, {
+    title: '첨부할 파일', properties: ['openFile', 'multiSelections']
+  });
+  if (canceled) return [];
+  return filePaths.map((p) => {
+    let size = 0;
+    try { size = fs.statSync(p).size; } catch { /* 크기를 못 읽어도 붙일 수는 있다 */ }
+    attachOk.add(p);
+    return { path: p, filename: path.basename(p), size };
+  });
+});
+
+const ATTACH_MAX = 25 * 1024 * 1024;   // 대부분의 메일 서버가 이쯤에서 거절한다
+
+let sendingNow = false;
+
+ipcMain.handle('compose:send', async (_e, msg) => {
+  // 화면 쪽 잠금이 풀린 틈에 두 번 들어와도 두 번 나가지 않게 한다
+  if (sendingNow) return { ok: false, message: '이미 보내는 중입니다' };
+  const acc = mailAccountsForUse().find((a) => a.id === (composePayload && composePayload.accountId));
+  if (!acc) return { ok: false, message: '계정을 찾을 수 없습니다' };
+
+  const picked = (msg && msg.attachments) || [];
+  const sneaky = picked.find((a) => !attachOk.has(a && a.path));
+  if (sneaky) return { ok: false, message: '첨부는 «파일 첨부»로 고른 것만 보낼 수 있습니다' };
+  let bytes = 0;
+  for (const a of picked) {
+    try { bytes += fs.statSync(a.path).size; } catch { /* 없으면 보낼 때 걸린다 */ }
+  }
+  if (bytes > ATTACH_MAX) {
+    return { ok: false, message: `첨부가 너무 큽니다 (${Math.round(bytes / 1048576)}MB · 최대 25MB)` };
+  }
+
+  sendingNow = true;
+  let r;
+  try {
+    r = await send.sendMail(acc, msg || {});
+  } finally {
+    sendingNow = false;
+  }
+  evlog.log('메일', r.ok
+    ? `보냄 · ${r.accepted}명${r.rejected && r.rejected.length ? ` · 거절 ${r.rejected.join(',')}` : ''}`
+      + `${r.sentBox ? ` · 보낸편지함(${r.sentBox})에 저장` : ''}`
+    : `보내기 실패 · ${r.message}`);
+  if (r.ok) {
+    // 보낸 주소는 다음부터 자동완성된다 — 주소록을 손으로 채우게 하면 아무도 안 채운다
+    store.rememberContacts([
+      ...send.addresses(msg.to), ...send.addresses(msg.cc), ...send.addresses(msg.bcc)
+    ].map((a) => ({ address: a.replace(/^.*<|>.*$/g, '').trim(), name: '' })));
+    refreshMail();
+  }
+  return r;
+});
+
+/** 주소록 — 쓰기 창의 자동완성이 쓴다 */
+ipcMain.handle('mail:contacts', () => store.contacts);
+
+/** 본문에 넣을 그림 — 대화상자로 고른 것만 읽어 화면에 돌려준다 */
+const IMAGE_MAX = 5 * 1024 * 1024;
+ipcMain.handle('compose:pick-image', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(composeWin || undefined, {
+    title: '본문에 넣을 그림',
+    filters: [{ name: '그림', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'] }],
+    properties: ['openFile', 'multiSelections']
+  });
+  if (canceled) return [];
+  const out = [];
+  for (const p of filePaths) {
+    try {
+      const buf = fs.readFileSync(p);
+      if (buf.length > IMAGE_MAX) continue;   // 본문 그림은 크면 메일이 통째로 무거워진다
+      const ext = path.extname(p).slice(1).toLowerCase();
+      const type = ext === 'jpg' ? 'image/jpeg' : `image/${ext || 'png'}`;
+      out.push({
+        filename: path.basename(p),
+        contentType: type,
+        dataUrl: `data:${type};base64,${buf.toString('base64')}`
+      });
+    } catch { /* 못 읽는 파일은 건너뛴다 */ }
+  }
+  return out;
+});
+
+ipcMain.handle('compose:bounds', () => {
+  if (!composeWin || composeWin.isDestroyed()) return { x: 0, y: 0, width: 520, height: 520 };
+  return composeWin.getBounds();
+});
+ipcMain.on('compose:move', (_e, { x, y }) => {
+  if (!composeWin || composeWin.isDestroyed() || !composeSize) return;
+  // setPosition은 배율이 100%가 아닐 때 호출마다 창을 부풀린다 — 크기를 못박아 옮긴다
+  composeWin.setBounds({ x: Math.round(x), y: Math.round(y), ...composeSize });
+});
+ipcMain.on('compose:set-bounds', (_e, { x, y, width, height, dir }) => {
+  if (!composeWin || composeWin.isDestroyed()) return;
+  const max = mailViewMax();
+  const w = Math.round(clamp(width, 380, max.width));
+  const h = Math.round(clamp(height, 320, max.height));
+  const nx = Math.round(String(dir).includes('w') ? x + (width - w) : x);
+  const ny = Math.round(String(dir).includes('n') ? y + (height - h) : y);
+  composeSize = { width: w, height: h };
+  composeWin.setBounds({ x: nx, y: ny, width: w, height: h });
+  store.setSettings({ composeSize });
+});
+
+/** 보내기 설정이 맞는지 — 메일은 보내지 않고 로그인만 해 본다 */
+ipcMain.handle('mail:smtp-test', async (_e, acc) => {
+  const stored = store.mailAccounts.find((a) => a.id === (acc && acc.id));
+  const pass = (acc && acc.pass) || secret.open(stored && stored.sealed);
+  if (!pass) return { ok: false, message: '비밀번호를 입력하세요' };
+  return send.verify({ ...stored, ...acc, pass });
+});
+
 // ── 메일 백업 ───────────────────────────────────────────
 // 서버에 있는 메일을 .eml 파일로 내 PC에 내려둔다. 회사를 옮기거나 계정이 닫히면
 // 웹메일에 있던 것은 같이 사라진다 — 파일로 남겨두면 그때도 열린다.
@@ -1389,6 +1581,25 @@ let mailViewPayload = null;
 let mailViewFiles = [];      // 원본 버퍼 — 저장할 때만 쓰고 화면에는 보내지 않는다
 let mailViewSize = null;     // 메일 보기 창의 기준 크기 (위젯과 같은 이유로 되읽지 않는다)
 
+/**
+ * 이 창은 우리 페이지에서 절대 벗어나지 않는다.
+ * preload를 물린 창이 남의 사이트로 이동하면 그 사이트가 우리 IPC를 그대로 쓴다 —
+ * 메일 보내기와 파일 첨부가 붙은 지금은 그게 곧 계정 탈취다.
+ */
+function lockToOurPage(win) {
+  const ours = (url) => url.startsWith('file://');
+  win.webContents.on('will-navigate', (e, url) => {
+    if (ours(url)) return;
+    e.preventDefault();
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+  });
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  win.webContents.on('will-attach-webview', (e) => e.preventDefault());
+}
+
 let mailViewSeq = 0;   // 늦게 도착한 예전 요청이 지금 보고 있는 메일을 덮어쓰지 못하게
 
 function openMailView(msg) {
@@ -1443,6 +1654,10 @@ function openMailView(msg) {
     webPreferences: { preload: PRELOAD }
   });
   mailViewSize = { width: mailWin.getSize()[0], height: mailWin.getSize()[1] };
+  // 메일 본문은 남이 쓴 것이다. 그 안의 링크로 이 창이 이동해 버리면 그 사이트가
+  // preload 다리(메일 보내기·파일 첨부)를 그대로 쥔다. 창은 우리 페이지에 못박고
+  // 바깥 주소는 기본 브라우저로 보낸다.
+  lockToOurPage(mailWin);
   mailWin.loadFile(page('mailview.html'), {
     query: glassQuery({ radius: '20',
       remote: store.settings.mailRemoteImages !== false ? '1' : '' })

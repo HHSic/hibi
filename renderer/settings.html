@@ -436,11 +436,22 @@
         <span class="hint">비밀번호는 이 PC에서만 풀 수 있게 암호화해 저장합니다.</span>
       </div>
       <div class="col">
+        <span class="lbl">4. 보내는 서버 · 포트 <span style="color:var(--tertiary)">(메일 쓰기용)</span></span>
+        <div class="helprow">
+          <input type="text" id="mail-smtp-host" class="cust-name" placeholder="smtp.example.com" style="flex:1">
+          <input type="text" id="mail-smtp-port" class="cust-name" placeholder="465" style="width:64px">
+        </div>
+        <input type="text" id="mail-from" class="cust-name" placeholder="보내는 사람 주소 (비우면 아이디를 씁니다)">
+        <input type="text" id="mail-from-name" class="cust-name" placeholder="보내는 사람 이름 (선택)">
+        <span class="hint">비워두면 받는 서버에서 짐작합니다 (imap.… → smtp.…). 465는 SSL, 587은 STARTTLS입니다.</span>
+      </div>
+      <div class="col">
         <div class="msg" id="mail-msg"></div>
         <div class="upline">
           <span></span>
           <span class="helprow">
-            <button class="mini ghost" id="btn-mail-test">연결 테스트</button>
+            <button class="mini ghost" id="btn-mail-test">받기 테스트</button>
+            <button class="mini ghost" id="btn-smtp-test">보내기 테스트</button>
             <button class="mini" id="btn-mail-add">추가</button>
           </span>
         </div>
@@ -1290,6 +1301,8 @@
         mailPreset = p;
         if (p.host) $('mail-host').value = p.host;
         $('mail-port').value = String(p.port || 993);
+        if (p.smtpHost) $('mail-smtp-host').value = p.smtpHost;
+        $('mail-smtp-port').value = String(p.smtpPort || 465);
         $('mail-note').textContent = p.note || '';
         renderMailPresets();
       };
@@ -1408,6 +1421,8 @@
     if (mailPreset) {
       if (mailPreset.host) $('mail-host').value = mailPreset.host;
       $('mail-port').value = String(mailPreset.port || 993);
+      if (mailPreset.smtpHost) $('mail-smtp-host').value = mailPreset.smtpHost;
+      $('mail-smtp-port').value = String(mailPreset.smtpPort || 465);
       $('mail-note').textContent = mailPreset.note || '';
     }
     renderMailPresets();
@@ -1429,7 +1444,12 @@
       host: $('mail-host').value.trim(),
       port: Number($('mail-port').value) || 993,
       user: $('mail-user').value.trim(),
-      pass: $('mail-pass').value
+      pass: $('mail-pass').value,
+      // 보내기 쪽은 비워둬도 된다 — 받는 서버에서 짐작한다
+      smtpHost: $('mail-smtp-host').value.trim(),
+      smtpPort: Number($('mail-smtp-port').value) || 0,
+      fromAddress: $('mail-from').value.trim(),
+      fromName: $('mail-from-name').value.trim()
     };
   }
 
@@ -1453,6 +1473,20 @@
       $('btn-mail-add').classList.toggle('urge', r.ok);
     } finally {
       $('btn-mail-test').disabled = false;
+    }
+  };
+
+  // 보내기는 받기와 서버가 달라 따로 확인해야 한다. 메일을 보내지는 않고 로그인만 해 본다.
+  $('btn-smtp-test').onclick = async () => {
+    const acc = mailForm();
+    if (!mailFormOk(acc)) return;
+    mailMsg('wait', '보내기 서버 확인 중…');
+    $('btn-smtp-test').disabled = true;
+    try {
+      const r = await window.nunsseom.mailSmtpTest(acc);
+      mailMsg(r.ok ? 'good' : 'bad', r.message);
+    } finally {
+      $('btn-smtp-test').disabled = false;
     }
   };
 

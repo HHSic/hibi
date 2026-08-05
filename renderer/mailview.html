@@ -159,6 +159,8 @@
       <div class="subject" id="subject">불러오는 중…</div>
       <div class="meta" id="meta"></div>
     </div>
+    <button class="seen" id="reply" style="display:none" title="답장 쓰기">답장</button>
+    <button class="seen" id="forward" style="display:none" title="전달하기">전달</button>
     <button class="seen" id="seen" style="display:none"></button>
     <button class="close" id="close" title="닫기"></button>
   </div>
@@ -334,6 +336,19 @@
     };
   }
 
+  /** 답장·전달 — 쓰기 창에 원문을 넘겨 초안을 만들게 한다 */
+  function setupCompose(m) {
+    const src = {
+      subject: m.subject, from: m.from, fromAddress: m.fromAddress,
+      replyTo: m.replyTo, messageId: m.messageId, at: m.at, text: m.text
+    };
+    for (const [id, kind] of [['reply', 'reply'], ['forward', 'forward']]) {
+      const b = $(id);
+      b.style.display = '';
+      b.onclick = () => window.nunsseom.composeOpen({ kind, accountId: m.accountId, source: src });
+    }
+  }
+
   window.nunsseom.mailViewData().then((m) => {
     if (!m || m.error) {
       $('subject').textContent = '열 수 없습니다';
@@ -343,6 +358,7 @@
     $('subject').textContent = m.subject;
     $('meta').textContent = [m.from, fmt(m.at)].filter(Boolean).join(' · ');
     setupSeen(m);
+    setupCompose(m);
     renderAttachments(m.attachments || []);
     if (m.blockedRemote) {
       $('blocked').style.display = 'block';

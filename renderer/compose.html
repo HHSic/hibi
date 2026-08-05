@@ -1,0 +1,606 @@
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src file: 'unsafe-inline'; style-src file: 'unsafe-inline'; font-src file:; img-src data:">
+<title>메일 쓰기</title>
+<style>
+  :root {
+    --scrim-a: 0.86;
+    --scrim: rgba(28, 28, 32, var(--scrim-a));
+    --label: rgba(255, 255, 255, 0.96);
+    --secondary: rgba(235, 235, 245, 0.62);
+    --tertiary: rgba(235, 235, 245, 0.34);
+    --separator: rgba(255, 255, 255, 0.12);
+    --fill: rgba(255, 255, 255, 0.07);
+    --fill-hi: rgba(255, 255, 255, 0.16);
+    --accent: #4fc3a8;
+    --danger: #ff8b8b;
+    --r: 20px;
+  }
+  :root[data-theme="light"] {
+    --scrim: rgba(252, 252, 254, var(--scrim-a));
+    --label: rgba(0, 0, 0, 0.90);
+    --secondary: rgba(60, 60, 67, 0.62);
+    --tertiary: rgba(60, 60, 67, 0.32);
+    --separator: rgba(0, 0, 0, 0.10);
+    --fill: rgba(0, 0, 0, 0.05);
+    --fill-hi: rgba(0, 0, 0, 0.10);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; overflow: hidden; background: transparent; }
+  body {
+    font-family: Pretendard, -apple-system, "Segoe UI", system-ui, sans-serif;
+    color: var(--label); font-size: 13px;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* 리사이즈 존이 창 밖으로 나가지 않도록 위치 기준을 여기서 잡는다 */
+  .stage { position: relative; width: 100%; height: 100%; }
+  .card {
+    position: absolute; inset: var(--inset, 12px);
+    display: flex; flex-direction: column;
+    background: var(--scrim); border-radius: var(--r);
+    box-shadow: 0 18px 46px rgba(0, 0, 0, 0.42), inset 0 0 0 0.5px var(--separator);
+    overflow: hidden;
+  }
+
+  .head {
+    flex: none; padding: 12px 14px 10px;
+    display: flex; align-items: center; gap: 10px; cursor: default;
+  }
+  .head .ttl { flex: 1; font-size: 13.5px; font-weight: 650; }
+  .close {
+    all: unset; cursor: default; width: 22px; height: 22px; border-radius: 6px;
+    display: grid; place-items: center; color: var(--secondary); font-size: 15px;
+  }
+  .close:hover { background: var(--fill); color: var(--label); }
+
+  .fields { flex: none; padding: 0 14px; display: flex; flex-direction: column; }
+  .fld {
+    display: grid; grid-template-columns: 52px 1fr auto; align-items: center; gap: 8px;
+    padding: 7px 0; box-shadow: inset 0 -0.5px 0 var(--separator);
+  }
+  .fld .lb { font-size: 11.5px; color: var(--tertiary); }
+  .fld input {
+    all: unset; font-family: inherit; font-size: 12.5px; color: var(--label);
+    width: 100%; min-width: 0;
+  }
+  .fld input::placeholder { color: var(--tertiary); }
+  .fld .more {
+    all: unset; cursor: default; font-size: 11px; color: var(--secondary);
+    padding: 2px 6px; border-radius: 6px;
+  }
+  .fld .more:hover { background: var(--fill); color: var(--label); }
+  .fld.hide { display: none; }
+  .fld select {
+    all: unset; font-family: inherit; font-size: 11.5px; color: var(--secondary);
+    background: var(--fill); border-radius: 7px; padding: 3px 7px; max-width: 190px;
+  }
+  .fld select option { background: #24242a; color: #fff; }
+
+  /* 서식 막대 — 받는 사람 칸과 본문 사이 */
+  .bar {
+    flex: none; display: flex; align-items: center; gap: 3px; flex-wrap: wrap;
+    padding: 6px 12px; box-shadow: inset 0 -0.5px 0 var(--separator);
+  }
+  .bar select {
+    all: unset; font-family: inherit; font-size: 11px; color: var(--secondary);
+    background: var(--fill); border-radius: 6px; padding: 3px 6px;
+  }
+  .bar select option { background: #24242a; color: #fff; }
+  .bar button {
+    all: unset; cursor: default; min-width: 22px; height: 22px; border-radius: 6px;
+    display: grid; place-items: center; color: var(--secondary);
+    font-size: 12px; padding: 0 4px;
+  }
+  .bar button:hover { background: var(--fill); color: var(--label); }
+  .bar button.on { background: var(--fill-hi); color: var(--label); }
+  .bar .sep { width: 1px; height: 14px; background: var(--separator); margin: 0 3px; }
+  .bar input[type=color] {
+    all: unset; width: 20px; height: 20px; border-radius: 5px; overflow: hidden; cursor: default;
+  }
+
+  /* 본문 — 메일은 흰 종이가 기본이다. 받는 사람 화면에서 보이는 대로 여기서도 보여준다. */
+  .body {
+    flex: 1; min-height: 0; overflow-y: auto;
+    background: #fff; color: #1a1a1a;
+    font-family: "맑은 고딕", "Malgun Gothic", Pretendard, sans-serif;
+    font-size: 14px; line-height: 1.65;
+    padding: 14px 16px; outline: none;
+    word-break: break-word;
+  }
+  .body:empty::before { content: attr(data-ph); color: #9aa0a6; }
+  .body img { max-width: 100%; height: auto; }
+  .body::-webkit-scrollbar { width: 8px; }
+  .body::-webkit-scrollbar-thumb { background: transparent; border-radius: 4px; transition: background 0.15s; }
+  .body:hover::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.22); }
+  .body blockquote {
+    margin: 8px 0; padding-left: 10px; border-left: 2px solid #d7dae0; color: #5f6368;
+  }
+
+  .files { flex: none; padding: 0 14px 6px; display: flex; flex-wrap: wrap; gap: 5px; }
+  .file {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; color: var(--secondary);
+    background: var(--fill); border-radius: 7px; padding: 4px 6px 4px 8px;
+  }
+  .file b { font-weight: 500; color: var(--label); max-width: 160px; overflow: hidden;
+            text-overflow: ellipsis; white-space: nowrap; }
+  .file button {
+    all: unset; cursor: default; color: var(--tertiary); font-size: 13px; line-height: 1;
+    padding: 0 2px; border-radius: 4px;
+  }
+  .file button:hover { color: var(--danger); }
+
+  .foot {
+    flex: none; padding: 10px 14px 12px;
+    display: flex; align-items: center; gap: 8px;
+    box-shadow: inset 0 0.5px 0 var(--separator);
+  }
+  .msg { flex: 1; font-size: 11.5px; color: var(--secondary); min-width: 0; }
+  .msg.bad { color: var(--danger); }
+  .msg.good { color: var(--accent); }
+  button.act {
+    all: unset; cursor: default; font-family: inherit;
+    font-size: 12px; font-weight: 600; padding: 7px 14px; border-radius: 9px;
+    background: var(--accent); color: #06231d;
+  }
+  button.act.ghost { background: var(--fill); color: var(--label); font-weight: 500; }
+  button.act:hover { filter: brightness(1.08); }
+  button.act[disabled] { opacity: 0.45; }
+
+  /* 8방향 크기 조절 — 투명 창에서는 네이티브 리사이즈가 폭주해 직접 만든다 */
+  .rz { position: absolute; z-index: 9; }
+  .rz.n { top: -3px; left: 10px; right: 10px; height: 8px; cursor: ns-resize; }
+  .rz.s { bottom: -3px; left: 10px; right: 10px; height: 8px; cursor: ns-resize; }
+  .rz.w { left: -3px; top: 10px; bottom: 10px; width: 8px; cursor: ew-resize; }
+  .rz.e { right: -3px; top: 10px; bottom: 10px; width: 8px; cursor: ew-resize; }
+  .rz.nw { top: -3px; left: -3px; width: 14px; height: 14px; cursor: nwse-resize; }
+  .rz.ne { top: -3px; right: -3px; width: 14px; height: 14px; cursor: nesw-resize; }
+  .rz.sw { bottom: -3px; left: -3px; width: 14px; height: 14px; cursor: nesw-resize; }
+  .rz.se { bottom: -3px; right: -3px; width: 14px; height: 14px; cursor: nwse-resize; }
+</style>
+
+<div class="stage">
+  <div class="card">
+    <div class="head" id="head">
+      <span class="ttl" id="ttl">새 메일</span>
+      <button class="close" id="close" title="닫기">✕</button>
+    </div>
+
+    <div class="fields">
+      <div class="fld">
+        <span class="lb">보내는</span>
+        <input id="from" readonly>
+        <select id="acc" style="display:none"></select>
+      </div>
+      <div class="fld">
+        <span class="lb">받는</span>
+        <input id="to" list="book" placeholder="주소를 쉼표로 나눠 넣으세요" autofocus>
+        <button class="more" id="btn-cc">참조</button>
+      </div>
+      <div class="fld hide" id="row-cc">
+        <span class="lb">참조</span>
+        <input id="cc" list="book" placeholder="참조">
+        <span></span>
+      </div>
+      <div class="fld hide" id="row-bcc">
+        <span class="lb">숨은참조</span>
+        <input id="bcc" list="book" placeholder="숨은참조">
+        <span></span>
+      </div>
+      <div class="fld">
+        <span class="lb">제목</span>
+        <input id="subject" placeholder="제목">
+        <span></span>
+      </div>
+    </div>
+
+    <div class="bar">
+      <select id="font" title="글꼴">
+        <option value="'맑은 고딕','Malgun Gothic',sans-serif">맑은 고딕</option>
+        <option value="'굴림',Gulim,sans-serif">굴림</option>
+        <option value="'바탕',Batang,serif">바탕</option>
+        <option value="Arial,Helvetica,sans-serif">Arial</option>
+        <option value="'Times New Roman',serif">Times</option>
+        <option value="Consolas,'D2Coding',monospace">고정폭</option>
+      </select>
+      <select id="size" title="글자 크기">
+        <option value="1">10</option><option value="2">12</option>
+        <option value="3" selected>14</option><option value="4">18</option>
+        <option value="5">24</option><option value="6">32</option>
+      </select>
+      <span class="sep"></span>
+      <button data-cmd="bold" title="굵게"><b>가</b></button>
+      <button data-cmd="italic" title="기울임"><i>가</i></button>
+      <button data-cmd="underline" title="밑줄"><u>가</u></button>
+      <button data-cmd="strikeThrough" title="취소선"><s>가</s></button>
+      <input type="color" id="color" value="#1a1a1a" title="글자색">
+      <span class="sep"></span>
+      <button data-cmd="insertUnorderedList" title="글머리 기호">•≡</button>
+      <button data-cmd="insertOrderedList" title="번호 매기기">1≡</button>
+      <button data-cmd="justifyLeft" title="왼쪽 정렬">≡</button>
+      <button data-cmd="justifyCenter" title="가운데 정렬">≣</button>
+      <span class="sep"></span>
+      <button id="btn-image" title="본문에 그림 넣기">그림</button>
+      <button id="btn-link" title="링크 넣기">링크</button>
+      <button data-cmd="removeFormat" title="서식 지우기">서식 지우기</button>
+    </div>
+
+    <div class="body" id="body" contenteditable="true" data-ph="내용을 쓰세요"></div>
+    <div class="files" id="files"></div>
+
+    <div class="foot">
+      <span class="msg" id="msg"></span>
+      <button class="act ghost" id="attach">파일 첨부</button>
+      <button class="act" id="send">보내기</button>
+    </div>
+
+    <datalist id="book"></datalist>
+
+    <div class="rz n" data-dir="n"></div><div class="rz s" data-dir="s"></div>
+    <div class="rz w" data-dir="w"></div><div class="rz e" data-dir="e"></div>
+    <div class="rz nw" data-dir="nw"></div><div class="rz ne" data-dir="ne"></div>
+    <div class="rz sw" data-dir="sw"></div><div class="rz se" data-dir="se"></div>
+  </div>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const params = new URLSearchParams(location.search);
+  document.documentElement.dataset.theme = params.get('theme') === 'light' ? 'light' : 'dark';
+  document.documentElement.style.setProperty('--scrim-a', params.get('scrim') || '0.86');
+  document.documentElement.style.setProperty('--inset', (params.get('inset') || '12') + 'px');
+  document.documentElement.style.setProperty('--r', (params.get('radius') || '20') + 'px');
+
+  let attachments = [];          // { path, filename, size }
+  let context = null;            // 답장이면 원문 정보
+  let sending = false;
+
+  /** 받은 메일의 글을 인용문으로 넣을 때 — 남이 쓴 것이므로 태그로 살아나면 안 된다 */
+  function say(kind, text) {
+    $('msg').className = 'msg' + (kind ? ' ' + kind : '');
+    $('msg').textContent = text || '';
+  }
+
+  function renderFiles() {
+    const host = $('files');
+    host.textContent = '';
+    for (const [i, a] of attachments.entries()) {
+      const chip = document.createElement('span');
+      chip.className = 'file';
+      const nm = document.createElement('b');
+      nm.textContent = a.filename;
+      const sz = document.createElement('span');
+      sz.textContent = a.size > 1048576
+        ? `${(a.size / 1048576).toFixed(1)}MB`
+        : `${Math.max(1, Math.round(a.size / 1024))}KB`;
+      const del = document.createElement('button');
+      del.textContent = '✕';
+      del.title = '빼기';
+      del.onclick = () => { attachments.splice(i, 1); renderFiles(); };
+      chip.append(nm, sz, del);
+      host.append(chip);
+    }
+  }
+
+  // ── 서식 막대 ───────────────────────────────────────
+  // contenteditable + execCommand는 낡은 API지만 Chromium에서 그대로 돌고,
+  // 여기서 만들 것은 «메일 본문 HTML» 하나뿐이라 편집기를 새로 짜는 값을 하지 않는다.
+  const body = $('body');
+  function keepFocus(e) { e.preventDefault(); }     // 막대를 눌러도 커서를 본문에 둔다
+  function run(cmd, value) {
+    body.focus();
+    document.execCommand(cmd, false, value);
+    paintBar();
+  }
+
+  function paintBar() {
+    for (const b of document.querySelectorAll('.bar button[data-cmd]')) {
+      let on = false;
+      try { on = document.queryCommandState(b.dataset.cmd); } catch { on = false; }
+      b.classList.toggle('on', !!on);
+    }
+  }
+
+  for (const b of document.querySelectorAll('.bar button[data-cmd]')) {
+    b.addEventListener('pointerdown', keepFocus);
+    b.onclick = () => run(b.dataset.cmd);
+  }
+  for (const el of [$('font'), $('size'), $('color'), $('btn-image'), $('btn-link')]) {
+    el.addEventListener('pointerdown', keepFocus);
+  }
+  $('font').onchange = () => run('fontName', $('font').value);
+  $('size').onchange = () => run('fontSize', $('size').value);
+  $('color').oninput = () => run('foreColor', $('color').value);
+  body.addEventListener('keyup', paintBar);
+  body.addEventListener('mouseup', paintBar);
+
+  $('btn-link').onclick = () => {
+    const url = prompt('링크 주소', 'https://');
+    if (!url) return;
+    if (!/^https?:\/\//i.test(url)) { say('bad', 'http/https 주소만 넣을 수 있습니다'); return; }
+    run('createLink', url);
+  };
+
+  $('btn-image').onclick = async () => {
+    const picked = await window.nunsseom.composePickImage();
+    if (!picked || !picked.length) return;
+    body.focus();
+    for (const im of picked) {
+      // 화면에서는 data:로 보이고, 보낼 때 cid 첨부로 바뀐다
+      document.execCommand('insertHTML', false,
+        `<img src="${im.dataUrl}" data-name="${im.filename.replace(/"/g, '&quot;')}">`);
+    }
+  };
+
+  // 붙여넣기는 글자만 받는다 — 다른 앱에서 통째로 복사하면 남의 스타일과
+  // 바깥 그림 주소까지 딸려 들어와 메일이 깨진다.
+  body.addEventListener('paste', (e) => {
+    e.preventDefault();
+    const text = (e.clipboardData || window.clipboardData).getData('text/plain');
+    document.execCommand('insertText', false, text);
+  });
+
+  /** 본문 HTML에서 data: 그림을 떼어내 cid 첨부로 바꾼다 */
+  function bodyForSend() {
+    // cloneNode로 만들면 복제된 <img>가 cid: 주소를 진짜로 불러오려 들어 콘솔이 더러워진다.
+    // DOMParser로 뜬 문서는 그림을 부르지 않는다 — 고쳐 쓰기에만 쓴다.
+    const doc = new DOMParser().parseFromString(
+      `<body>${body.innerHTML}</body>`, 'text/html');
+    const clone = doc.body;
+    const inline = [];
+    let n = 0;
+    for (const img of clone.querySelectorAll('img')) {
+      const src = img.getAttribute('src') || '';
+      const m = src.match(/^data:([^;]+);base64,(.+)$/);
+      if (!m) continue;
+      n += 1;
+      const cid = `img${n}@hibi`;
+      inline.push({
+        cid, contentType: m[1], base64: m[2],
+        filename: img.getAttribute('data-name') || `그림${n}.${(m[1].split('/')[1] || 'png')}`
+      });
+      img.setAttribute('src', `cid:${cid}`);
+      img.removeAttribute('data-name');
+    }
+    return {
+      html: `<div style="font-family:'맑은 고딕','Malgun Gothic',sans-serif;font-size:14px;`
+        + `line-height:1.65;color:#1a1a1a">${clone.innerHTML}</div>`,
+      text: (body.innerText || '').trim(),
+      inline
+    };
+  }
+
+  // ── 주소록 ──────────────────────────────────────────
+  // 보낸 적 있는 주소가 자동으로 쌓인다. 손으로 채우게 하면 아무도 안 채운다.
+  window.nunsseom.mailContacts().then((list) => {
+    const dl = $('book');
+    dl.textContent = '';
+    for (const c of list || []) {
+      const o = document.createElement('option');
+      o.value = c.address;
+      if (c.name) o.label = c.name;
+      dl.append(o);
+    }
+  });
+
+  $('btn-cc').onclick = () => {
+    // 참조·숨은참조는 평소엔 자리만 차지한다 — 누를 때 같이 펼친다
+    $('row-cc').classList.remove('hide');
+    $('row-bcc').classList.remove('hide');
+    $('btn-cc').style.display = 'none';
+    $('cc').focus();
+  };
+
+  $('attach').onclick = async () => {
+    const picked = await window.nunsseom.composeAttach();
+    for (const f of picked || []) {
+      if (!attachments.some((a) => a.path === f.path)) attachments.push(f);
+    }
+    renderFiles();
+  };
+
+  /** 쓰던 글이 있나 — 있으면 함부로 버리지 않는다 */
+  function dirty() {
+    const base = context || {};
+    return $('to').value !== (base.to || '')
+      || $('cc').value !== '' || $('bcc').value !== ''
+      || $('subject').value !== (base.subject || '')
+      || body.innerHTML.trim() !== (base.bodyHtml || '')
+      || attachments.length > 0;
+  }
+
+  function tryClose() {
+    // 보내는 중에 닫으면 결과를 아무도 못 본다. 이미 나갔는지도 모른 채 또 쓰게 된다.
+    if (sending) { say('bad', '보내는 중입니다 — 끝나면 닫아주세요'); return; }
+    if (dirty() && !confirm('쓰던 내용을 버리고 닫을까요?')) return;
+    window.nunsseom.composeClose();
+  }
+
+  $('close').onclick = tryClose;
+  document.addEventListener('keydown', (e) => {
+    // 한글 입력 중 Esc는 후보창을 닫는 키다 — 그걸 창 닫기로 받으면 글이 날아간다
+    if (e.key === 'Escape' && !e.isComposing) tryClose();
+    // 긴 글을 쓰다 보면 마우스로 버튼을 찾아가는 게 번거롭다
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !e.repeat) send();
+  });
+
+  async function send() {
+    if (sending) return;
+    sending = true;
+    $('send').disabled = true;
+    say('', '보내는 중…');
+    let ok = false;
+    try {
+      const r = await window.nunsseom.composeSend({
+        to: $('to').value, cc: $('cc').value, bcc: $('bcc').value,
+        subject: $('subject').value,
+        ...bodyForSend(),
+        attachments,
+        inReplyTo: context && context.inReplyTo,
+        references: context && context.references
+      });
+      ok = !!(r && r.ok);
+      if (ok) {
+        // 일부만 갔거나 보낸편지함에 못 넣었으면 그건 읽고 넘어가야 한다 —
+        // 1초 뒤 창이 사라지면 아무도 못 본다.
+        if (r.warn) {
+          say('bad', `${r.message} · ${r.warn}`);
+          $('send').textContent = '닫기';
+          $('send').disabled = false;
+          $('send').onclick = () => window.nunsseom.composeClose();
+        } else {
+          say('good', r.message || '보냈습니다');
+          setTimeout(() => window.nunsseom.composeClose(), 1200);
+        }
+      } else {
+        say('bad', (r && r.message) || '보내지 못했습니다');
+      }
+    } finally {
+      sending = false;
+      // 보낸 뒤에는 버튼을 다시 살리지 않는다 — 창이 닫히기 전 그 짧은 틈에
+      // 한 번 더 눌리면 같은 메일이 두 번 나간다.
+      if (!ok) $('send').disabled = false;
+    }
+  }
+  $('send').onclick = send;
+
+  /** 다른 곳에서 «쓰기»를 또 눌렀을 때 — 쓰던 글이 있으면 물어본다 */
+  window.nunsseom.onComposeReplace((next) => {
+    if (sending) return;
+    if (dirty() && !confirm('쓰던 내용을 버리고 새로 쓸까요?')) return;
+    window.nunsseom.composeAcceptReplace(next);
+    fill(next);
+  });
+
+  // ── 제목줄을 끌어 창 옮기기 ─────────────────────────
+  // -webkit-app-region: drag 는 그 안의 버튼 클릭까지 먹어버려 직접 만든다.
+  (() => {
+    const head = $('head');
+    let from = null;
+    head.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('button')) return;
+      from = { sx: e.screenX, sy: e.screenY };
+      window.nunsseom.composeBounds().then((b) => { if (from) { from.x = b.x; from.y = b.y; } });
+      head.setPointerCapture(e.pointerId);
+    });
+    head.addEventListener('pointermove', (e) => {
+      if (!from || from.x === undefined) return;
+      window.nunsseom.composeMove({
+        x: from.x + (e.screenX - from.sx),
+        y: from.y + (e.screenY - from.sy)
+      });
+    });
+    const done = (e) => {
+      if (!from) return;
+      from = null;
+      try { head.releasePointerCapture(e.pointerId); } catch { /* 이미 놓았다 */ }
+    };
+    head.addEventListener('pointerup', done);
+    head.addEventListener('pointercancel', done);
+  })();
+
+  // ── 크기 조절 ───────────────────────────────────────
+  for (const zone of document.querySelectorAll('.rz')) {
+    zone.addEventListener('pointerdown', async (e) => {
+      e.preventDefault();
+      const dir = zone.dataset.dir;
+      const start = await window.nunsseom.composeBounds();
+      const sx = e.screenX;
+      const sy = e.screenY;
+      const move = (ev) => {
+        const dx = ev.screenX - sx;
+        const dy = ev.screenY - sy;
+        let { x, y, width, height } = start;
+        if (dir.includes('e')) width = start.width + dx;
+        if (dir.includes('s')) height = start.height + dy;
+        if (dir.includes('w')) { width = start.width - dx; x = start.x + dx; }
+        if (dir.includes('n')) { height = start.height - dy; y = start.y + dy; }
+        window.nunsseom.composeSetBounds({ x, y, width, height, dir });
+      };
+      const up = () => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+    });
+  }
+
+  /** 보내는 사람 칸 — 계정이 여럿이고 새 메일이면 고를 수 있게 한다 */
+  function setupFrom(d) {
+    const list = d.accounts || [];
+    const cur = list.find((a) => a.id === d.accountId) || list[0] || {};
+    const show = (a) => (a.label ? `${a.label} <${a.from}>` : a.from) || '(주소 없음)';
+    $('from').value = show(cur);
+    if (!cur.from) {
+      say('bad', '보내는 사람 주소가 없습니다 — 설정 → 메일에서 넣어주세요');
+      $('send').disabled = true;
+    }
+    const sel = $('acc');
+    sel.textContent = '';
+    // 답장·전달은 받은 계정으로 고정이다. 새 메일만 고를 수 있다.
+    if (!d.pickable || list.length < 2) { sel.style.display = 'none'; return; }
+    sel.style.display = '';
+    for (const a of list) {
+      const o = document.createElement('option');
+      o.value = a.id;
+      o.textContent = a.name;
+      if (a.id === cur.id) o.selected = true;
+      sel.append(o);
+    }
+    sel.onchange = () => {
+      const a = list.find((x) => x.id === sel.value);
+      if (!a) return;
+      $('from').value = show(a);
+      $('send').disabled = !a.from;
+      window.nunsseom.composeSetAccount(a.id);
+    };
+  }
+
+  function fill(d) {
+    if (!d) { say('bad', '계정을 찾을 수 없습니다'); $('send').disabled = true; return; }
+    $('ttl').textContent = d.title || '새 메일';
+    setupFrom(d);
+    $('to').value = d.to || '';
+    // 참조·숨은참조는 반드시 비운다 — 남겨두면 앞 초안의 수신자가 접힌 채 따라간다
+    $('cc').value = '';
+    $('bcc').value = '';
+    $('row-cc').classList.add('hide');
+    $('row-bcc').classList.add('hide');
+    $('btn-cc').style.display = '';
+    $('subject').value = d.subject || '';
+    // 답장 인용문은 서식 있는 본문에 인용 블록으로 넣는다
+    // 인용문은 남이 쓴 글이다. 문자열로 이어 붙이지 않고 글자 노드로 넣어
+    // 그 안의 태그가 살아날 여지를 아예 없앤다.
+    body.textContent = '';
+    if (d.text) {
+      body.append(document.createElement('div'));   // 커서가 설 빈 줄
+      const q = document.createElement('blockquote');
+      String(d.text).split('\n').forEach((line, i) => {
+        if (i) q.append(document.createElement('br'));
+        q.append(document.createTextNode(line));
+      });
+      body.append(q);
+    }
+    d.bodyHtml = body.innerHTML.trim();
+    attachments = [];
+    renderFiles();
+    say('', '');
+    context = d;
+    // 답장이면 본문 맨 위에서 쓰기 시작한다 (인용문은 아래에 있다)
+    if (d.to) {
+      body.focus();
+      const sel = window.getSelection();
+      const r = document.createRange();
+      r.setStart(body, 0);
+      r.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(r);
+    } else {
+      $('to').focus();
+    }
+    paintBar();
+  }
+
+  window.nunsseom.composeData().then(fill);
+</script>

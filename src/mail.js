@@ -17,25 +17,57 @@ const PREVIEW_HARD_MAX = 500;
 
 /** 제공자별 서버 — 사용자가 서버 주소를 몰라도 되게 */
 const PRESETS = [
-  { id: 'ecount', name: '이카운트', host: '', port: 993, help: '',
+  { id: 'ecount', name: '이카운트', host: '', port: 993,
+    smtpHost: '', smtpPort: 465, help: '',
     note: '서버 주소는 이카운트 웹메일 → 환경설정 → IMAP 동기화에서 확인하세요' },
   { id: 'naver', name: '네이버', host: 'imap.naver.com', port: 993,
+    smtpHost: 'smtp.naver.com', smtpPort: 587,
     help: 'https://nid.naver.com/user2/help/myInfo',
     note: '2단계 인증을 켜고 애플리케이션 비밀번호를 발급해 넣으세요' },
   { id: 'gmail', name: 'Gmail', host: 'imap.gmail.com', port: 993,
+    smtpHost: 'smtp.gmail.com', smtpPort: 465,
     help: 'https://myaccount.google.com/apppasswords',
     note: '2단계 인증을 켠 뒤 앱 비밀번호를 발급해 넣으세요' },
   { id: 'daum', name: '다음', host: 'imap.daum.net', port: 993,
+    smtpHost: 'smtp.daum.net', smtpPort: 465,
     help: 'https://cs.daum.net/faq/43/9234.html',
     note: '메일 설정에서 IMAP 사용을 먼저 켜세요' },
   { id: 'kakao', name: '카카오', host: 'imap.kakao.com', port: 993,
+    smtpHost: 'smtp.kakao.com', smtpPort: 465,
     help: 'https://cs.kakao.com/helps_html/1073195244',
     note: '카카오메일 설정에서 IMAP을 켜고 앱 비밀번호를 쓰세요' },
   { id: 'icloud', name: 'iCloud', host: 'imap.mail.me.com', port: 993,
+    smtpHost: 'smtp.mail.me.com', smtpPort: 587,
     help: 'https://account.apple.com/account/manage',
     note: '앱 암호를 발급해 넣으세요' },
-  { id: 'custom', name: '직접 입력', host: '', port: 993, help: '', note: '' }
+  { id: 'custom', name: '직접 입력', host: '', port: 993,
+    smtpHost: '', smtpPort: 465, help: '', note: '' }
 ];
+
+/**
+ * 보내는 서버가 비어 있으면 받는 서버에서 유추한다.
+ * imap.회사.com → smtp.회사.com 이 업계 관행이고, 아니면 같은 호스트를 쓴다.
+ * 유추는 어디까지나 첫 시도일 뿐이라 설정에서 직접 고칠 수 있어야 한다.
+ */
+function smtpOf(account) {
+  const host = String(account.smtpHost || '').trim()
+    || String(account.host || '').replace(/^imaps?\./i, 'smtp.');
+  const port = Number(account.smtpPort) || 465;
+  return {
+    host,
+    port,
+    // 465는 처음부터 TLS, 587·25는 접속한 뒤 STARTTLS로 올린다
+    secure: port === 465
+  };
+}
+
+/** 보내는 사람 주소 — 따로 적지 않았으면 로그인 아이디가 주소인 경우가 대부분이다 */
+function fromOf(account) {
+  const addr = String(account.fromAddress || '').trim()
+    || (/@/.test(account.user || '') ? account.user : '');
+  const name = String(account.fromName || '').trim();
+  return { address: addr, name };
+}
 
 function preset(id) {
   return PRESETS.find((p) => p.id === id) || PRESETS[PRESETS.length - 1];
@@ -192,6 +224,12 @@ async function fetchBody(account, uid, { markSeen = true, maxChars = 8000, allow
       uid,
       subject: parsed.subject || (msg.envelope && msg.envelope.subject) || '(제목 없음)',
       from: (parsed.from && parsed.from.text) || senderOf(msg.envelope),
+      // 답장을 쓰려면 «누구에게»와 «어느 글에 이어»가 필요하다
+      fromAddress: (parsed.from && parsed.from.value && parsed.from.value[0]
+        && parsed.from.value[0].address) || '',
+      replyTo: (parsed.replyTo && parsed.replyTo.value && parsed.replyTo.value[0]
+        && parsed.replyTo.value[0].address) || '',
+      messageId: parsed.messageId || '',
       at: (parsed.date || msg.internalDate || new Date()).getTime(),
       // 백업 파일 이름은 서버가 받은 시각으로 짓는다. 보낸 사람이 적은 날짜(Date: 헤더)를
       // 쓰면 전체 백업이 지은 이름과 어긋나 같은 메일이 두 번 저장된다.
@@ -261,13 +299,16 @@ function buildViewHtml(parsed, { allowRemote = false } = {}) {
     .replace(/<(link|meta|base)\b[^>]*>/gi, '')
     .replace(/@import[^;]+;/gi, '');
 
-  // 이벤트 속성과 javascript: 링크
+  // 이벤트 속성과 javascript: 링크.
+  // 앞이 공백이라고만 보면 안 된다 — 따옴표 뒤에는 «/»도 속성 구분자로 통해서
+  // <img src="x"/onerror="..."> 가 그대로 살아남는다. 태그 시작이 아닌 모든 자리를 본다.
   html = html
-    .replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, '')
-    .replace(/\son[a-z]+\s*=\s*'[^']*'/gi, '')
-    .replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, '')
-    .replace(/(href|src)\s*=\s*"javascript:[^"]*"/gi, '$1="#"')
-    .replace(/(href|src)\s*=\s*'javascript:[^']*'/gi, "$1='#'");
+    .replace(/[\s/]on[a-z]+\s*=\s*"[^"]*"/gi, ' ')
+    .replace(/[\s/]on[a-z]+\s*=\s*'[^']*'/gi, ' ')
+    .replace(/[\s/]on[a-z]+\s*=\s*[^\s>]+/gi, ' ')
+    .replace(/(href|src|xlink:href)\s*=\s*"\s*javascript:[^"]*"/gi, '$1="#"')
+    .replace(/(href|src|xlink:href)\s*=\s*'\s*javascript:[^']*'/gi, "$1='#'")
+    .replace(/(href|src|xlink:href)\s*=\s*javascript:[^\s>]*/gi, '$1="#"');
 
   // 메일에 담겨 온 그림을 본문 제자리에 넣는다.
   // 같은 그림을 가리키는 이름이 cid / contentId / 파일명으로 제각각이라 전부 받아둔다 —
@@ -291,12 +332,20 @@ function buildViewHtml(parsed, { allowRemote = false } = {}) {
 
   // 인터넷에서 받아오는 그림 — 허용하면 그대로 두고, 아니면 지운다.
   // (지우는 쪽이 안전하지만, 회사 메일은 정상적인 그림도 원격인 경우가 많다)
+  // <img>만 막으면 <image>·<input type=image>·CSS url()로 그대로 새어 나간다.
+  // «열어본 사실»이 새지 않게 하는 게 목적이므로 바깥을 부르는 자리는 다 막아야 한다.
   let blockedRemote = 0;
   if (!allowRemote) {
-    html = html.replace(/<img\b[^>]*>/gi, (tag) => {
-      if (/src\s*=\s*["']data:/i.test(tag)) return tag;
+    html = html.replace(/<(img|image|input|video|audio|source|iframe|embed)\b[^>]*>/gi, (tag, name) => {
+      if (/^img$/i.test(name) && /src\s*=\s*["']?data:/i.test(tag)) return tag;
+      if (!/(src|srcset|poster|data)\s*=/i.test(tag)) return tag;
       blockedRemote += 1;
       return '';
+    });
+    // style="background:url(https://…)" 같은 자리도 바깥을 부른다
+    html = html.replace(/url\(\s*['"]?\s*(https?:)?\/\/[^)]*\)/gi, () => {
+      blockedRemote += 1;
+      return 'none';
     });
   }
 
@@ -343,4 +392,4 @@ function friendly(e) {
   return raw.slice(0, 120);
 }
 
-module.exports = { PRESETS, preset, connect, fetchSummary, fetchBody, markRead, test, senderOf, friendly, htmlToText, attachmentsForView, buildViewHtml };
+module.exports = { PRESETS, preset, connect, smtpOf, fromOf, fetchSummary, fetchBody, markRead, test, senderOf, friendly, htmlToText, attachmentsForView, buildViewHtml };

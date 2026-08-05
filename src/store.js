@@ -65,6 +65,7 @@ const DEFAULT_SETTINGS = {
   mailAutoBackup: false,   // 새로 오는 메일과 열어본 메일을 자동으로 저장할지
   mailPanel: false,        // 위젯 겉면에 메일 펼쳐두기 (클릭 없이 보이게)
   mailViewSize: null,      // 메일 보기 창을 마지막으로 조절한 크기
+  composeSize: null,       // 메일 쓰기 창을 마지막으로 조절한 크기
   // 인터넷에서 받아오는 그림. 켜면 메일이 원래대로 보이지만,
   // 불러오는 순간 "열어봤다"가 보낸 사람에게 전달된다.
   mailRemoteImages: true,
@@ -293,6 +294,9 @@ module.exports = {
       provider: acc.provider || 'custom',
       host: acc.host, port: Number(acc.port) || 993,
       user: acc.user, sealed: acc.sealed || null,
+      // 보내기(SMTP)는 받기와 서버가 다르다. 비워두면 받는 서버에서 유추한다.
+      smtpHost: acc.smtpHost || '', smtpPort: Number(acc.smtpPort) || 0,
+      fromAddress: acc.fromAddress || '', fromName: acc.fromName || '',
       enabled: true
     });
     save();
@@ -305,6 +309,42 @@ module.exports = {
     save();
     return s.mailAccounts;
   },
+  /**
+   * 주소록 — 보낸 적 있는 주소를 자동으로 모은다.
+   * 따로 입력하게 하면 아무도 안 채운다. 한 번 보내고 나면 다음부터 자동완성된다.
+   */
+  get contacts() { return load().contacts || []; },
+  rememberContacts(list) {
+    const s = load();
+    if (!Array.isArray(s.contacts)) s.contacts = [];
+    let changed = false;
+    for (const one of list || []) {
+      const address = String(one.address || '').trim().toLowerCase();
+      if (!address || !address.includes('@')) continue;
+      const found = s.contacts.find((c) => c.address === address);
+      if (found) {
+        found.at = Date.now();
+        found.used = (found.used || 1) + 1;
+        if (one.name && !found.name) found.name = String(one.name).slice(0, 60);
+      } else {
+        s.contacts.push({ address, name: String(one.name || '').slice(0, 60), at: Date.now(), used: 1 });
+      }
+      changed = true;
+    }
+    if (!changed) return s.contacts;
+    // 자주 쓴 것과 최근 쓴 것을 앞에 두고, 너무 불어나지 않게 자른다
+    s.contacts.sort((a, b) => (b.used || 1) - (a.used || 1) || b.at - a.at);
+    s.contacts = s.contacts.slice(0, 500);
+    save();
+    return s.contacts;
+  },
+  removeContact(address) {
+    const s = load();
+    s.contacts = (s.contacts || []).filter((c) => c.address !== String(address).toLowerCase());
+    save();
+    return s.contacts;
+  },
+
   removeMailAccount(id) {
     const s = load();
     s.mailAccounts = s.mailAccounts.filter((x) => x.id !== id);
