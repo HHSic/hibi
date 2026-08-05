@@ -297,6 +297,7 @@ module.exports = {
       // 보내기(SMTP)는 받기와 서버가 다르다. 비워두면 받는 서버에서 유추한다.
       smtpHost: acc.smtpHost || '', smtpPort: Number(acc.smtpPort) || 0,
       fromAddress: acc.fromAddress || '', fromName: acc.fromName || '',
+      signature: acc.signature || '',   // 쓸 때 본문 끝에 자동으로 붙는다
       enabled: true
     });
     save();
@@ -325,7 +326,10 @@ module.exports = {
       if (found) {
         found.at = Date.now();
         found.used = (found.used || 1) + 1;
-        if (one.name && !found.name) found.name = String(one.name).slice(0, 60);
+        // 사람이 직접 고친 이름은 건드리지 않는다
+        if (one.name && !found.pinned && one.name !== found.name) {
+          found.name = String(one.name).slice(0, 60);
+        }
       } else {
         s.contacts.push({ address, name: String(one.name || '').slice(0, 60), at: Date.now(), used: 1 });
       }
@@ -335,6 +339,25 @@ module.exports = {
     // 자주 쓴 것과 최근 쓴 것을 앞에 두고, 너무 불어나지 않게 자른다
     s.contacts.sort((a, b) => (b.used || 1) - (a.used || 1) || b.at - a.at);
     s.contacts = s.contacts.slice(0, 500);
+    save();
+    return s.contacts;
+  },
+  /** 사람이 직접 고친 이름 — 자동으로 모은 것보다 우선한다 */
+  saveContact({ address, name }) {
+    const s = load();
+    if (!Array.isArray(s.contacts)) s.contacts = [];
+    const key = String(address || '').trim().toLowerCase();
+    if (!key || !key.includes('@')) return s.contacts;
+    const found = s.contacts.find((c) => c.address === key);
+    if (found) {
+      found.name = String(name || '').slice(0, 60);
+      found.pinned = true;          // 다음에 자동 수집이 덮어쓰지 못하게
+    } else {
+      s.contacts.push({
+        address: key, name: String(name || '').slice(0, 60),
+        at: Date.now(), used: 1, pinned: true
+      });
+    }
     save();
     return s.contacts;
   },

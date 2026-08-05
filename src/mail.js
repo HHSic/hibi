@@ -182,6 +182,9 @@ async function collect(client, range, opts, out) {
       uid: msg.uid,
       subject: String((msg.envelope && msg.envelope.subject) || '(제목 없음)').slice(0, 120),
       from: senderOf(msg.envelope),
+      // 주소록은 여기서 자란다 — 받은 메일마다 «이름 ↔ 주소»가 한 쌍씩 들어 있다
+      fromAddress: ((msg.envelope && msg.envelope.from && msg.envelope.from[0]) || {}).address || '',
+      fromName: ((msg.envelope && msg.envelope.from && msg.envelope.from[0]) || {}).name || '',
       at: (msg.internalDate || new Date()).getTime(),
       // IMAP 플래그는 역슬래시로 시작한다 ('\Seen') — 소스에서는 두 번 써야 한다
       seen: flags.has('\\Seen')

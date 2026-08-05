@@ -184,6 +184,12 @@ async function refreshMail({ force = false } = {}) {
         errors.push({ name: acc.name, message: mail.friendly(e) });
       }
     }
+    // 주소록은 받은 메일에서 자란다 — 이름과 주소가 한 쌍씩 들어 있다.
+    // 이렇게 해두면 나중에 «김부장»만 쳐도 주소가 나온다.
+    store.rememberContacts(messages
+      .filter((m) => m.fromAddress)
+      .map((m) => ({ address: m.fromAddress, name: m.fromName })));
+
     messages.sort((a, b) => b.at - a.at);
     mailState.unread = unread;
     mailState.messages = messages.slice(0, Math.max(1, Math.round(store.settings.mailCount) || 5));
@@ -1191,8 +1197,11 @@ ipcMain.handle('compose:open', (_e, { kind = 'new', accountId, source } = {}) =>
   const acc = asked || accounts[0];
 
   const draft = kind === 'new' ? { to: '', subject: '', text: '' } : send.draftFrom(kind, source);
+  const stored = store.mailAccounts.find((a) => a.id === acc.id) || {};
   const ok = openCompose({
     accountId: acc.id,
+    signature: stored.signature || '',
+    signatures: Object.fromEntries(store.mailAccounts.map((a) => [a.id, a.signature || ''])),
     title: kind === 'reply' ? '답장' : kind === 'forward' ? '전달' : '새 메일',
     // 새 메일은 어느 계정으로 보낼지 고를 수 있어야 한다 — 안 그러면 «마지막에 온 메일의
     // 계정»으로 정해져서, 받은 순서가 내 발신 주소를 결정하게 된다
@@ -1274,8 +1283,10 @@ ipcMain.handle('compose:send', async (_e, msg) => {
   return r;
 });
 
-/** 주소록 — 쓰기 창의 자동완성이 쓴다 */
+/** 주소록 — 쓰기 창의 자동완성과 설정 화면이 쓴다 */
 ipcMain.handle('mail:contacts', () => store.contacts);
+ipcMain.handle('mail:contact-save', (_e, c) => store.saveContact(c || {}));
+ipcMain.handle('mail:contact-remove', (_e, address) => store.removeContact(address));
 
 /** 본문에 넣을 그림 — 대화상자로 고른 것만 읽어 화면에 돌려준다 */
 const IMAGE_MAX = 5 * 1024 * 1024;

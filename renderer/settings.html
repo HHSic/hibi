@@ -195,6 +195,12 @@
     border-radius: 8px; padding: 6px 10px; width: 100%; box-sizing: border-box;
   }
   :root[data-theme="light"] .cust-name { background: rgba(0,0,0,0.05); }
+  textarea.cust-name {
+    font-family: inherit; line-height: 1.5; resize: vertical; min-height: 62px;
+    white-space: pre-wrap;
+  }
+  /* 주소록 줄 — 이름은 그 자리에서 고친다 */
+  .rem.acct input.cust-name { width: auto; padding: 4px 8px; font-size: 12.5px; }
   .cust-name:focus { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent); }
   .emoji-grid {
     display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; margin-top: 8px;
@@ -414,6 +420,53 @@
 
     <div class="sec">계정</div>
     <div class="group" id="mail-accounts"></div>
+
+    <div class="sec">보내는 사람 · 서명</div>
+    <div class="group">
+      <div class="col">
+        <span class="lbl">계정</span>
+        <div class="helprow" id="sig-accs"></div>
+      </div>
+      <div class="col" id="sig-edit" style="display:none">
+        <span class="lbl">보내는 서버 · 포트</span>
+        <div class="helprow">
+          <input type="text" id="ed-smtp-host" class="cust-name" placeholder="smtp.example.com" style="flex:1">
+          <input type="text" id="ed-smtp-port" class="cust-name" placeholder="465" style="width:64px">
+        </div>
+        <span class="lbl">보내는 사람</span>
+        <input type="text" id="ed-from" class="cust-name" placeholder="주소 (비우면 아이디)">
+        <input type="text" id="ed-from-name" class="cust-name" placeholder="이름 (선택)">
+        <span class="lbl">서명 <span style="color:var(--tertiary)">— 쓸 때 본문에 자동으로 붙습니다</span></span>
+        <textarea id="ed-sig" class="cust-name" rows="4"
+                  placeholder="홍길동&#10;○○팀 · 010-0000-0000"></textarea>
+        <div class="upline">
+          <span class="lbl" id="ed-msg"></span>
+          <span class="helprow">
+            <button class="mini ghost" id="btn-ed-test">보내기 테스트</button>
+            <button class="mini" id="btn-ed-save">저장</button>
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <div class="sec">주소록</div>
+    <div class="group">
+      <div class="col">
+        <input type="text" id="cb-find" class="cust-name" placeholder="이름이나 주소로 찾기">
+        <span class="hint">
+          보낸 주소와 받은 메일의 보낸 사람이 자동으로 쌓입니다. 이름을 고쳐두면 쓸 때 그 이름으로 찾을 수 있어요.
+        </span>
+      </div>
+      <div id="cb-list"></div>
+      <div class="col">
+        <span class="lbl">직접 넣기</span>
+        <div class="helprow">
+          <input type="text" id="cb-name" class="cust-name" placeholder="이름" style="width:96px">
+          <input type="text" id="cb-addr" class="cust-name" placeholder="주소" style="flex:1">
+          <button class="mini" id="btn-cb-add">넣기</button>
+        </div>
+      </div>
+    </div>
 
     <div class="sec">새 계정</div>
     <div class="group">
@@ -1429,6 +1482,8 @@
     renderMailScope();
     renderMailModes();
     renderMailAccounts();
+    renderSigAccs();
+    loadBook();
   }
 
   function mailMsg(kind, text) {
@@ -1475,6 +1530,120 @@
       $('btn-mail-test').disabled = false;
     }
   };
+
+  // ── 계정별 보내는 사람 · 서명 ─────────────────────
+  // 계정을 넣고 나면 고칠 방법이 없었다 — 서명은 물론 SMTP 주소도 못 바꿨다.
+  let sigId = null;
+
+  function renderSigAccs() {
+    const host = $('sig-accs');
+    host.textContent = '';
+    if (!mailData.accounts.length) {
+      host.textContent = '계정을 먼저 추가하세요';
+      $('sig-edit').style.display = 'none';
+      return;
+    }
+    if (!mailData.accounts.some((a) => a.id === sigId)) sigId = mailData.accounts[0].id;
+    for (const a of mailData.accounts) {
+      const b = document.createElement('button');
+      b.className = 'mini' + (a.id === sigId ? '' : ' ghost');
+      b.textContent = a.name || a.user;
+      b.onclick = () => { sigId = a.id; renderSigAccs(); };
+      host.append(b);
+    }
+    const a = mailData.accounts.find((x) => x.id === sigId);
+    $('sig-edit').style.display = '';
+    $('ed-smtp-host').value = a.smtpHost || '';
+    $('ed-smtp-port').value = a.smtpPort ? String(a.smtpPort) : '';
+    $('ed-from').value = a.fromAddress || '';
+    $('ed-from-name').value = a.fromName || '';
+    $('ed-sig').value = a.signature || '';
+    $('ed-msg').textContent = '';
+  }
+
+  function sigForm() {
+    return {
+      id: sigId,
+      smtpHost: $('ed-smtp-host').value.trim(),
+      smtpPort: Number($('ed-smtp-port').value) || 0,
+      fromAddress: $('ed-from').value.trim(),
+      fromName: $('ed-from-name').value.trim(),
+      signature: $('ed-sig').value
+    };
+  }
+
+  $('btn-ed-save').onclick = async () => {
+    const p = sigForm();
+    mailData.accounts = await window.nunsseom.mailUpdate(sigId, p);
+    $('ed-msg').textContent = '저장했습니다';
+    renderMailAccounts();
+    renderSigAccs();
+  };
+  $('btn-ed-test').onclick = async () => {
+    $('ed-msg').textContent = '확인 중…';
+    const r = await window.nunsseom.mailSmtpTest(sigForm());
+    $('ed-msg').textContent = r.message;
+  };
+
+  // ── 주소록 ────────────────────────────────────────
+  let book = [];
+
+  function renderBook() {
+    const host = $('cb-list');
+    const q = $('cb-find').value.trim().toLowerCase();
+    const hits = book
+      .filter((c) => !q || c.address.includes(q) || String(c.name || '').toLowerCase().includes(q))
+      .slice(0, 60);
+    host.textContent = '';
+    if (!hits.length) {
+      const p = document.createElement('div');
+      p.className = 'col';
+      p.textContent = book.length ? '찾는 사람이 없습니다' : '아직 비어 있습니다 — 메일을 주고받으면 쌓입니다';
+      p.style.fontSize = '11.5px';
+      p.style.color = 'var(--tertiary)';
+      host.append(p);
+      return;
+    }
+    for (const c of hits) {
+      const row = document.createElement('div');
+      row.className = 'rem acct';
+      const g = document.createElement('span');
+      g.className = 'g emoji';
+      g.textContent = '📇';
+      const nm = document.createElement('input');
+      nm.className = 'cust-name';
+      nm.value = c.name || '';
+      nm.placeholder = '이름';
+      // 이름을 여기서 고쳐두면 쓸 때 그 이름으로 찾힌다
+      nm.onchange = async () => {
+        book = await window.nunsseom.mailContactSave({ address: c.address, name: nm.value.trim() });
+      };
+      const val = document.createElement('span');
+      val.className = 'val';
+      val.textContent = c.address;
+      const del = document.createElement('button');
+      del.className = 'mini ghost';
+      del.textContent = '삭제';
+      del.onclick = async () => { book = await window.nunsseom.mailContactRemove(c.address); renderBook(); };
+      row.append(g, nm, val, del);
+      host.append(row);
+    }
+  }
+
+  $('cb-find').oninput = renderBook;
+  $('btn-cb-add').onclick = async () => {
+    const addr = $('cb-addr').value.trim();
+    if (!addr.includes('@')) { $('cb-addr').focus(); return; }
+    book = await window.nunsseom.mailContactSave({ address: addr, name: $('cb-name').value.trim() });
+    $('cb-name').value = '';
+    $('cb-addr').value = '';
+    renderBook();
+  };
+
+  async function loadBook() {
+    book = await window.nunsseom.mailContacts();
+    renderBook();
+  }
 
   // 보내기는 받기와 서버가 달라 따로 확인해야 한다. 메일을 보내지는 않고 로그인만 해 본다.
   $('btn-smtp-test').onclick = async () => {

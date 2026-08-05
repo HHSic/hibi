@@ -77,6 +77,8 @@ contextBridge.exposeInMainWorld('nunsseom', {
   composeAttach: () => ipcRenderer.invoke('compose:attach'),
   composePickImage: () => ipcRenderer.invoke('compose:pick-image'),
   mailContacts: () => ipcRenderer.invoke('mail:contacts'),
+  mailContactSave: (c) => ipcRenderer.invoke('mail:contact-save', c),
+  mailContactRemove: (a) => ipcRenderer.invoke('mail:contact-remove', a),
   composeClose: () => ipcRenderer.send('compose:close'),
   composeAcceptReplace: (p) => ipcRenderer.send('compose:accept-replace', p),
   composeSetAccount: (id) => ipcRenderer.send('compose:set-account', id),
