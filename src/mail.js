@@ -106,18 +106,38 @@ async function markRead(account, uids, { read = true } = {}) {
   await client.connect();
   try {
     // 플래그를 바꿔야 하므로 읽기 전용으로 열면 안 된다
-    await client.mailboxOpen(account.mailbox || 'INBOX', { readOnly: false });
+    const box = await client.mailboxOpen(account.mailbox || 'INBOX', { readOnly: false });
+
+    // 서버가 «이 폴더에 영구 저장할 수 있는 플래그»를 알려준다. 거기에 \Seen도 \*도 없으면
+    // 라이브러리가 STORE를 보내지도 않고 false를 돌려준다 — 원인을 정확히 알려주려고 미리 본다.
+    const perm = box.permanentFlags instanceof Set
+      ? [...box.permanentFlags]
+      : (box.permanentFlags || []);
+    const diag = {
+      readOnly: !!box.readOnly,
+      permanentFlags: perm,
+      canSeen: !perm.length || perm.includes('\\*') || perm.includes('\\Seen')
+    };
+
     const list = (uids && uids.length)
       ? uids.map(Number).filter((n) => Number.isFinite(n))
       : (await client.search({ seen: !read }, { uid: true }) || []);
-    if (!list.length) return { changed: 0 };
+    if (!list.length) return { changed: 0, diag };
+
     // IMAP 플래그는 역슬래시로 시작한다 — 소스에서는 두 번 써야 한다
     // 서버가 false를 돌려주면 아무것도 안 바뀐 것이다 — 성공으로 셈하면 안 된다
     const okFlag = read
       ? await client.messageFlagsAdd(list, ['\\Seen'], { uid: true })
       : await client.messageFlagsRemove(list, ['\\Seen'], { uid: true });
-    if (okFlag === false) throw new Error('서버가 읽음 표시를 받아들이지 않았습니다');
-    return { changed: list.length };
+    if (okFlag === false) {
+      const why = diag.readOnly ? '메일함이 읽기 전용으로 열렸습니다'
+        : !diag.canSeen ? '이 서버는 읽음 상태를 저장하지 않습니다'
+        : '서버가 명령을 거부했습니다';
+      const e = new Error(`읽음 표시를 못 했습니다 — ${why}`);
+      e.diag = diag;
+      throw e;
+    }
+    return { changed: list.length, diag };
   } finally {
     try { await client.logout(); } catch { client.close(); }
   }

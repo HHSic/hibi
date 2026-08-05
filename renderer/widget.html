@@ -289,6 +289,19 @@
   /* 카드는 grid다 — 위쪽(타이머)은 제 높이만, 남는 높이는 달력이 갖는다.
      flex 속성을 써 봐야 grid 자식에겐 아무 효력이 없다. */
   .card.calon { grid-template-rows: min-content 1fr; }
+  /* 둘 다 켜면 세로가 모자란다.
+     행을 안 정해두면 달력이 제 높이를 통째로 가져가고 메일은 «1fr = 남은 것 = 0»이 되어
+     머리글만 남은 채 달력 위에 겹쳐 그려진다. 각자 최소 몫을 정하고, 넘치면 안에서 굴린다. */
+  .card.mailon.calon {
+    grid-template-rows: min-content minmax(3.25rem, 7.5rem) minmax(6rem, 1fr);
+  }
+  .card.mailon.calon .mailpanel,
+  .card.mailon.calon .cal:not(.mailpanel) { min-height: 0; }
+  /* 달력은 칸이 정사각형이라 높이를 줄일 수 없다 — 대신 세로로 굴려 아래 주도 볼 수 있게 */
+  .card.mailon.calon .cal:not(.mailpanel) { overflow-y: auto; }
+  .cal::-webkit-scrollbar { width: 3px; }
+  .cal::-webkit-scrollbar-thumb { background: transparent; border-radius: 2px; transition: background 0.15s; }
+  .cal:hover::-webkit-scrollbar-thumb { background: var(--fill-hi); }
   .calnav { display: flex; align-items: center; gap: 0.25rem; }
   .calnav .cttl {
     flex: 1; font-size: 0.75rem; font-weight: 650; color: var(--label);

@@ -567,7 +567,9 @@ function pushTick() {
       })()
     };
   }
-  widgetWin.webContents.send('tick', payload);
+  // 창은 살아 있어도 렌더러 프레임이 먼저 정리되는 순간이 있다 (종료·새로고침 직전).
+  // 그때 보내면 던진다 — 1초마다 도는 틱이 콘솔을 채울 이유는 없다.
+  try { widgetWin.webContents.send('tick', payload); } catch { /* 곧 사라질 창이다 */ }
 }
 
 /** 다음 차례 순서대로 종류 메타 + 남은 시간 */
@@ -781,8 +783,19 @@ function openStats(focusType) {
 }
 
 /** 위젯 안 달력을 펼친다 (별도 창을 두지 않고 위젯이 길어진다) */
+// 구독 주소는 15분마다 다시 읽는다. 그런데 사용자가 방금 일정을 고치고 달력을 열면
+// 그때까지 옛 내용을 보게 된다 — 열 때 한 번 더 읽는다. 너무 자주 부르지는 않는다.
+const CAL_NUDGE_MS = 45_000;
+let calNudgedAt = 0;
+function nudgeCalendar(force = false) {
+  if (!force && Date.now() - calNudgedAt < CAL_NUDGE_MS) return;
+  calNudgedAt = Date.now();
+  refreshCalendars();
+}
+
 function showCalendarPanel() {
   store.setSettings({ calendarPanel: true });
+  nudgeCalendar();
   revealWidget();
   if (widgetWin && !widgetWin.isDestroyed()) widgetWin.webContents.send('cal:show');
 }
@@ -818,14 +831,25 @@ ipcMain.handle('cal:open-event', (_e, ev) => {
   const link = calendar.eventLink(ev, ev && ev.calUrl);
   if (!link) return false;
   shell.openExternal(link);
+  // 고치러 나간 것이다. 돌아왔을 때 옛 내용이 그대로면 안 고쳐진 줄 안다.
+  // 구독 주소는 서버 쪽에도 잠깐 캐시가 있어서 한 번만 부르면 놓친다.
+  scheduleCalendarCatchUp();
   return true;
 });
+
+/** 브라우저에서 고치고 돌아올 즈음 몇 번 나눠 다시 읽는다 */
+function scheduleCalendarCatchUp() {
+  for (const ms of [20_000, 60_000, 150_000]) {
+    setTimeout(() => nudgeCalendar(true), ms).unref?.();
+  }
+}
 
 /** 빈 날짜를 누르면 그 시각으로 새 일정 만들기 화면을 연다 */
 ipcMain.handle('cal:new-event', (_e, { start, end }) => {
   const hasGoogle = store.calendars.some((c) => calendar.googleCalendarId(c.url));
   if (!hasGoogle) return false;
   shell.openExternal(calendar.newEventLink(start, end));
+  scheduleCalendarCatchUp();
   return true;
 });
 
@@ -1094,7 +1118,13 @@ ipcMain.handle('mail:mark-read', async (_e, { accountId, uids, read = true } = {
       const r = await mail.markRead(acc, uids, { read });
       changed += r.changed;
     } catch (e) {
-      failed.push(`${acc.name || acc.user}: ${mail.friendly(e)}`);
+      failed.push(`${acc.name || acc.user}: ${e.message || mail.friendly(e)}`);
+      // 왜 거부됐는지는 서버가 SELECT 때 알려준 것을 봐야 안다 — 그대로 남긴다
+      if (e.diag) {
+        evlog.log('메일', `읽음 표시 진단 · ${acc.name || acc.user}`
+          + ` · 읽기전용=${e.diag.readOnly}`
+          + ` · PERMANENTFLAGS=[${e.diag.permanentFlags.join(' ') || '(없음)'}]`);
+      }
     }
   }
   evlog.log('메일', `${read ? '읽음' : '안 읽음'} 표시 · ${changed}통`
@@ -1235,9 +1265,38 @@ ipcMain.handle('mail:backup-pick', async () => {
     defaultPath: store.settings.mailBackupDir || app.getPath('documents')
   });
   if (canceled || !filePaths[0]) return backupStatus();
+
+  // 여기서 못 쓰는 곳인지 바로 확인한다. 나중에 백업을 눌렀을 때 실패하면
+  // 원인이 폴더인지 서버인지 알 수 없다. (C:\Users 밑처럼 윈도우가 막는 자리가 있다)
+  const bad = backupDirProblem(filePaths[0]);
+  if (bad) { backup.message = bad; return backupStatus(); }
+
   store.setSettings({ mailBackupDir: filePaths[0] });
+  backup.message = '';
   return backupStatus();
 });
+
+/**
+ * 이 폴더에 정말 쓸 수 있나. 실제로 만들어 보고 지운다 —
+ * 권한은 존재 여부만으로는 알 수 없다.
+ * @returns 문제가 있으면 사람이 읽을 사유, 없으면 null
+ */
+function backupDirProblem(dir) {
+  const probe = path.join(dir, '.hibi-쓰기확인');
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(probe, 'ok');
+    fs.unlinkSync(probe);
+    return null;
+  } catch (e) {
+    try { fs.unlinkSync(probe); } catch { /* 없으면 그만 */ }
+    if (e.code === 'EPERM' || e.code === 'EACCES') {
+      return `이 폴더에는 쓸 수 없습니다 — 윈도우가 막는 자리입니다 (${dir}).`
+        + ' 문서 폴더 안처럼 내 폴더를 고르세요.';
+    }
+    return `이 폴더를 쓸 수 없습니다 — ${e.message}`;
+  }
+}
 
 ipcMain.on('mail:backup-stop', () => { backup.stop = true; });
 ipcMain.on('mail:backup-open', () => {
@@ -1256,6 +1315,9 @@ ipcMain.handle('mail:backup-start', async () => {
     }
     if (autoBackup.running) throw new Error('자동 백업이 도는 중입니다. 잠시 뒤 다시 눌러주세요');
     if (!store.settings.mailBackupDir) throw new Error('저장할 폴더를 먼저 고르세요');
+    // 폴더는 고른 뒤에도 지워지거나 권한이 바뀔 수 있다 — 시작 전에 다시 본다
+    const bad = backupDirProblem(store.settings.mailBackupDir);
+    if (bad) throw new Error(bad);
     if (!mailAccountsForUse().length) throw new Error('쓸 수 있는 계정이 없습니다');
   } catch (e) {
     backup.running = false;
