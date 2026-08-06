@@ -552,8 +552,11 @@ function pushTick() {
 
   // 오늘 일정 — 위젯 시트에서 예정된 알림과 나란히 보여준다
   const schedule = store.settings.calendarShow ? planner.today(cal.occurrences) : [];
+  // 알림 한 줄은 잠깐만 살아 있는다 (기다리는 중이면 끝날 때까지)
+  const nt = mailState.notice;
+  const fresh = nt && (nt.kind === 'wait' || Date.now() - nt.at < 8000) ? nt : null;
   const mailBox = (store.settings.mailEnabled && store.settings.mailShow)
-    ? { unread: mailState.unread, messages: mailState.messages }
+    ? { unread: mailState.unread, messages: mailState.messages, notice: fresh }
     : null;
   logMailPayload(mailBox);
 
@@ -1135,11 +1138,22 @@ ipcMain.handle('mail:refresh', async () => { await refreshMail(); return mailSta
  * 열어보지 않고 읽음으로만 표시한다.
  * uids가 없으면 그 계정의 안 읽은 것 전부, accountId가 없으면 모든 계정.
  */
+/**
+ * 위젯에 잠깐 띄울 한 줄. 틱 payload에 실어 보낸다 —
+ * 화면에서 직접 글자를 바꾸면 1초 뒤 틱이 그대로 덮어써서 아무도 못 본다 (그랬다).
+ */
+function notice(kind, text) {
+  mailState.notice = { at: Date.now(), kind, text };
+}
+
 ipcMain.handle('mail:mark-read', async (_e, { accountId, uids, read = true } = {}) => {
   const accounts = mailAccountsForUse().filter((a) => !accountId || a.id === accountId);
   if (!accounts.length) {
+    notice('bad', '쓸 수 있는 계정이 없습니다');
     return { ok: false, changed: 0, message: '쓸 수 있는 계정이 없습니다', ...mailStatus() };
   }
+  // 서버가 느리면 1분 넘게 걸린다. 그동안 아무 말이 없으면 «안 눌렸나» 싶어 또 누르게 된다.
+  notice('wait', read ? '읽음 표시 중…' : '안 읽음으로 되돌리는 중…');
   let changed = 0;
   const failed = [];
   for (const acc of accounts) {
@@ -1158,6 +1172,10 @@ ipcMain.handle('mail:mark-read', async (_e, { accountId, uids, read = true } = {
   }
   evlog.log('메일', `${read ? '읽음' : '안 읽음'} 표시 · ${changed}통`
     + (failed.length ? ` · 실패 ${failed.join(' / ')}` : ''));
+  notice(failed.length ? 'bad' : 'good',
+    failed.length ? failed[0].replace(/^[^:]+:\s*/, '')
+      : changed ? `${changed}통 ${read ? '읽음' : '안 읽음'}으로 표시했습니다`
+        : '바꿀 메일이 없습니다');
   // 서버 쪽이 바뀌었으니 화면 숫자도 바로 맞춘다. 마침 폴링이 돌고 있으면
   // 그게 끝나기를 기다렸다가 다시 부른다 — 그냥 넘기면 다음 주기(몇 분)까지 숫자가 안 바뀐다.
   await refreshMail({ force: true });

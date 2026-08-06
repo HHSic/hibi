@@ -315,6 +315,15 @@
   }
   .calnav button:hover { background: var(--fill); color: var(--label); }
   /* 글자가 든 버튼은 정사각형 칸에 가둘 수 없다 */
+  /* 결과 한 줄 — 메인이 틱으로 보내준다. 화면에서 직접 쓰면 다음 틱이 덮어쓴다. */
+  .note {
+    flex: 1; min-width: 0; font-size: 0.5625rem; font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--secondary);
+  }
+  .note.good { color: var(--tint); }
+  .note.bad { color: var(--sun); }
+  .note:empty { display: none; }
   .calnav button.txt {
     width: auto; padding: 0 0.375rem; height: 1rem;
     font-size: 0.625rem; font-weight: 600;
@@ -573,6 +582,7 @@
       <div class="sched" id="mailbox">
         <div class="sh">
           <span id="mail-ttl">새 메일</span>
+          <span class="note" id="mail-note"></span>
           <button id="mail-write" type="button">쓰기</button>
           <button id="mail-allread" type="button">모두 읽음</button>
         </div>
@@ -584,6 +594,7 @@
     <div class="cal mailpanel" id="mailpanel">
       <div class="calnav">
         <span class="cttl" id="mp-ttl">메일</span>
+        <span class="note" id="mp-note"></span>
         <button class="txt" id="mp-write" title="새 메일 쓰기">쓰기</button>
         <button class="txt" id="mp-allread" title="안 읽은 메일을 모두 읽음으로 표시">모두 읽음</button>
       </div>
@@ -1136,16 +1147,25 @@
     markingRead = true;
     try {
       const r = await window.nunsseom.mailMarkRead(opts);
-      // 실패를 조용히 삼키면 "눌렀는데 아무 일도 없다"가 된다 — 머리글에 그대로 띄운다
-      if (r && r.ok === false && r.message) {
-        for (const id of ['mail-ttl', 'mp-ttl']) $(id).textContent = `읽음 표시 실패 · ${r.message}`;
-        // 다음 틱이 제 글자로 되돌린다
-      }
+      // 결과는 메인이 틱으로 실어 보낸다 (paintNote) — 여기서 글자를 바꾸면 1초 뒤 덮인다
       dlog('메일', r && r.ok === false
         ? `읽음 표시 실패 · ${r.message}`
         : `읽음 표시 · ${(r && r.changed) || 0}통`);
     } finally {
       markingRead = false;
+    }
+  }
+
+  /** 메인이 보내준 결과 한 줄 */
+  function paintNote(box) {
+    const nt = (box && box.notice) || null;
+    for (const id of ['mail-note', 'mp-note']) {
+      const el = $(id);
+      if (!el) continue;
+      el.textContent = nt ? nt.text : '';
+      // 위젯이 좁아 글이 잘린다 — 전체는 올려두면 보이게
+      el.title = nt ? nt.text : '';
+      el.className = 'note' + (nt ? ' ' + nt.kind : '');
     }
   }
 
@@ -1167,6 +1187,7 @@
     const sec = $('mailbox');
     const key = box ? `${box.unread}:${(box.messages || []).length}` : 'none';
     lastMailBox = box;
+    paintNote(box);   // 목록이 비어 아래에서 일찍 빠져나가도 결과는 보여야 한다
     if (mailCard.classList.contains('mailon')) paintMailPanel();
     if (key !== lastMailRender) {
       lastMailRender = key;
@@ -1258,6 +1279,7 @@
     const host = $('mp-list');
     host.textContent = '';
     $('mp-ttl').textContent = box && box.unread ? `메일 · 안 읽음 ${box.unread}` : '메일';
+    paintNote(box);
     $('mp-allread').style.display = box && box.unread ? '' : 'none';
     const list = (box && box.messages) || [];
     if (!list.length) {
