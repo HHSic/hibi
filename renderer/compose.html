@@ -95,6 +95,48 @@
   .book .it span { color: var(--tertiary); font-size: 11px; }
   .book .it.on, .book .it:hover { background: var(--fill-hi); }
   .book .none { padding: 6px 8px; font-size: 11.5px; color: var(--tertiary); }
+  .helprow { display: flex; gap: 4px; align-items: center; }
+
+  /* 주소록 창 — 타이핑 없이 골라 넣는다 */
+  .picker {
+    position: absolute; inset: 0; z-index: 40; display: none;
+    /* 뒤가 비치면 안 된다 — 아래 입력칸 글자와 겹쳐 둘 다 안 읽힌다 */
+    background: #1e1e23; border-radius: var(--r);
+    flex-direction: column; padding: 12px 14px 12px;
+  }
+  :root[data-theme="light"] .picker { background: #fbfbfd; }
+  .picker.on { display: flex; }
+  .picker .ptop { display: flex; align-items: center; gap: 8px; flex: none; }
+  .picker .ptop b { flex: 1; font-size: 13.5px; font-weight: 650; }
+  .picker input.find {
+    all: unset; font-family: inherit; font-size: 12.5px; color: var(--label);
+    background: var(--fill); border-radius: 8px; padding: 7px 10px;
+    margin: 10px 0 8px; flex: none;
+  }
+  .picker input.find::placeholder { color: var(--tertiary); }
+  .plist { flex: 1; min-height: 0; overflow-y: auto; margin: 0 -4px; }
+  .plist::-webkit-scrollbar { width: 6px; }
+  .plist::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; transition: background 0.15s; }
+  .plist:hover::-webkit-scrollbar-thumb { background: var(--fill-hi); }
+  .prow {
+    display: flex; align-items: center; gap: 9px;
+    padding: 7px 8px; border-radius: 8px; cursor: default;
+  }
+  .prow:hover { background: var(--fill); }
+  .prow.on { background: color-mix(in srgb, var(--accent) 17%, transparent); }
+  .prow .mark {
+    width: 15px; height: 15px; border-radius: 4px; flex: none;
+    box-shadow: inset 0 0 0 1.2px var(--fill-hi);
+    display: grid; place-items: center; font-size: 10px; color: #06231d;
+  }
+  .prow.on .mark { background: var(--accent); box-shadow: none; }
+  .prow .who { flex: 1; min-width: 0; }
+  .prow .who b { display: block; font-size: 12.5px; font-weight: 600; }
+  .prow .who span { display: block; font-size: 11px; color: var(--tertiary);
+                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pfoot { flex: none; display: flex; align-items: center; gap: 6px; padding-top: 10px;
+           box-shadow: inset 0 0.5px 0 var(--separator); }
+  .pfoot .cnt { flex: 1; font-size: 11.5px; color: var(--secondary); }
 
   /* 서식 막대 — 받는 사람 칸과 본문 사이 */
   .bar {
@@ -196,7 +238,10 @@
         <span class="lb">받는</span>
         <input id="to" placeholder="이름이나 주소를 넣으세요 (쉼표로 여러 명)" autocomplete="off" autofocus>
         <div class="book" id="book-to"></div>
-        <button class="more" id="btn-cc">참조</button>
+        <span class="helprow">
+          <button class="more" id="btn-open-book">주소록</button>
+          <button class="more" id="btn-cc">참조</button>
+        </span>
       </div>
       <div class="fld hide" id="row-cc">
         <span class="lb">참조</span>
@@ -257,6 +302,22 @@
       <button class="act" id="send">보내기</button>
     </div>
 
+
+    <!-- 주소록에서 골라 넣기 — 주소를 외우거나 받아 적을 필요가 없게 -->
+    <div class="picker" id="picker">
+      <div class="ptop">
+        <b>주소록</b>
+        <button class="close" id="pk-close" title="닫기">✕</button>
+      </div>
+      <input type="text" class="find" id="pk-find" placeholder="이름이나 주소로 찾기">
+      <div class="plist" id="pk-list"></div>
+      <div class="pfoot">
+        <span class="cnt" id="pk-cnt">고른 사람 없음</span>
+        <button class="act ghost" data-put="cc">참조</button>
+        <button class="act ghost" data-put="bcc">숨은참조</button>
+        <button class="act" data-put="to">받는 사람</button>
+      </div>
+    </div>
 
     <div class="rz n" data-dir="n"></div><div class="rz s" data-dir="s"></div>
     <div class="rz w" data-dir="w"></div><div class="rz e" data-dir="e"></div>
@@ -474,6 +535,91 @@
   bindBook('cc', 'book-cc');
   bindBook('bcc', 'book-bcc');
 
+  // ── 주소록에서 골라 넣기 ─────────────────────────
+  // 타이핑으로 찾는 것만으로는 «누가 있었더라»가 안 풀린다. 목록을 펴놓고 고르게 한다.
+  const chosen = new Set();
+
+  function addTo(fieldId, list) {
+    const input = $(fieldId);
+    const have = input.value.split(/[,;]/).map((s) => s.trim()).filter(Boolean);
+    for (const a of list) if (!have.includes(a)) have.push(a);
+    input.value = have.join(', ') + (have.length ? ', ' : '');
+    if (fieldId !== 'to') {
+      $('row-cc').classList.remove('hide');
+      $('row-bcc').classList.remove('hide');
+      $('btn-cc').style.display = 'none';
+    }
+  }
+
+  function paintPicker() {
+    const host = $('pk-list');
+    const q = $('pk-find').value.trim().toLowerCase();
+    const hits = contacts
+      .filter((c) => !q || c.address.includes(q) || String(c.name || '').toLowerCase().includes(q))
+      .sort((a, b) => (b.used || 1) - (a.used || 1) || b.at - a.at)
+      .slice(0, 200);
+
+    host.textContent = '';
+    if (!hits.length) {
+      const p = document.createElement('div');
+      p.className = 'none';
+      p.style.padding = '10px 8px';
+      p.style.color = 'var(--tertiary)';
+      p.style.fontSize = '12px';
+      p.textContent = contacts.length
+        ? '찾는 사람이 없습니다'
+        : '아직 비어 있습니다 — 메일을 주고받으면 쌓입니다';
+      host.append(p);
+    }
+    for (const c of hits) {
+      const row = document.createElement('div');
+      row.className = 'prow' + (chosen.has(c.address) ? ' on' : '');
+      const mark = document.createElement('span');
+      mark.className = 'mark';
+      mark.textContent = chosen.has(c.address) ? '✓' : '';
+      const who = document.createElement('span');
+      who.className = 'who';
+      const nm = document.createElement('b');
+      nm.textContent = c.name || c.address;
+      const ad = document.createElement('span');
+      ad.textContent = c.name ? c.address : '';
+      who.append(nm, ad);
+      row.append(mark, who);
+      row.onclick = () => {
+        if (chosen.has(c.address)) chosen.delete(c.address); else chosen.add(c.address);
+        paintPicker();
+      };
+      // 한 명만 넣을 때 두 번 클릭이면 끝난다
+      row.ondblclick = () => { chosen.add(c.address); putChosen('to'); };
+      host.append(row);
+    }
+    $('pk-cnt').textContent = chosen.size ? `${chosen.size}명 골랐습니다` : '고른 사람 없음';
+  }
+
+  function putChosen(where) {
+    if (!chosen.size) { $('pk-find').focus(); return; }
+    addTo(where, [...chosen]);
+    chosen.clear();
+    $('picker').classList.remove('on');
+    $('pk-find').value = '';
+  }
+
+  $('btn-open-book').onclick = () => {
+    chosen.clear();
+    $('pk-find').value = '';
+    paintPicker();
+    $('picker').classList.add('on');
+    $('pk-find').focus();
+  };
+  $('pk-close').onclick = () => { $('picker').classList.remove('on'); chosen.clear(); };
+  $('pk-find').oninput = paintPicker;
+  $('pk-find').onkeydown = (e) => {
+    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); putChosen('to'); }
+  };
+  for (const b of document.querySelectorAll('.pfoot [data-put]')) {
+    b.onclick = () => putChosen(b.dataset.put);
+  }
+
   /** 서명 — 본문 끝에 붙인다. 답장이면 인용문 위에 온다. */
   function signatureNode(text) {
     if (!String(text || '').trim()) return null;
@@ -530,7 +676,15 @@
   $('close').onclick = tryClose;
   document.addEventListener('keydown', (e) => {
     // 한글 입력 중 Esc는 후보창을 닫는 키다 — 그걸 창 닫기로 받으면 글이 날아간다
-    if (e.key === 'Escape' && !e.isComposing) tryClose();
+    if (e.key === 'Escape' && !e.isComposing) {
+      // 주소록이 열려 있으면 그것부터 닫는다 — 창까지 같이 닫히면 쓰던 글이 날아간다
+      if ($('picker').classList.contains('on')) {
+        $('picker').classList.remove('on');
+        chosen.clear();
+        return;
+      }
+      tryClose();
+    }
     // 긴 글을 쓰다 보면 마우스로 버튼을 찾아가는 게 번거롭다
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !e.repeat) send();
   });

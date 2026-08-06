@@ -1575,9 +1575,10 @@
   $('btn-ed-save').onclick = async () => {
     const p = sigForm();
     mailData.accounts = await window.nunsseom.mailUpdate(sigId, p);
-    $('ed-msg').textContent = '저장했습니다';
     renderMailAccounts();
     renderSigAccs();
+    // renderSigAccs가 안내를 지우므로 그 뒤에 적는다
+    $('ed-msg').textContent = '저장했습니다';
   };
   $('btn-ed-test').onclick = async () => {
     $('ed-msg').textContent = '확인 중…';
