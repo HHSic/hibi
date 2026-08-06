@@ -29,6 +29,20 @@ const mailbackup = require('./mailbackup');
 const send = require('./send');
 const secret = require('./secret');
 
+// 마지막 안전망.
+// 네트워크 라이브러리는 소켓이 끊기면 우리가 await하던 자리가 아니라 아무도 없는 곳에서
+// 오류를 던진다. Electron은 그걸 잡아 «A JavaScript error occurred» 창을 띄우고 앱이 죽는다.
+// 휴식 알림 위젯이 메일 서버가 느리다는 이유로 죽으면 안 된다 — 기록만 남기고 살아 있는다.
+process.on('uncaughtException', (e) => {
+  const msg = (e && e.stack) || String(e);
+  console.error('[uncaught]', msg);
+  try { evlog.log('오류', `처리되지 않은 예외 · ${(e && e.message) || e}`); } catch { /* 기록도 못 하면 어쩔 수 없다 */ }
+});
+process.on('unhandledRejection', (e) => {
+  console.error('[unhandled]', (e && e.stack) || String(e));
+  try { evlog.log('오류', `처리되지 않은 거절 · ${(e && e.message) || e}`); } catch { /* 위와 같다 */ }
+});
+
 const ICON = path.join(__dirname, '..', 'assets', 'tray.png');
 const PRELOAD = path.join(__dirname, 'preload.js');
 const page = (name) => path.join(__dirname, '..', 'renderer', name);

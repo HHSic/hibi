@@ -12,6 +12,10 @@ const { ImapFlow } = require('imapflow');
 const { simpleParser } = require('mailparser');
 
 const CONNECT_TIMEOUT_MS = 20_000;
+// 플래그를 바꾸는 일은 통수만큼 오래 걸린다 — 읽기보다 넉넉히 준다
+const WRITE_TIMEOUT_MS = 90_000;
+// 한 번에 보낼 UID 개수. 수백 개를 한 줄에 실으면 느린 서버가 응답 전에 끊는다.
+const FLAG_CHUNK = 100;
 // 몇 통까지 들고 올지는 사용자가 정한다. 여기 상한은 실수로 수만 통을 부르는 걸 막는 안전장치일 뿐이다.
 const PREVIEW_HARD_MAX = 500;
 
@@ -82,19 +86,31 @@ function senderOf(envelope) {
   return `${from.address || ''}`.slice(0, 40);
 }
 
-function connect(account) {
-  return new ImapFlow({
+/** 소켓이 조용히 끊겼을 때 사용자에게 보여줄 마지막 사유 */
+let lastSocketError = null;
+
+function connect(account, { timeoutMs = CONNECT_TIMEOUT_MS } = {}) {
+  const client = new ImapFlow({
     host: account.host,
     port: Number(account.port) || 993,
     secure: account.port === 143 ? false : true,
     auth: { user: account.user, pass: account.pass },
     logger: false,
     // 서버가 응답하지 않을 때 앱이 붙잡히지 않게
-    socketTimeout: CONNECT_TIMEOUT_MS,
+    socketTimeout: timeoutMs,
     greetingTimeout: CONNECT_TIMEOUT_MS,
     connectionTimeout: CONNECT_TIMEOUT_MS,
     tls: { rejectUnauthorized: true }
   });
+
+  // 소켓이 끊기거나 시간이 초과되면 ImapFlow는 'error' 이벤트를 낸다.
+  // EventEmitter는 듣는 사람이 없는 'error'를 그냥 던져버린다 — 그러면 우리가 await하던
+  // 자리가 아니라 아무도 잡지 않는 곳에서 터져 앱 전체가 죽는다 (실제로 죽었다).
+  // 여기서 받아두면 정상적인 실패로 흘러가 화면에 사유가 뜬다.
+  client.on('error', (e) => {
+    lastSocketError = (e && e.message) || String(e);
+  });
+  return client;
 }
 
 /**
@@ -134,7 +150,9 @@ async function fetchSummary(account, { limit = 5, onlyUnread = true } = {}) {
  * @param uids 비우면 안 읽은 것 전부
  */
 async function markRead(account, uids, { read = true } = {}) {
-  const client = connect(account);
+  // 여러 통을 한 번에 바꾸는 일이라 읽기보다 오래 걸린다.
+  // 20초로는 스무 통에서도 소켓이 끊겼다 (실제로 끊겼다).
+  const client = connect(account, { timeoutMs: WRITE_TIMEOUT_MS });
   await client.connect();
   try {
     // 플래그를 바꿔야 하므로 읽기 전용으로 열면 안 된다
@@ -158,9 +176,15 @@ async function markRead(account, uids, { read = true } = {}) {
 
     // IMAP 플래그는 역슬래시로 시작한다 — 소스에서는 두 번 써야 한다
     // 서버가 false를 돌려주면 아무것도 안 바뀐 것이다 — 성공으로 셈하면 안 된다
-    const okFlag = read
-      ? await client.messageFlagsAdd(list, ['\\Seen'], { uid: true })
-      : await client.messageFlagsRemove(list, ['\\Seen'], { uid: true });
+    // 수백 개를 한 줄에 실으면 느린 서버가 응답 전에 소켓을 끊는다 — 나눠 보낸다
+    let okFlag = true;
+    for (let i = 0; i < list.length; i += FLAG_CHUNK) {
+      const part = list.slice(i, i + FLAG_CHUNK);
+      const r = read
+        ? await client.messageFlagsAdd(part, ['\\Seen'], { uid: true })
+        : await client.messageFlagsRemove(part, ['\\Seen'], { uid: true });
+      if (r === false) { okFlag = false; break; }
+    }
     if (okFlag === false) {
       // STORE를 거절하는 서버가 있다. 그때 남은 길이 하나 있다 —
       // 본문을 PEEK 없이 읽으면 서버가 스스로 \Seen을 붙인다 (RFC 3501에 정해진 동작).
@@ -169,10 +193,12 @@ async function markRead(account, uids, { read = true } = {}) {
       if (read) {
         const imapCommand = client.exec.bind(client);
         try {
-          await imapCommand('UID FETCH', [
-            { type: 'SEQUENCE', value: list.join(',') },
-            { type: 'ATOM', value: 'BODY', section: [{ type: 'ATOM', value: 'HEADER' }] }
-          ]);
+          for (let i = 0; i < list.length; i += FLAG_CHUNK) {
+            await imapCommand('UID FETCH', [
+              { type: 'SEQUENCE', value: list.slice(i, i + FLAG_CHUNK).join(',') },
+              { type: 'ATOM', value: 'BODY', section: [{ type: 'ATOM', value: 'HEADER' }] }
+            ]);
+          }
           // 정말 바뀌었는지 서버에 되물어본다 — 명령이 통했다고 다 되는 건 아니다
           const still = await client.search({ seen: false }, { uid: true }) || [];
           if (!list.some((u) => still.includes(u))) {
