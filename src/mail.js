@@ -162,6 +162,24 @@ async function markRead(account, uids, { read = true } = {}) {
       ? await client.messageFlagsAdd(list, ['\\Seen'], { uid: true })
       : await client.messageFlagsRemove(list, ['\\Seen'], { uid: true });
     if (okFlag === false) {
+      // STORE를 거절하는 서버가 있다. 그때 남은 길이 하나 있다 —
+      // 본문을 PEEK 없이 읽으면 서버가 스스로 \Seen을 붙인다 (RFC 3501에 정해진 동작).
+      // imapflow는 언제나 BODY.PEEK을 쓰므로 이 명령만 직접 내려보낸다.
+      // 읽음으로 바꾸는 게 목적이니 제일 작은 조각(HEADER)만 부른다.
+      if (read) {
+        const imapCommand = client.exec.bind(client);
+        try {
+          await imapCommand('UID FETCH', [
+            { type: 'SEQUENCE', value: list.join(',') },
+            { type: 'ATOM', value: 'BODY', section: [{ type: 'ATOM', value: 'HEADER' }] }
+          ]);
+          // 정말 바뀌었는지 서버에 되물어본다 — 명령이 통했다고 다 되는 건 아니다
+          const still = await client.search({ seen: false }, { uid: true }) || [];
+          if (!list.some((u) => still.includes(u))) {
+            return { changed: list.length, diag: { ...diag, via: 'fetch' } };
+          }
+        } catch { /* 이 길도 막혔으면 아래에서 사유를 알린다 */ }
+      }
       const why = diag.readOnly ? '메일함이 읽기 전용으로 열렸습니다'
         : !diag.canSeen ? '이 서버는 읽음 상태를 저장하지 않습니다'
         : '서버가 명령을 거부했습니다';

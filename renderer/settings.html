@@ -428,14 +428,21 @@
         <div class="helprow" id="sig-accs"></div>
       </div>
       <div class="col" id="sig-edit" style="display:none">
-        <span class="lbl">보내는 서버 · 포트</span>
-        <div class="helprow">
-          <input type="text" id="ed-smtp-host" class="cust-name" placeholder="smtp.example.com" style="flex:1">
-          <input type="text" id="ed-smtp-port" class="cust-name" placeholder="465" style="width:64px">
+        <div class="upline">
+          <span class="lbl" id="ed-summary"></span>
+          <button class="mini ghost" id="btn-ed-more">고치기</button>
         </div>
-        <span class="lbl">보내는 사람</span>
-        <input type="text" id="ed-from" class="cust-name" placeholder="주소 (비우면 아이디)">
-        <input type="text" id="ed-from-name" class="cust-name" placeholder="이름 (선택)">
+        <div id="ed-server" style="display:none">
+          <span class="lbl">보내는 서버 · 포트</span>
+          <div class="helprow">
+            <input type="text" id="ed-smtp-host" class="cust-name" style="flex:1">
+            <input type="text" id="ed-smtp-port" class="cust-name" style="width:64px">
+          </div>
+          <span class="lbl" style="margin-top:6px;display:block">보내는 사람</span>
+          <input type="text" id="ed-from" class="cust-name">
+          <input type="text" id="ed-from-name" class="cust-name" placeholder="이름 (선택)" style="margin-top:6px">
+          <span class="hint">비워두면 위에 적힌 값이 그대로 쓰입니다.</span>
+        </div>
         <span class="lbl">서명 <span style="color:var(--tertiary)">— 쓸 때 본문에 자동으로 붙습니다</span></span>
         <textarea id="ed-sig" class="cust-name" rows="4"
                   placeholder="홍길동&#10;○○팀 · 010-0000-0000"></textarea>
@@ -1553,12 +1560,25 @@
     }
     const a = mailData.accounts.find((x) => x.id === sigId);
     $('sig-edit').style.display = '';
+    // 이미 등록된 계정이면 서버도 보내는 주소도 계정에서 나온다 — 다시 넣게 하지 않는다.
+    // 무엇이 실제로 쓰이는지만 한 줄로 보여주고, 다를 때만 «고치기»로 연다.
+    $('ed-summary').textContent =
+      `보내는 서버 ${a.smtpResolved || '(없음)'}:${a.smtpPortResolved || 465}`
+      + ` · 보내는 사람 ${a.fromResolved || '(설정 필요)'}`
+      + (a.fromName ? ` (${a.fromName})` : '');
     $('ed-smtp-host').value = a.smtpHost || '';
+    $('ed-smtp-host').placeholder = a.smtpResolved || 'smtp.example.com';
     $('ed-smtp-port').value = a.smtpPort ? String(a.smtpPort) : '';
+    $('ed-smtp-port').placeholder = String(a.smtpPortResolved || 465);
     $('ed-from').value = a.fromAddress || '';
+    $('ed-from').placeholder = a.fromResolved || '보내는 주소';
     $('ed-from-name').value = a.fromName || '';
     $('ed-sig').value = a.signature || '';
     $('ed-msg').textContent = '';
+    // 보낼 주소를 못 찾는 계정은 접어두면 안 된다 — 그대로 두면 보내기가 안 된다
+    const mustFix = !a.fromResolved || !a.smtpResolved;
+    $('ed-server').style.display = mustFix ? '' : 'none';
+    $('btn-ed-more').textContent = mustFix ? '접기' : '고치기';
   }
 
   function sigForm() {
@@ -1571,6 +1591,12 @@
       signature: $('ed-sig').value
     };
   }
+
+  $('btn-ed-more').onclick = () => {
+    const on = $('ed-server').style.display === 'none';
+    $('ed-server').style.display = on ? '' : 'none';
+    $('btn-ed-more').textContent = on ? '접기' : '고치기';
+  };
 
   $('btn-ed-save').onclick = async () => {
     const p = sigForm();

@@ -1055,7 +1055,15 @@ ipcMain.handle('cal:clipboard', () => {
 // ── 메일 IPC ────────────────────────────────────────────
 /** 계정 목록 (비밀번호는 절대 렌더러로 보내지 않는다 — 저장 여부만 알린다) */
 function mailAccountsForUi() {
-  return store.mailAccounts.map(({ sealed, ...rest }) => ({ ...rest, hasPassword: !!sealed }));
+  return store.mailAccounts.map(({ sealed, ...rest }) => ({
+    ...rest,
+    hasPassword: !!sealed,
+    // 비워두면 받는 서버와 아이디에서 짐작한다. 화면에는 «무엇이 실제로 쓰이는지»를
+    // 보여줘야 한다 — 빈 칸에 예시만 떠 있으면 안 넣은 줄 알고 다시 넣게 된다.
+    smtpResolved: mail.smtpOf(rest).host,
+    smtpPortResolved: mail.smtpOf(rest).port,
+    fromResolved: mail.fromOf(rest).address
+  }));
 }
 function mailStatus() {
   return {
@@ -1426,6 +1434,17 @@ async function autoBackupNew({ now = false } = {}) {
   const dir = store.settings.mailBackupDir;
   const accounts = mailAccountsForUse();
   if (!accounts.length) return;
+
+  // 폴더를 못 쓰면 10분마다 같은 실패를 반복해봐야 아무것도 안 바뀐다.
+  // 한 번 알리고 멈춘다 — 폴더를 다시 고르면 그때 풀린다.
+  const bad = backupDirProblem(dir);
+  if (bad) {
+    if (autoBackup.error !== bad) {
+      autoBackup.error = bad;
+      evlog.log('메일', `자동 백업 멈춤 · ${bad}`);
+    }
+    return;
+  }
 
   autoBackup.running = true;
   let saved = 0;
