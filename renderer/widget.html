@@ -306,6 +306,8 @@
   .calnav .cttl {
     flex: 1; font-size: 0.75rem; font-weight: 650; color: var(--label);
     font-variant-numeric: tabular-nums;
+    /* 버튼이 셋이라 좁아진다 — 제목이 두 줄로 접히면 머리글이 통째로 밀린다 */
+    min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .calnav button {
     all: unset; cursor: default;
@@ -583,6 +585,7 @@
         <div class="sh">
           <span id="mail-ttl">새 메일</span>
           <span class="note" id="mail-note"></span>
+          <button id="mail-refresh" type="button" title="지금 메일 확인">↻</button>
           <button id="mail-write" type="button">쓰기</button>
           <button id="mail-allread" type="button">모두 읽음</button>
         </div>
@@ -595,6 +598,7 @@
       <div class="calnav">
         <span class="cttl" id="mp-ttl">메일</span>
         <span class="note" id="mp-note"></span>
+        <button class="txt" id="mp-refresh" title="지금 메일 확인">↻</button>
         <button class="txt" id="mp-write" title="새 메일 쓰기">쓰기</button>
         <button class="txt" id="mp-allread" title="안 읽은 메일을 모두 읽음으로 표시">모두 읽음</button>
       </div>
@@ -1330,6 +1334,17 @@
   for (const id of ['mail-allread', 'mp-allread']) {
     $(id).onclick = (e) => { e.stopPropagation(); markRead({}); };
     // 시트가 열려 있을 때 눌러도 시트가 닫히면 안 된다
+    $(id).addEventListener('pointerdown', (e) => e.stopPropagation());
+  }
+  // 주기(몇 분)를 기다리지 않고 지금 확인한다. 결과는 머리글 알림 줄에 뜬다.
+  let refreshing = false;
+  for (const id of ['mail-refresh', 'mp-refresh']) {
+    $(id).onclick = async (e) => {
+      e.stopPropagation();
+      if (refreshing) return;
+      refreshing = true;
+      try { await window.nunsseom.mailRefresh(); } finally { refreshing = false; }
+    };
     $(id).addEventListener('pointerdown', (e) => e.stopPropagation());
   }
   for (const id of ['mail-write', 'mp-write']) {

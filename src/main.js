@@ -1132,7 +1132,33 @@ ipcMain.handle('mail:remove', (_e, id) => {
   refreshMail();
   return mailAccountsForUi();
 });
-ipcMain.handle('mail:refresh', async () => { await refreshMail(); return mailStatus(); });
+/**
+ * 지금 바로 확인. 주기(몇 분)를 기다리지 않고 새로 온 것을 본다.
+ * 느린 서버에서는 이것도 한참 걸리므로 도는 동안 화면에 알린다.
+ */
+ipcMain.handle('mail:refresh', async () => {
+  if (!store.settings.mailEnabled) {
+    notice('bad', '메일 확인이 꺼져 있습니다 (설정에서 켜세요)');
+    return mailStatus();
+  }
+  if (!mailAccountsForUse().length) {
+    notice('bad', '쓸 수 있는 계정이 없습니다');
+    return mailStatus();
+  }
+  notice('wait', '메일 확인 중…');
+  const before = mailState.messages.map((m) => `${m.accountId}:${m.uid}`);
+  await refreshMail({ force: true });
+
+  if (mailState.errors.length) {
+    notice('bad', mailState.errors[0].message);
+    return mailStatus();
+  }
+  // «몇 통 왔나»는 목록 길이의 차이가 아니라 «전에 없던 것이 몇 개인가»다.
+  // 개수만 비교하면 오래된 것이 밀려난 만큼 새 것을 못 센다.
+  const fresh = mailState.messages.filter((m) => !before.includes(`${m.accountId}:${m.uid}`)).length;
+  notice(fresh ? 'good' : '', fresh ? `새 메일 ${fresh}통` : '새로 온 메일이 없습니다');
+  return mailStatus();
+});
 
 /**
  * 열어보지 않고 읽음으로만 표시한다.
