@@ -195,6 +195,17 @@
     border-radius: 8px; padding: 6px 10px; width: 100%; box-sizing: border-box;
   }
   :root[data-theme="light"] .cust-name { background: rgba(0,0,0,0.05); }
+  /* 서명 — 받는 사람이 볼 모습 그대로 보여준다. 메일은 흰 종이가 기본이다. */
+  .sigbox {
+    background: #fff; color: #1a1a1a;
+    font-family: "맑은 고딕", "Malgun Gothic", sans-serif; font-size: 12px; line-height: 1.5;
+    border-radius: 8px; padding: 10px; min-height: 90px; max-height: 240px;
+    overflow: auto; outline: none;
+    box-shadow: inset 0 0 0 0.5px var(--separator);
+  }
+  .sigbox:empty::before { content: attr(data-ph); color: #9aa0a6; }
+  .sigbox img { max-width: 100%; height: auto; }
+  .sigbox table { border-collapse: collapse; }
   textarea.cust-name {
     font-family: inherit; line-height: 1.5; resize: vertical; min-height: 62px;
     white-space: pre-wrap;
@@ -443,9 +454,18 @@
           <input type="text" id="ed-from-name" class="cust-name" placeholder="이름 (선택)" style="margin-top:6px">
           <span class="hint">비워두면 위에 적힌 값이 그대로 쓰입니다.</span>
         </div>
-        <span class="lbl">서명 <span style="color:var(--tertiary)">— 쓸 때 본문에 자동으로 붙습니다</span></span>
-        <textarea id="ed-sig" class="cust-name" rows="4"
-                  placeholder="홍길동&#10;○○팀 · 010-0000-0000"></textarea>
+        <div class="upline">
+          <span class="lbl">서명 <span style="color:var(--tertiary)">— 쓸 때 본문에 자동으로 붙습니다</span></span>
+          <button class="mini ghost" id="btn-sig-src">HTML</button>
+        </div>
+        <div class="sigbox" id="ed-sig" contenteditable="true"
+             data-ph="웹메일의 서명을 그대로 복사해 붙여넣으세요 (서식·색·표가 유지됩니다)"></div>
+        <textarea id="ed-sig-src" class="cust-name" rows="6" style="display:none"
+                  placeholder="<div>…</div>"></textarea>
+        <span class="hint">
+          이카운트 웹메일 → 메일서명 설정에서 서명 영역을 끌어 선택하고 Ctrl+C,
+          여기에 Ctrl+V 하면 그대로 들어옵니다.
+        </span>
         <div class="upline">
           <span class="lbl" id="ed-msg"></span>
           <span class="helprow">
@@ -1573,7 +1593,7 @@
     $('ed-from').value = a.fromAddress || '';
     $('ed-from').placeholder = a.fromResolved || '보내는 주소';
     $('ed-from-name').value = a.fromName || '';
-    $('ed-sig').value = a.signature || '';
+    setSig(a.signature || '');
     $('ed-msg').textContent = '';
     // 보낼 주소를 못 찾는 계정은 접어두면 안 된다 — 그대로 두면 보내기가 안 된다
     const mustFix = !a.fromResolved || !a.smtpResolved;
@@ -1588,9 +1608,81 @@
       smtpPort: Number($('ed-smtp-port').value) || 0,
       fromAddress: $('ed-from').value.trim(),
       fromName: $('ed-from-name').value.trim(),
-      signature: $('ed-sig').value
+      signature: getSig()
     };
   }
+
+  /**
+   * 붙여넣은 HTML에서 «실행되는 것»을 걷어낸다.
+   * 붙여넣는 순간에 걸러야 해서 메인을 기다릴 수 없다 — 화면 안에 둔다.
+   * 저장할 때 메인이 한 번 더 거른다(그쪽이 최종 판정이다).
+   */
+  function cleanPasted(input) {
+    return String(input || '')
+      .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
+      .replace(/<(object|embed|applet)[\s\S]*?<\/>/gi, '')
+      .replace(/<(link|meta|base)[^>]*>/gi, '')
+      .replace(/@import[^;]+;/gi, '')
+      .replace(/[\s/]on[a-z]+\s*=\s*"[^"]*"/gi, ' ')
+      .replace(/[\s/]on[a-z]+\s*=\s*'[^']*'/gi, ' ')
+      .replace(/[\s/]on[a-z]+\s*=\s*[^\s>]+/gi, ' ')
+      .replace(/(href|src|xlink:href)\s*=\s*"\s*javascript:[^"]*"/gi, '$1="#"')
+      .replace(/(href|src|xlink:href)\s*=\s*'\s*javascript:[^']*'/gi, "$1='#'")
+      .replace(/(href|src|xlink:href)\s*=\s*javascript:[^\s>]*/gi, '$1="#"');
+  }
+
+  // 서명은 서식이 있는 HTML이다. 웹메일에서 복사해 오면 색·표·그림이 그대로 따라온다.
+  // 소스를 직접 고치고 싶을 때를 위해 «HTML» 토글도 둔다 (웹메일에도 같은 게 있다).
+  function setSig(html) {
+    const box = $('ed-sig');
+    // 옛 서명은 그냥 글이었다 — 태그가 없으면 줄바꿈만 살려 넣는다
+    const looksHtml = /<[a-z!/]/i.test(html);
+    if (looksHtml) {
+      box.innerHTML = cleanPasted(html);
+    } else {
+      box.textContent = '';
+      String(html).split(String.fromCharCode(10)).forEach((line, i) => {
+        if (i) box.append(document.createElement('br'));
+        box.append(document.createTextNode(line));
+      });
+    }
+    $('ed-sig-src').value = box.innerHTML;
+    if (sigSrcOn()) toggleSigSrc(false);
+  }
+
+  /**
+   * 지금 소스 보기인가 — 화면에서 그대로 읽는다.
+   * 모듈 수준 let으로 두면 그걸 쓰는 함수가 선언 줄보다 먼저 불릴 때 통째로 터진다
+   * (여기서 실제로 «Cannot access before initialization»으로 저장 버튼까지 죽었다).
+   */
+  function sigSrcOn() {
+    return $('ed-sig-src').style.display !== 'none';
+  }
+
+  function getSig() {
+    return sigSrcOn() ? $('ed-sig-src').value : $('ed-sig').innerHTML;
+  }
+
+  function toggleSigSrc(on) {
+    if (on) $('ed-sig-src').value = $('ed-sig').innerHTML;
+    else $('ed-sig').innerHTML = cleanPasted($('ed-sig-src').value);
+    $('ed-sig').style.display = on ? 'none' : '';
+    $('ed-sig-src').style.display = on ? '' : 'none';
+    $('btn-sig-src').classList.toggle('ghost', !on);
+  }
+  $('btn-sig-src').onclick = () => toggleSigSrc(!sigSrcOn());
+
+  // 붙여넣기는 서식을 살린다 — 서명은 «그대로 오는 것»이 전부다.
+  // 다만 스크립트 같은 건 걷어낸다 (웹메일에서 통째로 복사하면 딸려 온다).
+  $('ed-sig').addEventListener('paste', (e) => {
+    const dt = e.clipboardData;
+    if (!dt) return;
+    const html = dt.getData('text/html');
+    if (!html) return;                       // 글자만 붙여넣는 건 브라우저에 맡긴다
+    e.preventDefault();
+    document.execCommand('insertHTML', false, cleanPasted(html));
+  });
 
   $('btn-ed-more').onclick = () => {
     const on = $('ed-server').style.display === 'none';

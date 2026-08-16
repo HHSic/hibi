@@ -10,6 +10,7 @@
  */
 const { ImapFlow } = require('imapflow');
 const { simpleParser } = require('mailparser');
+const { cleanHtml } = require('./htmlclean');
 
 const CONNECT_TIMEOUT_MS = 20_000;
 // 플래그를 바꾸는 일은 통수만큼 오래 걸린다 — 읽기보다 넉넉히 준다
@@ -439,4 +440,4 @@ function friendly(e) {
   return raw.slice(0, 120);
 }
 
-module.exports = { PRESETS, preset, connect, smtpOf, fromOf, fetchSummary, fetchBody, markRead, test, senderOf, friendly, htmlToText, attachmentsForView, buildViewHtml };
+module.exports = { PRESETS, preset, connect, smtpOf, fromOf, cleanHtml, fetchSummary, fetchBody, markRead, test, senderOf, friendly, htmlToText, attachmentsForView, buildViewHtml };

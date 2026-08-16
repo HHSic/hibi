@@ -620,23 +620,49 @@
     b.onclick = () => putChosen(b.dataset.put);
   }
 
-  /** 서명 — 본문 끝에 붙인다. 답장이면 인용문 위에 온다. */
-  function signatureNode(text) {
-    if (!String(text || '').trim()) return null;
+  /**
+   * 붙여넣은·저장된 HTML에서 «실행되는 것»을 걷어낸다.
+   * 서명은 웹메일에서 통째로 복사해 오는 일이 많고, 이 창에는 메일 보내기와
+   * 파일 첨부가 달려 있다 — 거기 딸려 온 스크립트가 돌면 안 된다.
+   */
+  function cleanPasted(input) {
+    return String(input || '')
+      .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
+      .replace(/<(object|embed|applet)[\s\S]*?<\/\1>/gi, '')
+      .replace(/<(link|meta|base)\b[^>]*>/gi, '')
+      .replace(/@import[^;]+;/gi, '')
+      .replace(/[\s/]on[a-z]+\s*=\s*"[^"]*"/gi, ' ')
+      .replace(/[\s/]on[a-z]+\s*=\s*'[^']*'/gi, ' ')
+      .replace(/[\s/]on[a-z]+\s*=\s*[^\s>]+/gi, ' ')
+      .replace(/(href|src|xlink:href)\s*=\s*"\s*javascript:[^"]*"/gi, '$1="#"')
+      .replace(/(href|src|xlink:href)\s*=\s*'\s*javascript:[^']*'/gi, "$1='#'")
+      .replace(/(href|src|xlink:href)\s*=\s*javascript:[^\s>]*/gi, '$1="#"');
+  }
+
+  /**
+   * 서명 — 본문 끝에 붙인다. 답장이면 인용문 위에 온다.
+   * 서식 있는 HTML이다 (웹메일에서 복사해 온 색·표·그림이 그대로 들어 있다).
+   * 옛 서명은 그냥 글이었으므로 태그가 없으면 줄바꿈만 살려 넣는다.
+   */
+  function signatureNode(sig) {
+    const raw = String(sig || '').trim();
+    if (!raw) return null;
     const wrap = document.createElement('div');
     wrap.className = 'sig';
     wrap.append(document.createElement('br'));
-    const line = document.createElement('div');
-    line.textContent = '--';
-    line.style.color = '#9aa0a6';
-    wrap.append(line);
-    // 남이 아니라 사용자가 쓴 글이지만, 태그로 살아나면 본문이 깨진다 — 글자로만 넣는다
-    String(text).split('\n').forEach((l, i) => {
-      const d = document.createElement('div');
-      if (l) d.textContent = l; else d.append(document.createElement('br'));
-      wrap.append(d);
-      void i;
-    });
+
+    if (/<[a-z!/]/i.test(raw)) {
+      const holder = document.createElement('div');
+      holder.innerHTML = cleanPasted(raw);
+      wrap.append(holder);
+    } else {
+      raw.split('\n').forEach((l) => {
+        const d = document.createElement('div');
+        if (l) d.textContent = l; else d.append(document.createElement('br'));
+        wrap.append(d);
+      });
+    }
     return wrap;
   }
 

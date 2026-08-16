@@ -1123,6 +1123,9 @@ ipcMain.handle('mail:add', async (_e, acc) => {
 ipcMain.handle('mail:update', (_e, { id, patch }) => {
   const p = { ...patch };
   if (p.pass) { p.sealed = secret.seal(p.pass); delete p.pass; }
+  // 서명은 웹메일에서 통째로 복사해 오는 일이 많다. 저장되는 것이 최종본이므로
+  // 여기서 실행되는 것을 걷어낸다 — 화면 쪽 검사는 붙여넣는 순간의 편의일 뿐이다.
+  if (typeof p.signature === 'string') p.signature = mail.cleanHtml(p.signature);
   store.updateMailAccount(id, p);
   refreshMail();
   return mailAccountsForUi();
