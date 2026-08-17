@@ -90,3 +90,18 @@ Windows에서 **큰 라운드 + 매끈한 코너**와 **실시간 배경 블러*
 ## 라이선스
 
 MIT. 폰트는 [Pretendard](https://github.com/orioncactus/pretendard) (SIL OFL 1.1).
+
+## 코드 검사
+
+```bash
+npm run lint
+```
+
+화면 코드(`renderer/*.html` 안의 `<script>`)까지 함께 본다 — 지금까지 앱을 죽인 실수는
+전부 거기서 났다. 핵심 규칙은 두 가지다.
+
+- `no-use-before-define` — 선언보다 먼저 쓴 변수. 그 순간 스크립트가 통째로 멈춘다.
+  위젯이 죽은 것도, 설정 화면이 멈춘 것도 이 실수였다.
+- `no-undef` — 오타 난 함수·변수 이름. 눌러도 아무 일이 없는 버튼의 원인.
+
+고쳐서 올리기 전에 한 번 돌리면 된다.

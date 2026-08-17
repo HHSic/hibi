@@ -87,9 +87,6 @@ function senderOf(envelope) {
   return `${from.address || ''}`.slice(0, 40);
 }
 
-/** 소켓이 조용히 끊겼을 때 사용자에게 보여줄 마지막 사유 */
-let lastSocketError = null;
-
 function connect(account, { timeoutMs = CONNECT_TIMEOUT_MS } = {}) {
   const client = new ImapFlow({
     host: account.host,
@@ -108,9 +105,9 @@ function connect(account, { timeoutMs = CONNECT_TIMEOUT_MS } = {}) {
   // EventEmitter는 듣는 사람이 없는 'error'를 그냥 던져버린다 — 그러면 우리가 await하던
   // 자리가 아니라 아무도 잡지 않는 곳에서 터져 앱 전체가 죽는다 (실제로 죽었다).
   // 여기서 받아두면 정상적인 실패로 흘러가 화면에 사유가 뜬다.
-  client.on('error', (e) => {
-    lastSocketError = (e && e.message) || String(e);
-  });
+  // 사유 자체는 await하던 쪽이 던지는 오류에 이미 들어 있으므로 여기서는 흘려보낸다 —
+  // 듣는 사람이 있다는 것 자체가 목적이다.
+  client.on('error', () => {});
   return client;
 }
 

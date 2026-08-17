@@ -12,11 +12,15 @@
     "release": "electron-builder --win -p always",
     "pack": "electron-builder --win --dir",
     "ship": "node scripts/ship.js",
-    "icon": "electron scripts/make-icon.js"
+    "icon": "electron scripts/make-icon.js",
+    "lint": "eslint ."
   },
   "devDependencies": {
     "electron": "^33.0.0",
     "electron-builder": "^25.1.8",
+    "eslint": "^10.8.1",
+    "eslint-plugin-html": "^8.1.4",
+    "globals": "^17.11.0",
     "pretendard": "^1.3.9"
   },
   "build": {
