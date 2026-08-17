@@ -1368,6 +1368,8 @@
   calEl.addEventListener('pointerdown', (e) => e.stopPropagation());
   window.nunsseom.onCalChanged?.(() => { if (calCard.classList.contains('calon')) loadCal(); });
   window.nunsseom.onCalShow?.(() => toggleCal(true));
+  // 새 메일 알림을 눌러 들어온 경우 — 메일 패널을 펴서 바로 보이게
+  window.nunsseom.onMailShow?.(() => toggleMail(true));
   $('btn-hide').onclick = () => window.nunsseom.hideWidget();
 
   // ── 카드: 클릭하면 예정된 알림 시트, 끌면 창 이동 ──

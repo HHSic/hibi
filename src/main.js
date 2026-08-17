@@ -1,6 +1,6 @@
 const {
   app, BrowserWindow, Tray, Menu, ipcMain, screen,
-  powerMonitor, nativeImage, desktopCapturer, nativeTheme, shell, dialog, clipboard
+  powerMonitor, nativeImage, desktopCapturer, nativeTheme, shell, dialog, clipboard, Notification
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -246,6 +246,42 @@ function takeAnnounce() {
   mailState.pending = 0;
   mailState.lastAnnouncedAt = Date.now();
   return n > 0 ? { count: n, unread: mailState.unread } : null;
+}
+
+/**
+ * 새 메일을 실제로 알린다.
+ *
+ * 위 mailAnnounce()는 «지금이 알릴 때인가»만 판단한다. 그걸 부르는 곳이 없어서
+ * 설정의 «알리는 방식»과 «알림 시각»이 아무 일도 하지 않고 있었다 — 그 자리를 잇는다.
+ *
+ * 휴식 알림과 같은 규칙을 따른다: 발표·전체화면·회의 중이면 알리지 않고 쌓아둔다.
+ * 메일 때문에 발표가 끊기면 안 된다.
+ */
+function announceMail() {
+  if (state.onBreak || state.paused) return;
+  if (holdReason(0)) return;          // 방해 금지 — 끝난 뒤에 알린다 (pending은 그대로 남는다)
+
+  const a = mailAnnounce();
+  if (!a) return;
+
+  const title = `새 메일 ${a.count}통`;
+  const body = mailState.messages.length
+    ? mailState.messages.slice(0, 3).map((m) => m.subject).join('\n')
+    : '';
+
+  // 위젯 머리글에도 남긴다 — 알림을 놓쳐도 여기서 보인다
+  notice('good', title);
+  evlog.log('메일', `알림 · ${title}`);
+
+  if (!Notification.isSupported()) return;
+  const n = new Notification({ title, body, silent: !store.settings.soundEnabled });
+  // 눌러서 바로 볼 수 있게 — 알림만 뜨고 어디로 가야 할지 모르면 소용이 없다
+  n.on('click', () => {
+    store.setSettings({ mailPanel: true });
+    revealWidget();
+    if (widgetWin && !widgetWin.isDestroyed()) widgetWin.webContents.send('mail:show');
+  });
+  n.show();
 }
 
 /**
@@ -527,6 +563,7 @@ function tick() {
       state.hold = null;
     }
   }
+  announceMail();
   pushTick();
 }
 
@@ -664,12 +701,6 @@ function togglePause() {
   state.paused = !state.paused;
   updateTray();
   pushTick();
-}
-
-function toggleWidget() {
-  if (!widgetWin || widgetWin.isDestroyed()) { createWidget(); return; }
-  if (widgetWin.isVisible()) widgetWin.hide();
-  else revealWidget();
 }
 
 /**

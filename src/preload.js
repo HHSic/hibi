@@ -58,6 +58,7 @@ contextBridge.exposeInMainWorld('nunsseom', {
   calOpenEvent: (ev) => ipcRenderer.invoke('cal:open-event', ev),
   calNewEvent: (range) => ipcRenderer.invoke('cal:new-event', range),
   onCalShow: (cb) => ipcRenderer.on('cal:show', () => cb()),
+  onMailShow: (cb) => ipcRenderer.on('mail:show', () => cb()),
   onCalChanged: (cb) => ipcRenderer.on('cal:changed', () => cb()),
   calOpenHelp: (which) => ipcRenderer.invoke('cal:open-help', which),
   calPickFile: () => ipcRenderer.invoke('cal:pick-file'),
