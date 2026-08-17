@@ -65,9 +65,10 @@ module.exports = [
     rules: catchesRealBugs
   },
   {
-    // ── 화면 (HTML 안의 <script>) ────────────────────
+    // ── 화면 ─────────────────────────────────────────
     // 여기가 사고가 나던 곳이다. 반드시 검사한다.
-    files: ['renderer/**/*.html'],
+    // 큰 화면(설정·위젯·쓰기)의 코드는 .js로 빼두었고, 작은 것은 아직 HTML 안에 있다.
+    files: ['renderer/**/*.js', 'renderer/**/*.html'],
     plugins: { html },
     languageOptions: {
       ecmaVersion: 2023,
@@ -79,16 +80,6 @@ module.exports = [
         nunsIcon: 'readonly',
         nunsSound: 'readonly'
       }
-    },
-    rules: catchesRealBugs
-  },
-  {
-    // 화면에 딸린 보조 스크립트 (icons.js, sound.js)
-    files: ['renderer/**/*.js'],
-    languageOptions: {
-      ecmaVersion: 2023,
-      sourceType: 'script',
-      globals: { ...globals.browser }
     },
     rules: catchesRealBugs
   }
