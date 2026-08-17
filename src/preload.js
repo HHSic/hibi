@@ -7,7 +7,8 @@ contextBridge.exposeInMainWorld('nunsseom', {
   onRadius: (cb) => ipcRenderer.on('radius', (_e, v) => cb(v)),
   togglePause: () => ipcRenderer.send('widget:toggle-pause'),
   breakNow: (id) => ipcRenderer.send('widget:break-now', id),
-  openSettings: () => ipcRenderer.send('widget:open-settings'),
+  openSettings: (tab) => ipcRenderer.send('widget:open-settings', tab),
+  onSettingsTab: (cb) => ipcRenderer.on('settings:tab', (_e, t) => cb(t)),
   openStats: (id) => ipcRenderer.send('widget:open-stats', id),
   hideWidget: () => ipcRenderer.send('widget:hide'),
 

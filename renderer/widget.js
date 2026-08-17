@@ -529,48 +529,86 @@ function attachMailRow(row, m) {
   };
 }
 
-// 규칙이 묶어둔 것 — 펼쳐둔 이름만 기억한다 (창을 다시 켜면 다시 접힌다)
-const openGroups = new Set();
+// ── 메일 폴더 ──────────────────────────────────────
+// 한 목록에 다 쏟으면 광고가 자리를 다 먹는다. 그렇다고 규칙으로 걸러 «없애»면,
+// 너무 넓게 잡았을 때 알아챌 방법이 없다 — 조용히 사라지는 메일이 제일 위험하다.
+// 그래서 폴더로 나눈다. 숨긴 것도 폴더 하나일 뿐이고, 언제든 열어볼 수 있다.
+let mailFolder = 'in';
 
 /**
- * 묶음 머리 한 줄. 눌러서 펼치고 접는다.
- * @param cls 시트와 패널이 쓰는 줄 클래스가 다르다
+ * 지금 보고 있는 폴더.
+ * 규칙을 지워 폴더가 사라졌으면 «메일»로 돌아오고, 그 사실을 기억한다 —
+ * 안 그러면 나중에 규칙을 다시 만들었을 때 엉뚱하게 숨김 폴더에서 시작한다.
  */
-function groupHead(g, cls, redraw) {
-  const open = openGroups.has(g.name);
-  const unread = g.items.filter((m) => !m.seen).length;
-  const row = document.createElement('div');
-  row.className = cls + ' mailgroup' + (unread ? '' : ' read');
-  const nm = document.createElement('span');
-  nm.className = 'nm';
-  nm.textContent = `${open ? '▾' : '▸'} ${g.name} ${g.items.length}통`
-    + (unread ? ` · 안 읽음 ${unread}` : '');
-  row.append(nm);
-  row.title = '누르면 펼쳐집니다';
-  row.onclick = (e) => {
-    e.stopPropagation();
-    if (open) openGroups.delete(g.name); else openGroups.add(g.name);
-    redraw();
-  };
-  return row;
+function currentFolder(box) {
+  const list = (box && box.folders) || [];
+  const found = list.find((f) => f.id === mailFolder);
+  if (found) return found;
+  mailFolder = list.length ? list[0].id : 'in';
+  return list[0] || null;
+}
+
+/**
+ * 폴더 줄. 아웃룩의 폴더 창을 좁은 위젯에 맞게 한 줄로 눕힌 것.
+ * @param cls 시트와 패널이 쓰는 칩 클래스가 같다 — 둘 다 이 함수를 쓴다
+ */
+function folderStrip(box, redraw) {
+  const strip = document.createElement('div');
+  strip.className = 'mailtabs';
+  for (const f of (box && box.folders) || []) {
+    const on = f.id === (currentFolder(box) || {}).id;
+    const b = document.createElement('button');
+    b.className = 'mtab' + (on ? ' on' : '') + (f.id === 'hidden' ? ' dim' : '');
+    // 숫자는 언제나 «그 폴더에 몇 통»이다. 안 읽은 수를 섞어 쓰면 3줄인데 2라고 적히는
+    // 일이 생겨서 무슨 수인지 알 수 없게 된다. 안 읽은 것이 있다는 표시는 점으로 따로 한다.
+    b.append(`${f.name} ${f.count}`);
+    if (f.unread) {
+      const dot = document.createElement('i');
+      dot.className = 'mdot';
+      b.append(dot);
+    }
+    b.title = `${f.name} · ${f.count}통`
+      + (f.unread ? ` · 안 읽음 ${f.unread}` : '')
+      + (f.id === 'hidden' ? '\n규칙이 걸러낸 것들입니다. 오른쪽 클릭해서 그 규칙을 끌 수 있어요.' : '');
+    b.onclick = (e) => { e.stopPropagation(); mailFolder = f.id; redraw(); };
+    strip.append(b);
+  }
+  if (!strip.children.length) return null;
+  const gear = document.createElement('button');
+  gear.className = 'mtab gear';
+  gear.textContent = '⚙';
+  gear.title = '필터 규칙 관리';
+  gear.onclick = (e) => { e.stopPropagation(); window.nunsseom.openSettings('mail'); };
+  strip.append(gear);
+  return strip;
+}
+
+/** 규칙에 걸려서 여기 있는 메일이면, 왜 그런지 한 줄 덧붙인다 */
+function whyLine(m) {
+  if (!m.byRule) return null;
+  const s = document.createElement('small');
+  s.className = 'why';
+  s.textContent = m.byRule.why || '';
+  return s;
 }
 
 /** 새 메일 — 일정과 같은 모양으로 아래에 붙인다 */
 function renderMail(box) {
   const sec = $('mailbox');
-  const key = box ? `${box.unread}:${(box.messages || []).length}` : 'none';
+  const folders = (box && box.folders) || [];
+  const cur = currentFolder(box);
+  const key = box ? `${box.unread}:${folders.length}:${cur ? cur.id + cur.count : '-'}` : 'none';
   lastMailBox = box;
   paintNote(box);   // 목록이 비어 아래에서 일찍 빠져나가도 결과는 보여야 한다
   if (mailCard.classList.contains('mailon')) paintMailPanel();
   if (key !== lastMailRender) {
     lastMailRender = key;
     dlog('메일', box
-      ? `받음 · 안읽음 ${box.unread} · 목록 ${(box.messages || []).length}건`
+      ? `받음 · 안읽음 ${box.unread} · 폴더 ${folders.map((f) => `${f.name}(${f.count})`).join(' ') || '없음'}`
       : '받은 것 없음 (설정이 꺼져 있거나 계정 없음)');
   }
-  const groups = (box && box.groups) || [];
   // 패널이 켜져 있으면 시트에도 넣을 이유가 없다 — 같은 목록이 두 번 겹쳐 보인다
-  if (!box || (!(box.messages || []).length && !groups.length) || mailCard.classList.contains('mailon')) {
+  if (!box || !folders.length || mailCard.classList.contains('mailon')) {
     sec.style.display = 'none';
     return;
   }
@@ -579,26 +617,33 @@ function renderMail(box) {
   $('mail-allread').style.display = box.unread ? '' : 'none';
   const host = $('mail-rows');
   host.textContent = '';
-  const put = (m, inGroup) => {
+  // 폴더가 «메일» 하나뿐이면 줄을 안 그린다 — 규칙을 안 쓰는 사람에게는 없던 것과 같아야 한다
+  if (folders.length > 1) {
+    const strip = folderStrip(box, () => renderMail(lastMailBox));
+    if (strip) host.append(strip);
+  }
+  for (const m of (cur && cur.items) || []) {
     const row = document.createElement('div');
     // 읽은 메일은 한 톤 죽여서 안 읽은 것이 먼저 눈에 들어오게 한다
-    row.className = 'row ev mail' + (m.seen ? ' read' : ' now') + (inGroup ? ' ingroup' : '');
+    row.className = 'row ev mail' + (m.seen ? ' read' : ' now');
     const dot = document.createElement('span');
     dot.className = 'evdot';
     const nm = document.createElement('span');
     nm.className = 'nm';
-    nm.textContent = m.subject;
+    nm.append(m.subject);
     nm.title = m.from ? `${m.from} · ${m.subject}` : m.subject;
+    const why = cur.id === 'hidden' ? whyLine(m) : null;
+    if (why) nm.append(why);
     row.append(dot, nm);
     row.title = '두 번 누르면 열립니다 · 오른쪽 클릭하면 메뉴가 나옵니다';
     attachMailRow(row, m);
     host.append(row);
-  };
-  for (const m of box.messages || []) put(m);
-  // 묶음은 아래에 — 봐야 할 것이 위에 오게
-  for (const g of groups) {
-    host.append(groupHead(g, 'row ev mail', () => renderMail(lastMailBox)));
-    if (openGroups.has(g.name)) for (const m of g.items) put(m, true);
+  }
+  if (cur && !cur.items.length) {
+    const p = document.createElement('div');
+    p.className = 'empty';
+    p.textContent = '이 폴더는 비어 있어요';
+    host.append(p);
   }
 }
 
@@ -661,34 +706,41 @@ function paintMailPanel() {
   $('mp-ttl').textContent = box && box.unread ? `메일 · 안 읽음 ${box.unread}` : '메일';
   paintNote(box);
   $('mp-allread').style.display = box && box.unread ? '' : 'none';
-  const list = (box && box.messages) || [];
-  const groups = (box && box.groups) || [];
-  if (!list.length && !groups.length) {
+  const folders = (box && box.folders) || [];
+  const cur = currentFolder(box);
+  if (!folders.length) {
     const p = document.createElement('div');
     p.className = 'calempty';
-    p.textContent = !box ? '설정에서 메일을 연결하세요'
-      : box.filtered ? `새 메일 없음 · 필터가 ${box.filtered}통 숨김`
-        : '새 메일 없음';
+    p.textContent = box ? '새 메일 없음' : '설정에서 메일을 연결하세요';
     host.append(p);
     return;
   }
-  const put = (m, inGroup) => {
+  // 폴더가 «메일» 하나뿐이면 줄을 안 그린다 — 규칙을 안 쓰면 없던 것과 같아야 한다
+  if (folders.length > 1) {
+    const strip = folderStrip(box, () => { paintMailPanel(); resizeForMail(); });
+    if (strip) host.append(strip);
+  }
+  for (const m of (cur && cur.items) || []) {
     const row = document.createElement('div');
-    row.className = 'cev mailrow' + (m.seen ? ' read' : '') + (inGroup ? ' ingroup' : '');
+    row.className = 'cev mailrow' + (m.seen ? ' read' : '');
     const nm = document.createElement('span');
     nm.className = 'nm';
-    nm.textContent = m.subject;
+    nm.append(m.subject);
     // 보낸 사람은 좁은 위젯에서 제목 자리를 잡아먹는다 — 열어보면 나온다
     nm.title = m.from ? `${m.from} · ${m.subject}` : m.subject;
+    // 숨김 폴더에서는 «왜 사라졌나»가 제목만큼 중요하다
+    const why = cur.id === 'hidden' ? whyLine(m) : null;
+    if (why) nm.append(why);
     row.append(nm);
     row.title = '두 번 누르면 열립니다 · 오른쪽 클릭하면 메뉴가 나옵니다';
     attachMailRow(row, m);
     host.append(row);
-  };
-  for (const m of list) put(m);
-  for (const g of groups) {
-    host.append(groupHead(g, 'cev mailrow', () => { paintMailPanel(); resizeForMail(); }));
-    if (openGroups.has(g.name)) for (const m of g.items) put(m, true);
+  }
+  if (cur && !cur.items.length) {
+    const p = document.createElement('div');
+    p.className = 'calempty';
+    p.textContent = cur.id === 'in' ? '새 메일 없음' : '이 폴더는 비어 있어요';
+    host.append(p);
   }
 }
 

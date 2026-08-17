@@ -379,14 +379,35 @@
      둘 다 강조하면 아무것도 강조되지 않는다. */
   .cev.mailrow .nm { color: var(--unread); font-weight: 600; }
   .cev.mailrow.read .nm { color: var(--secondary); font-weight: 400; }
-  /* 규칙이 묶어둔 줄 — 한 통이 아니라 «뭉치»라는 게 보여야 한다.
-     안쪽 줄은 한 칸 들여써서 어디까지가 묶음인지 눈으로 잡히게 한다. */
-  .cev.mailgroup .nm, .sheet .row.ev.mail.mailgroup .nm {
-    color: var(--secondary); font-weight: 500;
+  /* 메일 폴더 줄 — 아웃룩의 폴더 창을 좁은 위젯에 맞게 한 줄로 눕힌 것.
+     칸이 모자라면 접히지 않고 옆으로 굴러간다 — 접히면 위젯 높이가 들쭉날쭉해진다. */
+  .mailtabs {
+    display: flex; gap: 0.125rem; margin-bottom: 0.1875rem;
+    overflow-x: auto; scrollbar-width: none;
   }
-  .cev.mailgroup, .sheet .row.ev.mail.mailgroup { cursor: pointer; }
-  .cev.ingroup, .sheet .row.ev.mail.ingroup { padding-left: 0.75rem; }
-  .sheet .row.ev.mail.mailgroup .evdot { background: var(--tertiary); }
+  .mailtabs::-webkit-scrollbar { display: none; }
+  .mailtabs .mtab {
+    all: unset; cursor: default; flex: none;
+    padding: 0.0625rem 0.3125rem; border-radius: 0.3125rem;
+    font-size: 0.5625rem; font-weight: 600; white-space: nowrap;
+    color: var(--tertiary);
+  }
+  .mailtabs .mtab:hover { background: var(--fill); color: var(--label); }
+  .mailtabs .mtab.on { background: var(--fill-hi); color: var(--label); }
+  /* 숨김은 «지금 보는 곳»이 아니라 «확인하러 가는 곳»이다 — 평소엔 뒤로 물러나 있어야 한다 */
+  .mailtabs .mtab.dim:not(.on) { opacity: 0.6; }
+  .mailtabs .gear { margin-left: auto; font-size: 0.625rem; }
+  /* 안 읽은 것이 있다는 표시. 숫자 자리를 뺏지 않으면서 눈에는 걸리게. */
+  .mailtabs .mdot {
+    display: inline-block; width: 0.25rem; height: 0.25rem; border-radius: 50%;
+    background: var(--unread); margin-left: 0.1875rem; vertical-align: 0.0625rem;
+  }
+  /* 숨긴 메일에는 왜 숨겼는지 붙는다. 이게 없으면 그냥 사라진 것과 같다. */
+  .why {
+    display: block; font-size: 0.5rem; font-weight: 400;
+    color: var(--tertiary); margin-top: 0.0625rem;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   .calempty { font-size: 0.625rem; color: var(--tertiary); padding: 0.1875rem; }
   .inner { transition: opacity 0.16s ease; }
   .card.open .inner { opacity: 0; pointer-events: none; }

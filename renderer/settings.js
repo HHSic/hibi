@@ -1265,6 +1265,12 @@ function showTab(which) {
   }
 }
 for (const t of TABS) $(`tab-${t}`).onclick = () => showTab(t);
+// 위젯의 ⚙에서 바로 필터로 올 수 있게 — 열자마자 탭을 또 찾게 하면 «어디 있지»가 된다.
+// 창이 이미 떠 있으면 주소로는 못 바꾸니 메인이 따로 알려준다.
+if (TABS.includes(params.get('tab'))) showTab(params.get('tab'));
+if (window.nunsseom.onSettingsTab) {
+  window.nunsseom.onSettingsTab((t) => { if (TABS.includes(t)) showTab(t); });
+}
 
 $('btn-done').append(window.nunsIcon('close'));
 $('btn-done').onclick = () => window.nunsseom.closeSettings();

@@ -153,6 +153,7 @@ const mailState = {
   notifyBase: 0,        // 알림 기준이 된 직전 안읽음 — 여기서 늘어난 만큼만 알린다
   filtered: 0,          // 이번에 화면에서 걷어낸 통수 (설정 화면에 보여준다)
   groups: [],           // 묶인 것들 [{ name, items }]
+  folders: [],          // 화면에 보일 폴더 [{ id, name, items, count, unread }]
   toRead: [],           // 규칙이 «자동 읽음»으로 지목한 것
   toSpam: []            // 규칙이 «스팸으로»로 지목한 것
 };
@@ -240,6 +241,9 @@ async function refreshMail({ force = false } = {}) {
       name: g.name,
       items: g.items.slice(0, want)
     }));
+    // 폴더는 «메일 / 묶음들 / 숨김». 숨김은 want에 매이지 않는다 —
+    // 무엇이 걸러졌는지 확인하러 여는 곳이라 잘려 있으면 확인이 안 된다.
+    mailState.folders = mailrules.folders(cut, Math.max(want, 30));
     mailState.messages = cut.visible.slice(0, want);
     mailState.toRead = cut.read;
     mailState.toSpam = cut.spam;
@@ -697,8 +701,8 @@ function pushTick() {
       unread: mailState.unread,
       messages: mailState.messages,
       notice: fresh,
-      // 규칙이 묶어둔 것 — 위젯에서 한 줄로 접어 보여주고, 눌러서 펼친다
-      groups: mailState.groups,
+      // 폴더 — 메일 / 규칙이 묶은 것들 / 숨김. 위젯이 한 번에 한 칸만 보여준다.
+      folders: mailState.folders,
       filtered: mailState.filtered
     }
     : null;
@@ -905,8 +909,16 @@ function resetWidgetSize() {
 }
 
 // ── 설정 창 ───────────────────────────────────────────────
-function openSettings() {
-  if (settingsWin && !settingsWin.isDestroyed()) { settingsWin.focus(); return; }
+const SETTINGS_TABS = ['rem', 'cal', 'mail', 'app'];
+
+/** @param tab 열자마자 보여줄 탭 ('mail' 등). 없으면 마지막 기본값. */
+function openSettings(tab) {
+  const want = SETTINGS_TABS.includes(tab) ? tab : null;
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    if (want) settingsWin.webContents.send('settings:tab', want);
+    settingsWin.focus();
+    return;
+  }
   settingsWin = new BrowserWindow({
     width: 392 + PAD,
     height: 616 + PAD,
@@ -917,7 +929,9 @@ function openSettings() {
     ...glass.windowOptions(),
     webPreferences: { preload: PRELOAD }
   });
-  settingsWin.loadFile(page('settings.html'), { query: glassQuery({ radius: '20' }) });
+  settingsWin.loadFile(page('settings.html'), {
+    query: glassQuery(want ? { radius: '20', tab: want } : { radius: '20' })
+  });
   settingsWin.on('closed', () => { settingsWin = null; });
 }
 
@@ -1074,7 +1088,7 @@ function statsPayloadFull(typeId) {
 // ── IPC ──────────────────────────────────────────────────
 ipcMain.on('widget:toggle-pause', togglePause);
 ipcMain.on('widget:break-now', (_e, id) => startBreak(id ? [id] : null));
-ipcMain.on('widget:open-settings', openSettings);
+ipcMain.on('widget:open-settings', (_e, tab) => openSettings(tab));
 ipcMain.on('widget:open-stats', (_e, id) => openStats(id || null));
 ipcMain.on('widget:hide', () => widgetWin && widgetWin.hide());
 
@@ -1521,6 +1535,37 @@ ipcMain.handle('mail:row-menu', async (e, msg) => {
       click: () => doMarkRead({ accountId: msg.accountId, uids: [msg.uid] })
     }, { type: 'separator' });
   }
+
+  // 이 메일이 규칙에 걸려서 여기 있는 것이라면, 그 규칙을 되돌리는 길이 제일 위에 와야 한다.
+  // 숨김 폴더를 열어보는 이유가 대개 «이건 숨기면 안 되는데»이기 때문이다.
+  // 화면이 준 id를 그대로 믿지 않고 저장된 규칙에서 다시 찾는다.
+  const mark = msg.byRule && msg.byRule.id
+    ? store.mailRules.find((r) => r.id === msg.byRule.id)
+    : null;
+  if (mark) {
+    items.push(
+      {
+        label: `이 규칙 끄기 — ${mailrules.describe(mark)}`,
+        click: () => {
+          store.updateMailRule(mark.id, { on: false });
+          forgetRuleWork();
+          notice('good', '규칙을 껐습니다');
+          refreshMail({ force: true });
+        }
+      },
+      {
+        label: '이 규칙 지우기',
+        click: () => {
+          store.removeMailRule(mark.id);
+          forgetRuleWork();
+          notice('good', '규칙을 지웠습니다');
+          refreshMail({ force: true });
+        }
+      },
+      { type: 'separator' }
+    );
+  }
+
   items.push(
     { label: `숨기기 — ${short}`, click: () => add('hide') },
     ...(base.domain ? [{ label: `숨기기 — ${base.domain} 전부`, click: () => add('hide', { match: base.domain }) }] : []),
