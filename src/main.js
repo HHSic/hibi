@@ -27,6 +27,7 @@ const calcache = require('./calcache');
 const mail = require('./mail');
 const mailbackup = require('./mailbackup');
 const mailrules = require('./mailrules');
+const mailtally = require('./mailtally');
 const send = require('./send');
 const secret = require('./secret');
 
@@ -150,7 +151,11 @@ const mailState = {
   lastAnnouncedAt: 0,   // 마지막으로 "새 메일 n통"을 알린 시각
   pending: 0,           // 알리지 않고 쌓아둔 새 메일 수
   quiet: 0,             // 규칙이 걸러낸(숨김·스팸·알림 안 함) 안 읽은 메일 수
-  notifyBase: 0,        // 알림 기준이 된 직전 안읽음 — 여기서 늘어난 만큼만 알린다
+  // «새 메일 n통»은 통수 뺄셈으로 세면 안 된다. 규칙을 껐다 켜기만 해도 숫자가 움직여서
+  // 오지도 않은 메일이 왔다고 뜬다. 지난번에 무엇을 봤는지를 들고 있다가 진짜 새로 나타난
+  // 것만 센다. 비어 있으면 «아직 한 번도 안 봤다»는 뜻이라 그 판은 세지 않는다 —
+  // 앱을 켤 때마다 쌓여 있던 메일이 전부 «새 메일»이 되면 안 된다.
+  known: null,          // Set<'계정:uid'> — 지난 폴링에서 본 것들
   filtered: 0,          // 이번에 화면에서 걷어낸 통수 (설정 화면에 보여준다)
   groups: [],           // 묶인 것들 [{ name, items }]
   folders: [],          // 화면에 보일 폴더 [{ id, name, items, count, unread }]
@@ -160,7 +165,12 @@ const mailState = {
 
 // 자동 처리는 한 번씩만 — 서버가 느려 몇십 초씩 걸리는데,
 // 폴링마다 같은 메일에 또 명령을 보내면 그동안 다른 일이 전부 막힌다.
-const ruleDone = { read: new Set(), spam: new Set() };
+// 실패한 것은 «했다»가 아니다. 이 서버는 읽음 두 통에 88초가 걸린 적이 있고
+// 쓰기 제한이 90초라, 한 번 걸러 넘어가면 그 메일은 영영 처리되지 않는다.
+// 스팸은 더 나쁘다 — 화면에서는 이미 숨겨져 «옮겨진 것»처럼 보이는데 서버에는 그대로 남는다.
+// 셈은 mailtally가 한다 (거기서만 시험할 수 있다).
+const RULE_RETRY_MS = 5 * 60_000;
+const ruleLog = new mailtally.WorkLog({ tries: 3, retryMs: RULE_RETRY_MS });
 let ruleBusy = false;
 
 /** 저장된 계정을 실제 접속용으로 — 비밀번호를 여기서만 푼다 */
@@ -198,7 +208,6 @@ async function refreshMail({ force = false } = {}) {
   const want = Math.max(1, Math.round(store.settings.mailCount) || 5);
   // 규칙이 걷어낼 몫만큼 더 받아온다. 안 그러면 광고 다섯 통을 숨긴 자리가 빈 채로 남는다.
   const limit = rules.length ? Math.min(want * 3, want + 20) : want;
-  const before = mailState.notifyBase;
   try {
     const errors = [];
     let unread = 0;
@@ -250,9 +259,16 @@ async function refreshMail({ force = false } = {}) {
     mailState.errors = errors;
     mailState.fetchedAt = Date.now();
 
-    const notifyNow = Math.max(0, unread - hiddenUnread - mutedUnread);
-    if (notifyNow > before) mailState.pending += notifyNow - before;
-    mailState.notifyBase = notifyNow;
+    // «새 메일» — 지난번에 없던 것 중 안 읽었고 규칙이 조용히 시키지 않은 것만.
+    // 숨김·스팸은 아예 세지 않고, 알림 안 함은 목록에는 남지만 여기서 빠진다.
+    const quietUids = new Set([
+      ...cut.hidden.map(mailtally.keyOf),
+      ...[...cut.visible, ...groupedAll].filter((m) => cut.mutedUids.has(m.uid)).map(mailtally.keyOf)
+    ]);
+    const tally = mailtally.freshCount(messages, mailState.known, quietUids);
+    mailState.pending += tally.fresh;
+    mailState.known = tally.known;
+    if (!tally.primed) evlog.log('메일', '첫 확인 — 이미 있던 것은 «새 메일»로 세지 않습니다');
 
     evlog.log('메일', `확인 완료 · 계정 ${accounts.length}개 · 안읽음 ${mailState.unread}`
       + ` · 목록 ${mailState.messages.length}건`
@@ -276,9 +292,8 @@ async function refreshMail({ force = false } = {}) {
  */
 async function runServerRules() {
   if (ruleBusy) return;
-  const key = (m) => `${m.accountId}:${m.uid}`;
-  const toRead = mailState.toRead.filter((m) => !m.seen && !ruleDone.read.has(key(m)));
-  const toSpam = mailState.toSpam.filter((m) => !ruleDone.spam.has(key(m)));
+  const toRead = ruleLog.pick('read', mailState.toRead.filter((m) => !m.seen));
+  const toSpam = ruleLog.pick('spam', mailState.toSpam);
   if (!toRead.length && !toSpam.length) return;
 
   ruleBusy = true;
@@ -289,13 +304,11 @@ async function runServerRules() {
       for (const m of list) {
         if (!byAccount.has(m.accountId)) byAccount.set(m.accountId, []);
         byAccount.get(m.accountId).push(m.uid);
-        // 성공이든 실패든 이번 실행에서는 다시 건드리지 않는다.
-        // 실패한 것을 곧바로 되돌리면, 끝에서 부르는 새로고침과 맞물려 끝없이 돈다.
-        ruleDone[action].add(key(m));
       }
       for (const [id, uids] of byAccount) {
         const acc = mailAccountsForUse().find((a) => a.id === id);
         if (!acc) continue;
+        const keys = uids.map((u) => `${id}:${u}`);
         try {
           if (action === 'spam') {
             const r = await mail.moveToSpam(acc, uids);
@@ -306,9 +319,17 @@ async function runServerRules() {
             evlog.log('메일', `규칙 · 자동 읽음 ${r.changed}통`);
             did += r.changed;
           }
+          // 서버가 받아준 뒤에야 «했다»고 적는다
+          ruleLog.ok(action, keys);
         } catch (e) {
-          evlog.log('메일', `규칙 실패 · ${action} · ${e.message}`);
-          notice('bad', `규칙 적용 실패 — ${e.message}`);
+          // 시간을 두고 몇 번 더 — 다만 무한정은 아니다. 곧바로 되돌려 놓으면
+          // 끝에서 부르는 새로고침과 맞물려 느린 서버를 계속 두드리게 된다.
+          const { n, giveUp } = ruleLog.bad(action, keys);
+          evlog.log('메일', `규칙 실패 · ${action} · ${uids.length}통 · ${n}번째`
+            + (giveUp ? ' · 그만둠' : ` · ${Math.round(RULE_RETRY_MS / 60000)}분 뒤 다시`) + ` · ${e.message}`);
+          notice('bad', giveUp
+            ? `규칙 적용을 그만뒀습니다 — ${e.message}`
+            : `규칙 적용 실패, 다시 해봅니다 — ${e.message}`);
         }
       }
     }
@@ -319,10 +340,9 @@ async function runServerRules() {
   if (did && !mailState.loading) refreshMail();
 }
 
-/** 규칙이 바뀌면 «이미 처리함» 표시를 지운다 — 새 규칙은 있던 메일에도 걸려야 한다 */
+/** 규칙이 바뀌면 «이미 처리함»도 «해봤다 안 됐다»도 지운다 — 새 규칙은 있던 메일에도 걸려야 한다 */
 function forgetRuleWork() {
-  ruleDone.read.clear();
-  ruleDone.spam.clear();
+  ruleLog.clear();
 }
 
 /**
@@ -1573,21 +1593,11 @@ ipcMain.handle('mail:row-menu', async (e, msg) => {
     { label: `자동 읽음 — ${short}`, click: () => add('read') },
     { type: 'separator' },
     {
+      // 물어보는 일은 okToSpam 한 곳에서만 한다 — 입구마다 따로 두면 하나씩 빠진다
       label: `스팸으로 보내기 — ${short}`,
       click: async () => {
-        // 서버에서 실제로 옮긴다 — 웹메일에서도 사라진다. 물어보고 한다.
-        const { response } = await dialog.showMessageBox(win || undefined, {
-          type: 'warning',
-          buttons: ['스팸으로', '그만두기'],
-          defaultId: 1,
-          cancelId: 1,
-          title: '스팸으로 보내기',
-          message: `${who} 에서 온 메일을 스팸 폴더로 옮길까요?`,
-          detail: '화면에서만 숨기는 것이 아니라 서버에서 옮깁니다.\n'
-            + '지금 있는 것과 앞으로 오는 것 모두 옮겨집니다. 웹메일에서도 사라집니다.'
-        });
-        if (response !== 0) return;
-        add('spam');
+        const rule = { ...base, action: 'spam' };
+        if (await okToSpam(rule, win)) add('spam');
       }
     },
     { type: 'separator' },
@@ -1606,15 +1616,62 @@ function rulesPayload() {
     groups: mailState.groups.map((g) => ({ name: g.name, count: g.items.length }))
   };
 }
+/** 지금 받아둔 것 중 이 조건에 걸리는 메일 — 규칙을 만들기 전에 보여준다 */
+function wouldHit(rule) {
+  const all = [
+    ...mailState.messages,
+    ...mailState.groups.flatMap((g) => g.items),
+    ...mailState.folders.filter((f) => f.id === 'hidden').flatMap((f) => f.items)
+  ];
+  return all.filter((m) => mailrules.hits({ ...rule, on: true }, m));
+}
+
+/**
+ * «스팸으로»는 서버에서 메일을 옮긴다 — 웹메일에서도 사라진다.
+ * 그래서 규칙이 어디서 만들어지든 이 문을 지나야 한다. 확인을 화면 쪽에 두면
+ * 입구가 늘 때마다 빠뜨리게 된다 — 실제로 설정 화면 쪽이 그렇게 빠져 있었다.
+ *
+ * 조건이 얼마나 넓은지도 여기서 같이 보여준다. «제목에 안내»처럼 무심코 적은 한 마디가
+ * 사내 공지까지 쓸어가는데, 숫자를 보기 전에는 그걸 알 방법이 없다.
+ */
+async function okToSpam(rule, parent) {
+  if (!rule || rule.action !== 'spam' || rule.on === false) return true;
+  const caught = wouldHit(rule);
+  const sample = caught.slice(0, 3).map((m) => ' · ' + String(m.subject || '(제목 없음)').slice(0, 46));
+  const { response } = await dialog.showMessageBox(parent || undefined, {
+    type: 'warning',
+    buttons: ['스팸으로', '그만두기'],
+    defaultId: 1,
+    cancelId: 1,
+    title: '스팸으로 보내기',
+    message: caught.length
+      ? `지금 받아둔 메일 중 ${caught.length}통이 이 조건에 걸립니다.`
+      : '지금 받아둔 메일 중에는 걸리는 것이 없습니다.',
+    detail: (sample.length ? sample.join('\n') + '\n\n' : '')
+      + `조건: ${mailrules.describe(rule)}\n\n`
+      + '화면에서만 숨기는 것이 아니라 서버의 스팸 폴더로 옮깁니다.\n'
+      + '지금 있는 것과 앞으로 오는 것 모두 옮겨지고, 웹메일에서도 사라집니다.'
+  });
+  return response === 0;
+}
+
 ipcMain.handle('mail:rules', () => rulesPayload());
-ipcMain.handle('mail:rule-add', async (_e, rule) => {
+ipcMain.handle('mail:rule-add', async (e, rule) => {
+  if (!await okToSpam(rule, BrowserWindow.fromWebContents(e.sender))) return rulesPayload();
   store.addMailRule(rule || {});
   forgetRuleWork();
   // 방금 만든 규칙이 지금 목록에 바로 먹히게 한다 — 다음 주기(몇 분)를 기다리면 «안 됐네» 싶다
   await refreshMail({ force: true });
   return rulesPayload();
 });
-ipcMain.handle('mail:rule-update', async (_e, { id, patch } = {}) => {
+ipcMain.handle('mail:rule-update', async (e, { id, patch } = {}) => {
+  // 꺼둔 스팸 규칙을 다시 켜는 것도 «지금부터 옮긴다»와 같은 일이다
+  const now = store.mailRules.find((r) => r.id === id);
+  const after = { ...(now || {}), ...(patch || {}) };
+  const wakingUp = after.action === 'spam' && after.on !== false && (!now || now.on === false);
+  if (wakingUp && !await okToSpam(after, BrowserWindow.fromWebContents(e.sender))) {
+    return rulesPayload();
+  }
   store.updateMailRule(id, patch || {});
   forgetRuleWork();
   await refreshMail({ force: true });
