@@ -730,6 +730,7 @@ async function loadMail() {
   renderMailAccounts();
   renderSigAccs();
   loadBook();
+  loadRules();
 }
 
 function mailMsg(kind, text) {
@@ -922,6 +923,98 @@ $('btn-ed-test').onclick = async () => {
   const r = await window.nunsseom.mailSmtpTest(sigForm());
   $('ed-msg').textContent = r.message;
 };
+
+// ── 필터 ──────────────────────────────────────────
+// 만들기는 위젯의 오른쪽 클릭이 주된 길이다. 여기는 «무엇이 걸려 있나»를 보고 끄고 지우는 곳.
+let rulesData = { rules: [], actions: {}, filtered: 0, groups: [] };
+
+function renderRules() {
+  const sel = $('fl-action');
+  if (!sel.options.length) {
+    for (const [id, name] of Object.entries(rulesData.actions)) {
+      const o = document.createElement('option');
+      o.value = id;
+      o.textContent = name;
+      sel.append(o);
+    }
+  }
+  const sum = $('fl-sum');
+  const bits = [];
+  if (rulesData.filtered) bits.push(`지금 ${rulesData.filtered}통 숨김`);
+  for (const g of rulesData.groups) bits.push(`${g.name} ${g.count}통`);
+  sum.textContent = bits.length
+    ? bits.join(' · ')
+    : '위젯은 몇 줄만 보입니다. 메일 목록에서 오른쪽 클릭하면 그 자리에서 규칙이 만들어집니다.';
+
+  const host = $('fl-list');
+  host.textContent = '';
+  if (!rulesData.rules.length) {
+    const p = document.createElement('div');
+    p.className = 'col';
+    p.textContent = '아직 규칙이 없습니다';
+    p.style.fontSize = '11.5px';
+    p.style.color = 'var(--tertiary)';
+    host.append(p);
+    return;
+  }
+  const where = { from: '보낸사람', subject: '제목', any: '아무 데나' };
+  for (const r of rulesData.rules) {
+    const row = document.createElement('div');
+    row.className = 'rem';
+    const g = document.createElement('span');
+    g.className = 'g emoji';
+    g.textContent = r.action === 'spam' ? '🚫' : r.action === 'group' ? '📦' : '🧹';
+    // 고칠 수 없는 값이므로 입력칸처럼 보이면 안 된다 — 눌러보고 «왜 안 써지지» 하게 된다.
+    // 조건이 길어 잘리는 일이 없도록 동작은 아랫줄로 내린다 («*@stcdev....»만 보이면 쓸모없다)
+    const nm = document.createElement('span');
+    nm.className = 'nm flcond' + (r.on === false ? ' off' : '');
+    const wh = document.createElement('span');
+    wh.className = 'flwhere';
+    wh.textContent = where[r.field] || r.field;
+    const mt = document.createElement('span');
+    mt.className = 'flmatch';
+    mt.textContent = r.match;
+    const sub = document.createElement('small');
+    sub.textContent = (rulesData.actions[r.action] || r.action) + (r.label ? ` → ${r.label}` : '');
+    nm.append(wh, mt, sub);
+    // 지우기 전에 잠깐 꺼보고 확인할 수 있어야 한다 — 규칙은 잘못 만들기 쉽다
+    const off = document.createElement('button');
+    off.className = 'mini ghost';
+    off.textContent = r.on === false ? '켜기' : '끄기';
+    off.onclick = async () => {
+      rulesData = await window.nunsseom.mailRuleUpdate(r.id, { on: r.on === false });
+      renderRules();
+    };
+    const del = document.createElement('button');
+    del.className = 'mini ghost';
+    del.textContent = '삭제';
+    del.onclick = async () => {
+      rulesData = await window.nunsseom.mailRuleRemove(r.id);
+      renderRules();
+    };
+    row.append(g, nm, off, del);
+    host.append(row);
+  }
+}
+
+$('btn-fl-add').onclick = async () => {
+  const match = $('fl-match').value.trim();
+  if (!match) { $('fl-match').focus(); return; }
+  rulesData = await window.nunsseom.mailRuleAdd({
+    field: $('fl-field').value,
+    match,
+    action: $('fl-action').value,
+    label: $('fl-label').value.trim()
+  });
+  $('fl-match').value = '';
+  $('fl-label').value = '';
+  renderRules();
+};
+
+async function loadRules() {
+  rulesData = await window.nunsseom.mailRules();
+  renderRules();
+}
 
 // ── 주소록 ────────────────────────────────────────
 let book = [];

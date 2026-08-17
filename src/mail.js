@@ -168,7 +168,7 @@ async function markRead(account, uids, { read = true } = {}) {
     };
 
     const list = (uids && uids.length)
-      ? uids.map(Number).filter((n) => Number.isFinite(n))
+      ? uidList(uids)
       : (await client.search({ seen: !read }, { uid: true }) || []);
     if (!list.length) return { changed: 0, diag };
 
@@ -212,6 +212,64 @@ async function markRead(account, uids, { read = true } = {}) {
       throw e;
     }
     return { changed: list.length, diag };
+  } finally {
+    try { await client.logout(); } catch { client.close(); }
+  }
+}
+
+/**
+ * 스팸 폴더 찾기.
+ * 이름은 서버마다 다르다. 용도 표시(\Junk)를 먼저 믿고, 없으면 흔한 이름으로 짐작한다.
+ * 이카운트처럼 용도를 안 알려주는 서버가 있어서 이름 짐작이 실제로 필요하다.
+ */
+const JUNK_NAME = /^(junk|junk e-?mail|spam|bulk mail|스팸|스팸메일함|스팸 메일함|정크)$/i;
+
+/**
+ * UID 목록 다듬기.
+ * Number(null)과 Number('')은 0이고 0은 유한한 수다 — 그대로 두면 없는 메일 «0번»을
+ * 서버에 들이밀게 된다. IMAP UID는 1부터 시작하는 정수다.
+ */
+function uidList(uids) {
+  return (uids || []).map(Number).filter((n) => Number.isInteger(n) && n > 0);
+}
+
+async function findJunk(client) {
+  const boxes = await client.list();
+  return boxes.find((b) => b.specialUse === '\\Junk')
+    || boxes.find((b) => JUNK_NAME.test(b.name))
+    // 하위 폴더로 둔 서버도 있다 (INBOX/스팸메일함)
+    || boxes.find((b) => JUNK_NAME.test(String(b.path).split(b.delimiter || '/').pop()))
+    || null;
+}
+
+/**
+ * 스팸 폴더로 옮긴다.
+ *
+ * 화면에서 숨기는 것과 다르다 — 서버에서 실제로 치우므로 웹메일에서도 사라지고,
+ * 다음에 다시 안 내려온다. 그래서 «되돌릴 수 없는 일»에 가깝고, 규칙이 정확할 때만 쓴다.
+ *
+ * MOVE를 모르는 서버에서는 라이브러리가 알아서 복사 + 삭제표시 + 정리로 대신한다.
+ */
+async function moveToSpam(account, uids) {
+  const list = uidList(uids);
+  if (!list.length) return { moved: 0 };
+
+  const client = connect(account, { timeoutMs: WRITE_TIMEOUT_MS });
+  await client.connect();
+  try {
+    const junk = await findJunk(client);
+    if (!junk) throw new Error('스팸 폴더를 찾지 못했습니다');
+    const box = await client.mailboxOpen(account.mailbox || 'INBOX', { readOnly: false });
+    if (box.path === junk.path) return { moved: 0, mailbox: junk.path };
+
+    let moved = 0;
+    for (let i = 0; i < list.length; i += FLAG_CHUNK) {
+      const part = list.slice(i, i + FLAG_CHUNK);
+      const r = await client.messageMove(part, junk.path, { uid: true });
+      if (r === false) throw new Error('서버가 옮기기를 거부했습니다');
+      moved += part.length;
+    }
+    return { moved, mailbox: junk.path };
   } finally {
     try { await client.logout(); } catch { client.close(); }
   }
@@ -437,4 +495,4 @@ function friendly(e) {
   return raw.slice(0, 120);
 }
 
-module.exports = { PRESETS, preset, connect, smtpOf, fromOf, cleanHtml, fetchSummary, fetchBody, markRead, test, senderOf, friendly, htmlToText, attachmentsForView, buildViewHtml };
+module.exports = { PRESETS, preset, connect, smtpOf, fromOf, cleanHtml, fetchSummary, fetchBody, markRead, moveToSpam, findJunk, test, senderOf, friendly, htmlToText, attachmentsForView, buildViewHtml };

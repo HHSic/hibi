@@ -212,6 +212,18 @@
   }
   /* 주소록 줄 — 이름은 그 자리에서 고친다 */
   .rem.acct input.cust-name { width: auto; padding: 4px 8px; font-size: 12.5px; }
+  /* 필터 줄 — 조건은 못 고치므로 입력칸 모양을 주지 않는다.
+     동작은 아랫줄로 내린다. 옆에 두면 조건이 «*@stcdev....»로 잘려 쓸모가 없어진다. */
+  .flcond { min-width: 0; }
+  .flcond .flmatch {
+    font-size: 12.5px; font-weight: 500;
+    overflow-wrap: anywhere;   /* 긴 주소는 잘리는 것보다 접히는 게 낫다 */
+  }
+  .flcond.off { opacity: 0.45; }
+  .flwhere {
+    font-size: 10.5px; font-weight: 400; color: var(--secondary);
+    background: var(--fill); border-radius: 5px; padding: 1px 5px; margin-right: 6px;
+  }
   .cust-name:focus { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent); }
   .emoji-grid {
     display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; margin-top: 8px;
@@ -473,6 +485,37 @@
             <button class="mini" id="btn-ed-save">저장</button>
           </span>
         </div>
+      </div>
+    </div>
+
+    <div class="sec">필터</div>
+    <div class="group">
+      <div class="col">
+        <span class="hint" id="fl-sum">
+          위젯은 몇 줄만 보입니다. 광고·자동알림이 자리를 다 차지하지 않게 걸러냅니다.
+          메일 목록에서 <b>오른쪽 클릭</b>하면 그 자리에서 규칙이 만들어집니다.
+        </span>
+      </div>
+      <div id="fl-list"></div>
+      <div class="col">
+        <span class="lbl">직접 넣기</span>
+        <div class="helprow">
+          <select id="fl-field" class="cust-name" style="width:82px">
+            <option value="from">보낸사람</option>
+            <option value="subject">제목</option>
+            <option value="any">아무 데나</option>
+          </select>
+          <input type="text" id="fl-match" class="cust-name" placeholder="(광고)  또는  *@stcdev.com" style="flex:1">
+        </div>
+        <div class="helprow">
+          <select id="fl-action" class="cust-name" style="flex:1"></select>
+          <input type="text" id="fl-label" class="cust-name" placeholder="묶음 이름 (묶기일 때)" style="width:120px">
+          <button class="mini" id="btn-fl-add">넣기</button>
+        </div>
+        <span class="hint">
+          적은 글자가 들어 있으면 걸립니다. <b>*</b>만 «아무거나»라는 뜻이에요 — <b>*@stcdev.com</b> 은 그 도메인 전부.<br>
+          <b>스팸으로</b>는 화면만이 아니라 서버에서 옮깁니다. 웹메일에서도 사라지니 확실할 때만 쓰세요.
+        </span>
       </div>
     </div>
 

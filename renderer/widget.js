@@ -524,10 +524,35 @@ function attachMailRow(row, m) {
     e.stopPropagation();
     // m.seen은 마지막으로 그렸을 때의 값이다. 방금 눌러 흐려진 줄을 또 누르면
     // 틱이 오기 전이라 m.seen은 아직 false다 — 화면 상태도 같이 봐야 한다.
-    if (m.seen || row.classList.contains('read')) return;
-    row.classList.add('read');           // 서버 응답을 기다리지 않고 바로 흐리게
-    markRead({ accountId: m.accountId, uids: [m.uid] });
+    const seen = m.seen || row.classList.contains('read');
+    window.nunsseom.mailRowMenu({ ...m, seen });
   };
+}
+
+// 규칙이 묶어둔 것 — 펼쳐둔 이름만 기억한다 (창을 다시 켜면 다시 접힌다)
+const openGroups = new Set();
+
+/**
+ * 묶음 머리 한 줄. 눌러서 펼치고 접는다.
+ * @param cls 시트와 패널이 쓰는 줄 클래스가 다르다
+ */
+function groupHead(g, cls, redraw) {
+  const open = openGroups.has(g.name);
+  const unread = g.items.filter((m) => !m.seen).length;
+  const row = document.createElement('div');
+  row.className = cls + ' mailgroup' + (unread ? '' : ' read');
+  const nm = document.createElement('span');
+  nm.className = 'nm';
+  nm.textContent = `${open ? '▾' : '▸'} ${g.name} ${g.items.length}통`
+    + (unread ? ` · 안 읽음 ${unread}` : '');
+  row.append(nm);
+  row.title = '누르면 펼쳐집니다';
+  row.onclick = (e) => {
+    e.stopPropagation();
+    if (open) openGroups.delete(g.name); else openGroups.add(g.name);
+    redraw();
+  };
+  return row;
 }
 
 /** 새 메일 — 일정과 같은 모양으로 아래에 붙인다 */
@@ -543,8 +568,9 @@ function renderMail(box) {
       ? `받음 · 안읽음 ${box.unread} · 목록 ${(box.messages || []).length}건`
       : '받은 것 없음 (설정이 꺼져 있거나 계정 없음)');
   }
+  const groups = (box && box.groups) || [];
   // 패널이 켜져 있으면 시트에도 넣을 이유가 없다 — 같은 목록이 두 번 겹쳐 보인다
-  if (!box || !box.messages || !box.messages.length || mailCard.classList.contains('mailon')) {
+  if (!box || (!(box.messages || []).length && !groups.length) || mailCard.classList.contains('mailon')) {
     sec.style.display = 'none';
     return;
   }
@@ -553,10 +579,10 @@ function renderMail(box) {
   $('mail-allread').style.display = box.unread ? '' : 'none';
   const host = $('mail-rows');
   host.textContent = '';
-  for (const m of box.messages) {
+  const put = (m, inGroup) => {
     const row = document.createElement('div');
     // 읽은 메일은 한 톤 죽여서 안 읽은 것이 먼저 눈에 들어오게 한다
-    row.className = 'row ev mail' + (m.seen ? ' read' : ' now');
+    row.className = 'row ev mail' + (m.seen ? ' read' : ' now') + (inGroup ? ' ingroup' : '');
     const dot = document.createElement('span');
     dot.className = 'evdot';
     const nm = document.createElement('span');
@@ -564,9 +590,15 @@ function renderMail(box) {
     nm.textContent = m.subject;
     nm.title = m.from ? `${m.from} · ${m.subject}` : m.subject;
     row.append(dot, nm);
-    row.title = '두 번 누르면 열립니다 · 오른쪽 클릭하면 읽음으로만 표시합니다';
+    row.title = '두 번 누르면 열립니다 · 오른쪽 클릭하면 메뉴가 나옵니다';
     attachMailRow(row, m);
     host.append(row);
+  };
+  for (const m of box.messages || []) put(m);
+  // 묶음은 아래에 — 봐야 할 것이 위에 오게
+  for (const g of groups) {
+    host.append(groupHead(g, 'row ev mail', () => renderMail(lastMailBox)));
+    if (openGroups.has(g.name)) for (const m of g.items) put(m, true);
   }
 }
 
@@ -630,25 +662,33 @@ function paintMailPanel() {
   paintNote(box);
   $('mp-allread').style.display = box && box.unread ? '' : 'none';
   const list = (box && box.messages) || [];
-  if (!list.length) {
+  const groups = (box && box.groups) || [];
+  if (!list.length && !groups.length) {
     const p = document.createElement('div');
     p.className = 'calempty';
-    p.textContent = box ? '새 메일 없음' : '설정에서 메일을 연결하세요';
+    p.textContent = !box ? '설정에서 메일을 연결하세요'
+      : box.filtered ? `새 메일 없음 · 필터가 ${box.filtered}통 숨김`
+        : '새 메일 없음';
     host.append(p);
     return;
   }
-  for (const m of list) {
+  const put = (m, inGroup) => {
     const row = document.createElement('div');
-    row.className = 'cev mailrow' + (m.seen ? ' read' : '');
+    row.className = 'cev mailrow' + (m.seen ? ' read' : '') + (inGroup ? ' ingroup' : '');
     const nm = document.createElement('span');
     nm.className = 'nm';
     nm.textContent = m.subject;
     // 보낸 사람은 좁은 위젯에서 제목 자리를 잡아먹는다 — 열어보면 나온다
     nm.title = m.from ? `${m.from} · ${m.subject}` : m.subject;
     row.append(nm);
-    row.title = '두 번 누르면 열립니다 · 오른쪽 클릭하면 읽음으로만 표시합니다';
+    row.title = '두 번 누르면 열립니다 · 오른쪽 클릭하면 메뉴가 나옵니다';
     attachMailRow(row, m);
     host.append(row);
+  };
+  for (const m of list) put(m);
+  for (const g of groups) {
+    host.append(groupHead(g, 'cev mailrow', () => { paintMailPanel(); resizeForMail(); }));
+    if (openGroups.has(g.name)) for (const m of g.items) put(m, true);
   }
 }
 

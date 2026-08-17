@@ -26,6 +26,7 @@ const planner = require('./planner');
 const calcache = require('./calcache');
 const mail = require('./mail');
 const mailbackup = require('./mailbackup');
+const mailrules = require('./mailrules');
 const send = require('./send');
 const secret = require('./secret');
 
@@ -147,8 +148,19 @@ const mailState = {
   fetchedAt: 0,
   loading: false,
   lastAnnouncedAt: 0,   // 마지막으로 "새 메일 n통"을 알린 시각
-  pending: 0            // 알리지 않고 쌓아둔 새 메일 수
+  pending: 0,           // 알리지 않고 쌓아둔 새 메일 수
+  quiet: 0,             // 규칙이 걸러낸(숨김·스팸·알림 안 함) 안 읽은 메일 수
+  notifyBase: 0,        // 알림 기준이 된 직전 안읽음 — 여기서 늘어난 만큼만 알린다
+  filtered: 0,          // 이번에 화면에서 걷어낸 통수 (설정 화면에 보여준다)
+  groups: [],           // 묶인 것들 [{ name, items }]
+  toRead: [],           // 규칙이 «자동 읽음»으로 지목한 것
+  toSpam: []            // 규칙이 «스팸으로»로 지목한 것
 };
+
+// 자동 처리는 한 번씩만 — 서버가 느려 몇십 초씩 걸리는데,
+// 폴링마다 같은 메일에 또 명령을 보내면 그동안 다른 일이 전부 막힌다.
+const ruleDone = { read: new Set(), spam: new Set() };
+let ruleBusy = false;
 
 /** 저장된 계정을 실제 접속용으로 — 비밀번호를 여기서만 푼다 */
 function mailAccountsForUse() {
@@ -181,7 +193,11 @@ async function refreshMail({ force = false } = {}) {
   }
 
   mailState.loading = true;
-  const before = mailState.unread;
+  const rules = store.mailRules.filter((r) => r.on !== false);
+  const want = Math.max(1, Math.round(store.settings.mailCount) || 5);
+  // 규칙이 걷어낼 몫만큼 더 받아온다. 안 그러면 광고 다섯 통을 숨긴 자리가 빈 채로 남는다.
+  const limit = rules.length ? Math.min(want * 3, want + 20) : want;
+  const before = mailState.notifyBase;
   try {
     const errors = [];
     let unread = 0;
@@ -189,7 +205,7 @@ async function refreshMail({ force = false } = {}) {
     for (const acc of accounts) {
       try {
         const r = await mail.fetchSummary(acc, {
-          limit: store.settings.mailCount || 5,
+          limit,
           onlyUnread: store.settings.mailOnlyUnread !== false
         });
         unread += r.unread;
@@ -205,13 +221,39 @@ async function refreshMail({ force = false } = {}) {
       .map((m) => ({ address: m.fromAddress, name: m.fromName })));
 
     messages.sort((a, b) => b.at - a.at);
-    mailState.unread = unread;
-    mailState.messages = messages.slice(0, Math.max(1, Math.round(store.settings.mailCount) || 5));
+
+    // 규칙 적용 — 화면에서 걷어내는 것과 알림에서 빼는 것은 다르다.
+    //   숨김·스팸  → 목록에서도 빠지고 안읽음 수에서도 빠진다 (없는 셈)
+    //   알림 안 함 → 목록에는 남지만 «새 메일» 알림을 띄우지 않는다
+    const cut = mailrules.apply(messages, rules);
+    const unreadOf = (list) => list.filter((m) => !m.seen).length;
+    const hiddenUnread = unreadOf(cut.hidden);
+    const groupedAll = cut.groups.flatMap((g) => g.items);
+    const mutedUnread = unreadOf([...cut.visible, ...groupedAll].filter((m) => cut.mutedUids.has(m.uid)));
+
+    // 서버가 세어 준 안읽음은 «받은 목록 너머»까지 센다. 걷어낸 몫만 빼면 되고,
+    // 0 아래로는 내려가지 않게 막는다 (목록 밖에 숨길 것이 더 있으면 어긋난다).
+    mailState.unread = Math.max(0, unread - hiddenUnread);
+    mailState.quiet = hiddenUnread + mutedUnread;
+    mailState.filtered = cut.hidden.length;
+    mailState.groups = cut.groups.map((g) => ({
+      name: g.name,
+      items: g.items.slice(0, want)
+    }));
+    mailState.messages = cut.visible.slice(0, want);
+    mailState.toRead = cut.read;
+    mailState.toSpam = cut.spam;
     mailState.errors = errors;
     mailState.fetchedAt = Date.now();
-    if (unread > before) mailState.pending += unread - before;
-    evlog.log('메일', `확인 완료 · 계정 ${accounts.length}개 · 안읽음 ${unread}`
+
+    const notifyNow = Math.max(0, unread - hiddenUnread - mutedUnread);
+    if (notifyNow > before) mailState.pending += notifyNow - before;
+    mailState.notifyBase = notifyNow;
+
+    evlog.log('메일', `확인 완료 · 계정 ${accounts.length}개 · 안읽음 ${mailState.unread}`
       + ` · 목록 ${mailState.messages.length}건`
+      + (rules.length ? ` · 규칙 ${rules.length}개로 ${cut.hidden.length}건 숨김`
+        + (cut.groups.length ? ` · ${cut.groups.length}묶음` : '') : '')
       + (errors.length ? ` · 실패 ${errors.length}건: ${errors[0].message}` : ''));
     if (errors.length) console.warn('[mail]', errors.map((e) => `${e.name}: ${e.message}`).join(', '));
   } finally {
@@ -219,6 +261,64 @@ async function refreshMail({ force = false } = {}) {
   }
   // 새로 온 것을 파일로 남긴다. 기다리지 않는다 — 메일 목록은 이미 화면에 올라가야 한다.
   autoBackupNew();
+  // 서버를 만지는 규칙(자동 읽음·스팸)도 뒤에서 따로 돈다. 여기서 기다리면
+  // 느린 서버에서 목록이 1분 넘게 안 뜬다 (실제로 88초가 걸린 적이 있다).
+  runServerRules();
+}
+
+/**
+ * «자동 읽음»과 «스팸으로»를 서버에 반영한다.
+ * 화면 갱신과 떼어 놓고 한 번에 하나씩만 돈다 — 느린 서버에서 명령이 겹치면 소켓이 끊긴다.
+ */
+async function runServerRules() {
+  if (ruleBusy) return;
+  const key = (m) => `${m.accountId}:${m.uid}`;
+  const toRead = mailState.toRead.filter((m) => !m.seen && !ruleDone.read.has(key(m)));
+  const toSpam = mailState.toSpam.filter((m) => !ruleDone.spam.has(key(m)));
+  if (!toRead.length && !toSpam.length) return;
+
+  ruleBusy = true;
+  let did = 0;
+  try {
+    for (const [action, list] of [['spam', toSpam], ['read', toRead]]) {
+      const byAccount = new Map();
+      for (const m of list) {
+        if (!byAccount.has(m.accountId)) byAccount.set(m.accountId, []);
+        byAccount.get(m.accountId).push(m.uid);
+        // 성공이든 실패든 이번 실행에서는 다시 건드리지 않는다.
+        // 실패한 것을 곧바로 되돌리면, 끝에서 부르는 새로고침과 맞물려 끝없이 돈다.
+        ruleDone[action].add(key(m));
+      }
+      for (const [id, uids] of byAccount) {
+        const acc = mailAccountsForUse().find((a) => a.id === id);
+        if (!acc) continue;
+        try {
+          if (action === 'spam') {
+            const r = await mail.moveToSpam(acc, uids);
+            evlog.log('메일', `규칙 · 스팸으로 ${r.moved}통 → ${r.mailbox}`);
+            did += r.moved;
+          } else {
+            const r = await mail.markRead(acc, uids, { read: true });
+            evlog.log('메일', `규칙 · 자동 읽음 ${r.changed}통`);
+            did += r.changed;
+          }
+        } catch (e) {
+          evlog.log('메일', `규칙 실패 · ${action} · ${e.message}`);
+          notice('bad', `규칙 적용 실패 — ${e.message}`);
+        }
+      }
+    }
+  } finally {
+    ruleBusy = false;
+  }
+  // 서버가 바뀌었으니 숫자를 맞춘다. 바뀐 게 없으면 부르지 않는다 — 헛돌기만 한다.
+  if (did && !mailState.loading) refreshMail();
+}
+
+/** 규칙이 바뀌면 «이미 처리함» 표시를 지운다 — 새 규칙은 있던 메일에도 걸려야 한다 */
+function forgetRuleWork() {
+  ruleDone.read.clear();
+  ruleDone.spam.clear();
 }
 
 /**
@@ -593,7 +693,14 @@ function pushTick() {
   const nt = mailState.notice;
   const fresh = nt && (nt.kind === 'wait' || Date.now() - nt.at < 8000) ? nt : null;
   const mailBox = (store.settings.mailEnabled && store.settings.mailShow)
-    ? { unread: mailState.unread, messages: mailState.messages, notice: fresh }
+    ? {
+      unread: mailState.unread,
+      messages: mailState.messages,
+      notice: fresh,
+      // 규칙이 묶어둔 것 — 위젯에서 한 줄로 접어 보여주고, 눌러서 펼친다
+      groups: mailState.groups,
+      filtered: mailState.filtered
+    }
     : null;
   logMailPayload(mailBox);
 
@@ -1206,7 +1313,7 @@ function notice(kind, text) {
   mailState.notice = { at: Date.now(), kind, text };
 }
 
-ipcMain.handle('mail:mark-read', async (_e, { accountId, uids, read = true } = {}) => {
+async function doMarkRead({ accountId, uids, read = true } = {}) {
   const accounts = mailAccountsForUse().filter((a) => !accountId || a.id === accountId);
   if (!accounts.length) {
     notice('bad', '쓸 수 있는 계정이 없습니다');
@@ -1245,7 +1352,9 @@ ipcMain.handle('mail:mark-read', async (_e, { accountId, uids, read = true } = {
     message: failed.length ? failed[0] : '',
     ...mailStatus()
   };
-});
+}
+
+ipcMain.handle('mail:mark-read', (_e, opts) => doMarkRead(opts || {}));
 
 // ── 메일 쓰기 ───────────────────────────────────────────
 // 받기(IMAP)와 보내기(SMTP)는 서버가 다르다. 창은 하나만 띄운다 —
@@ -1381,6 +1490,96 @@ ipcMain.handle('compose:send', async (_e, msg) => {
     refreshMail();
   }
   return r;
+});
+
+/**
+ * 목록에서 오른쪽 클릭 — 여기가 규칙을 만드는 주된 길이다.
+ *
+ * 설정 화면에 들어가 조건을 손으로 적게 하면 아무도 안 쓴다.
+ * 「이 광고 또 왔네」 하는 그 순간에 두 번 눌러 끝나야 한다.
+ *
+ * HTML 메뉴가 아니라 진짜 메뉴를 쓴다 — 위젯은 작고 테두리가 없어서
+ * 직접 그리면 창 밖으로 잘린다.
+ */
+ipcMain.handle('mail:row-menu', async (e, msg) => {
+  if (!msg || !msg.uid) return null;
+  const win = BrowserWindow.fromWebContents(e.sender);
+  const base = mailrules.ruleFor(msg, 'hide');
+  const who = base.match || '(보낸사람 모름)';
+  const short = who.length > 34 ? who.slice(0, 33) + '…' : who;
+
+  const add = (action, extra) => {
+    store.addMailRule({ ...base, action, ...extra });
+    forgetRuleWork();
+    refreshMail({ force: true });
+  };
+
+  const items = [];
+  if (!msg.seen) {
+    items.push({
+      label: '읽음으로 표시',
+      click: () => doMarkRead({ accountId: msg.accountId, uids: [msg.uid] })
+    }, { type: 'separator' });
+  }
+  items.push(
+    { label: `숨기기 — ${short}`, click: () => add('hide') },
+    ...(base.domain ? [{ label: `숨기기 — ${base.domain} 전부`, click: () => add('hide', { match: base.domain }) }] : []),
+    { label: `알림 안 함 — ${short}`, click: () => add('mute') },
+    { label: `자동 읽음 — ${short}`, click: () => add('read') },
+    { type: 'separator' },
+    {
+      label: `스팸으로 보내기 — ${short}`,
+      click: async () => {
+        // 서버에서 실제로 옮긴다 — 웹메일에서도 사라진다. 물어보고 한다.
+        const { response } = await dialog.showMessageBox(win || undefined, {
+          type: 'warning',
+          buttons: ['스팸으로', '그만두기'],
+          defaultId: 1,
+          cancelId: 1,
+          title: '스팸으로 보내기',
+          message: `${who} 에서 온 메일을 스팸 폴더로 옮길까요?`,
+          detail: '화면에서만 숨기는 것이 아니라 서버에서 옮깁니다.\n'
+            + '지금 있는 것과 앞으로 오는 것 모두 옮겨집니다. 웹메일에서도 사라집니다.'
+        });
+        if (response !== 0) return;
+        add('spam');
+      }
+    },
+    { type: 'separator' },
+    { label: '필터 관리…', click: openSettings }
+  );
+  Menu.buildFromTemplate(items).popup({ window: win || undefined });
+  return null;
+});
+
+/** 메일 필터 — 설정 화면과 위젯의 오른쪽 클릭이 함께 쓴다 */
+function rulesPayload() {
+  return {
+    rules: store.mailRules,
+    actions: mailrules.ACTION_NAMES,
+    filtered: mailState.filtered,
+    groups: mailState.groups.map((g) => ({ name: g.name, count: g.items.length }))
+  };
+}
+ipcMain.handle('mail:rules', () => rulesPayload());
+ipcMain.handle('mail:rule-add', async (_e, rule) => {
+  store.addMailRule(rule || {});
+  forgetRuleWork();
+  // 방금 만든 규칙이 지금 목록에 바로 먹히게 한다 — 다음 주기(몇 분)를 기다리면 «안 됐네» 싶다
+  await refreshMail({ force: true });
+  return rulesPayload();
+});
+ipcMain.handle('mail:rule-update', async (_e, { id, patch } = {}) => {
+  store.updateMailRule(id, patch || {});
+  forgetRuleWork();
+  await refreshMail({ force: true });
+  return rulesPayload();
+});
+ipcMain.handle('mail:rule-remove', async (_e, id) => {
+  store.removeMailRule(id);
+  forgetRuleWork();
+  await refreshMail({ force: true });
+  return rulesPayload();
 });
 
 /** 주소록 — 쓰기 창의 자동완성과 설정 화면이 쓴다 */

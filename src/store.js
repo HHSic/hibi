@@ -97,6 +97,8 @@ function blank() {
     custom: {},          // 사용자 지정 알림
     calendars: [],       // [{ id, name, url, enabled }]
     mailAccounts: [],    // [{ id, name, provider, host, port, user, sealed, enabled }]
+    contacts: [],        // [{ address, name, at, used }]
+    mailRules: [],       // [{ id, on, field, match, action, label }]
     stats: {},           // { 'YYYY-MM-DD': { done, skipped } }
     widgetPos: null,
     widgetSize: null,
@@ -110,13 +112,17 @@ function load() {
   try {
     const raw = JSON.parse(fs.readFileSync(FILE(), 'utf8'));
     cache = {
-      // 구버전에서 쓰던 키가 영구히 남지 않도록 알려진 키만 취한다
+      // 구버전에서 쓰던 키가 영구히 남지 않도록 알려진 키만 취한다.
+      // 여기에 새 목록을 적는 걸 잊으면, 저장은 되는데 다음에 켤 때 사라진다 —
+      // 주소록이 실제로 그랬다. 목록을 늘릴 때는 blank()와 여기를 같이 고쳐야 한다.
       settings: pickKnown(base.settings, raw.settings),
       // 새 버전에서 추가된 종류가 있어도 기본값이 채워지도록 병합
       reminders: mergeReminders(base.reminders, raw.reminders),
       custom: raw.custom || {},
       calendars: Array.isArray(raw.calendars) ? raw.calendars : [],
       mailAccounts: Array.isArray(raw.mailAccounts) ? raw.mailAccounts : [],
+      contacts: Array.isArray(raw.contacts) ? raw.contacts : [],
+      mailRules: Array.isArray(raw.mailRules) ? raw.mailRules : [],
       stats: raw.stats || {},
       widgetPos: raw.widgetPos || null,
       widgetSize: raw.widgetSize || null,
@@ -310,6 +316,39 @@ module.exports = {
     save();
     return s.mailAccounts;
   },
+  /**
+   * 메일 필터 — 위젯에 무엇을 보일지 정하는 규칙.
+   * 광고·자동알림이 스무 줄을 다 차지하면 정작 볼 메일이 밀려난다.
+   */
+  get mailRules() { return load().mailRules || []; },
+  addMailRule(rule) {
+    const s = load();
+    if (!Array.isArray(s.mailRules)) s.mailRules = [];
+    s.mailRules.push({
+      id: `f${Date.now().toString(36)}`,
+      on: true,
+      field: rule.field || 'from',
+      match: String(rule.match || '').slice(0, 200),
+      action: rule.action || 'hide',
+      label: String(rule.label || '').slice(0, 40)
+    });
+    save();
+    return s.mailRules;
+  },
+  updateMailRule(id, patch) {
+    const s = load();
+    const r = (s.mailRules || []).find((x) => x.id === id);
+    if (r) Object.assign(r, patch);
+    save();
+    return s.mailRules || [];
+  },
+  removeMailRule(id) {
+    const s = load();
+    s.mailRules = (s.mailRules || []).filter((x) => x.id !== id);
+    save();
+    return s.mailRules;
+  },
+
   /**
    * 주소록 — 보낸 적 있는 주소를 자동으로 모은다.
    * 따로 입력하게 하면 아무도 안 채운다. 한 번 보내고 나면 다음부터 자동완성된다.
