@@ -160,7 +160,10 @@ const mailState = {
   groups: [],           // 묶인 것들 [{ name, items }]
   folders: [],          // 화면에 보일 폴더 [{ id, name, items, count, unread }]
   toRead: [],           // 규칙이 «자동 읽음»으로 지목한 것
-  toSpam: []            // 규칙이 «스팸으로»로 지목한 것
+  toSpam: [],           // 규칙이 «스팸으로»로 지목한 것
+  // 보낸메일함은 폴링 때 같이 가져오지 않는다. 이 서버는 받은편지함 한 번 읽는 데도
+  // 오래 걸려서, 매번 폴더를 하나 더 열면 그만큼 늘어난다. 탭을 눌렀을 때만 가져온다.
+  sent: { at: 0, loading: false, messages: [], error: '' }
 };
 
 // 자동 처리는 한 번씩만 — 서버가 느려 몇십 초씩 걸리는데,
@@ -252,6 +255,7 @@ async function refreshMail({ force = false } = {}) {
     }));
     // 폴더는 «메일 / 묶음들 / 숨김». 숨김은 want에 매이지 않는다 —
     // 무엇이 걸러졌는지 확인하러 여는 곳이라 잘려 있으면 확인이 안 된다.
+    // 보낸메일함은 규칙과 무관하므로(내가 쓴 메일을 걸러낼 일은 없다) 여기서 따로 붙인다.
     mailState.folders = mailrules.folders(cut, Math.max(want, 30));
     mailState.messages = cut.visible.slice(0, want);
     mailState.toRead = cut.read;
@@ -721,8 +725,11 @@ function pushTick() {
       unread: mailState.unread,
       messages: mailState.messages,
       notice: fresh,
-      // 폴더 — 메일 / 규칙이 묶은 것들 / 숨김. 위젯이 한 번에 한 칸만 보여준다.
-      folders: mailState.folders,
+      // 폴더 — 메일 / 규칙이 묶은 것들 / 숨김 / 보낸메일함.
+      // 위젯이 한 번에 한 칸만 보여준다.
+      // 받은편지함을 아직 한 번도 못 읽었으면 보낸메일함 탭도 내보내지 않는다 —
+      // 그것 하나만 남으면 화면이 «보낸메일함»에서 시작하고 돌아갈 곳이 없다.
+      folders: mailState.folders.length ? [...mailState.folders, sentFolder()] : [],
       filtered: mailState.filtered
     }
     : null;
@@ -1332,6 +1339,9 @@ ipcMain.handle('mail:refresh', async () => {
   // 개수만 비교하면 오래된 것이 밀려난 만큼 새 것을 못 센다.
   const fresh = mailState.messages.filter((m) => !before.includes(`${m.accountId}:${m.uid}`)).length;
   notice(fresh ? 'good' : '', fresh ? `새 메일 ${fresh}통` : '새로 온 메일이 없습니다');
+  // 보낸메일함을 이미 열어봤다면 그것도 같이 새로 읽는다 — 방금 보낸 메일이
+  // 안 보이면 «보내진 건가» 싶어진다. 한 번도 안 열어봤으면 건드리지 않는다.
+  if (mailState.sent.at) loadSent();
   return mailStatus();
 });
 
@@ -1426,8 +1436,11 @@ function openCompose(payload) {
   return true;
 }
 
-/** 새 메일 / 답장 / 전달 — 어느 쪽이든 초안을 만들어 창을 연다 */
-ipcMain.handle('compose:open', (_e, { kind = 'new', accountId, source } = {}) => {
+/**
+ * 새 메일 / 답장 / 전달 — 어느 쪽이든 초안을 만들어 창을 연다.
+ * 메일 보기 창의 «답장» 버튼과 목록의 오른쪽 클릭이 같은 길을 쓴다.
+ */
+function startCompose({ kind = 'new', accountId, source } = {}) {
   const accounts = mailAccountsForUse();
   if (!accounts.length) return { ok: false, message: '쓸 수 있는 계정이 없습니다' };
 
@@ -1456,7 +1469,9 @@ ipcMain.handle('compose:open', (_e, { kind = 'new', accountId, source } = {}) =>
     ...draft
   });
   return { ok, message: '' };
-});
+}
+
+ipcMain.handle('compose:open', (_e, opts) => startCompose(opts || {}));
 
 ipcMain.handle('compose:data', () => composePayload);
 ipcMain.on('compose:close', () => composeWin && !composeWin.isDestroyed() && composeWin.close());
@@ -1549,6 +1564,38 @@ ipcMain.handle('mail:row-menu', async (e, msg) => {
   };
 
   const items = [];
+
+  // 답장·전달은 메일을 열어야만 할 수 있었다 — 목록에서 바로 되어야 한다.
+  // 인용문을 넣으려면 원문이 필요해서 여기서 한 번 받아온다 (메일을 여는 것과 같은 비용).
+  const draft = (kind) => async () => {
+    const acc = mailAccountsForUse().find((a) => a.id === msg.accountId);
+    if (!acc) { notice('bad', '이 메일의 계정을 쓸 수 없습니다'); return; }
+    notice('wait', kind === 'reply' ? '답장 준비 중…' : '전달 준비 중…');
+    try {
+      const m = await mail.fetchBody(acc, msg.uid, {
+        markSeen: false, allowRemote: false, mailbox: msg.mailbox || ''
+      });
+      const r = startCompose({
+        kind,
+        accountId: acc.id,
+        source: {
+          subject: m.subject, from: m.from, fromAddress: m.fromAddress,
+          replyTo: m.replyTo, messageId: m.messageId, at: m.receivedAt, text: m.text
+        }
+      });
+      notice(r.ok ? '' : 'bad', r.ok ? '' : r.message);
+    } catch (e) {
+      notice('bad', mail.friendly(e));
+    }
+  };
+
+  // 보낸메일함의 메일은 내가 쓴 것이다 — 답장하면 나에게 간다. 전달만 뜻이 있다.
+  items.push(
+    ...(msg.fromSelf ? [] : [{ label: '답장', click: draft('reply') }]),
+    { label: '전달', click: draft('forward') },
+    { type: 'separator' }
+  );
+
   if (!msg.seen) {
     items.push({
       label: '읽음으로 표시',
@@ -1616,6 +1663,68 @@ function rulesPayload() {
     groups: mailState.groups.map((g) => ({ name: g.name, count: g.items.length }))
   };
 }
+/**
+ * 보낸메일함 폴더 한 칸.
+ * 아직 안 불러왔어도 «탭»은 있어야 한다 — 없으면 누를 것이 없어서 영영 안 불러온다.
+ * lazy 표시를 보고 화면이 처음 누를 때 mail:sent를 부른다.
+ */
+function sentFolder() {
+  const s = mailState.sent;
+  return {
+    id: 'sent',
+    name: '보낸메일함',
+    items: s.messages,
+    count: s.messages.length,
+    unread: 0,                 // 내가 쓴 메일에 «안 읽음»은 뜻이 없다
+    lazy: !s.at,               // 한 번도 안 불러왔다
+    loading: s.loading,
+    error: s.error
+  };
+}
+
+/**
+ * 보낸메일함 — 눌렀을 때만 가져온다.
+ * 폴더 이름이 서버마다 달라서 mail.findBox가 찾아준다. 못 찾으면 받은편지함으로
+ * 슬쩍 넘어가지 않고 그 사실을 말한다.
+ */
+async function loadSent() {
+  if (mailState.sent.loading) return mailState.sent;
+  const accounts = mailAccountsForUse();
+  if (!accounts.length) {
+    mailState.sent = { ...mailState.sent, error: '쓸 수 있는 계정이 없습니다' };
+    return mailState.sent;
+  }
+  mailState.sent = { ...mailState.sent, loading: true, error: '' };
+  const want = Math.max(1, Math.round(store.settings.mailCount) || 5);
+  const out = [];
+  const bad = [];
+  for (const acc of accounts) {
+    try {
+      // 보낸 메일에 «안 읽음»은 뜻이 없다 — 내가 쓴 것이다. 최근 것부터 그냥 보여준다.
+      const r = await mail.fetchSummary(acc, { limit: want, onlyUnread: false, box: 'sent' });
+      // fromSelf — 내가 쓴 메일이라는 표시. 여기에 «답장»을 붙이면 나에게 답장이 간다.
+      out.push(...r.messages.map((m) => ({
+        ...m, account: acc.name, accountId: acc.id, seen: true, fromSelf: true
+      })));
+    } catch (e) {
+      bad.push(`${acc.name || acc.user}: ${mail.friendly(e)}`);
+    }
+  }
+  out.sort((a, b) => b.at - a.at);
+  mailState.sent = {
+    at: Date.now(), loading: false, messages: out.slice(0, want),
+    error: out.length ? '' : (bad[0] || '보낸 메일이 없습니다')
+  };
+  evlog.log('메일', `보낸메일함 · ${out.length}건`
+    + (bad.length ? ` · 실패 ${bad.join(' / ')}` : ''));
+  return mailState.sent;
+}
+
+ipcMain.handle('mail:sent', async () => {
+  const r = await loadSent();
+  return { loading: r.loading, count: r.messages.length, error: r.error };
+});
+
 /** 지금 받아둔 것 중 이 조건에 걸리는 메일 — 규칙을 만들기 전에 보여준다 */
 function wouldHit(rule) {
   const all = [
@@ -2040,7 +2149,13 @@ function openMailView(msg) {
   if (acc) {
     // 열었다고 바로 읽음으로 바꾸지 않는다. 창의 «안 읽음» 칩을 눌러 사용자가 정한다 —
     // 목록을 훑다가 잘못 연 메일까지 읽음이 되면 다시 찾아내기 어렵다.
-    mail.fetchBody(acc, msg.uid, { markSeen: false, allowRemote: store.settings.mailRemoteImages !== false })
+    // 보낸메일함의 메일을 받은편지함에서 같은 번호로 열면 전혀 다른 메일이 나온다 —
+    // UID는 폴더마다 따로 돈다. 목록이 알려준 폴더를 그대로 연다.
+    mail.fetchBody(acc, msg.uid, {
+      markSeen: false,
+      allowRemote: store.settings.mailRemoteImages !== false,
+      mailbox: msg.mailbox || ''
+    })
       .then((m) => {
         // 원문 버퍼는 화면으로 보내지 않는다 — 백업에만 쓰고 여기서 떼어낸다
         const { source, ...forView } = m;
@@ -2049,6 +2164,8 @@ function openMailView(msg) {
         mailViewFiles = m.attachments || [];
         // 창에서 읽음 표시를 누르려면 어느 계정의 몇 번 메일인지 알아야 한다
         mailViewPayload = { ...forView, accountId: acc.id,
+          // 내가 쓴 메일이면 «답장»을 감춘다 — 나에게 답장이 가는 건 뜻이 없다
+          fromSelf: !!msg.fromSelf,
           attachments: mail.attachmentsForView(mailViewFiles) };
         refreshMail();
       })

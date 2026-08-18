@@ -534,6 +534,30 @@ function attachMailRow(row, m) {
 // 너무 넓게 잡았을 때 알아챌 방법이 없다 — 조용히 사라지는 메일이 제일 위험하다.
 // 그래서 폴더로 나눈다. 숨긴 것도 폴더 하나일 뿐이고, 언제든 열어볼 수 있다.
 let mailFolder = 'in';
+// 보낸메일함을 불러와 달라고 했고 아직 결과가 안 왔다.
+// 이걸 안 들고 있으면 «비어 있음»과 «아직 안 왔음»을 구별할 수 없어서,
+// 누르자마자 «보낸 메일이 없습니다»가 떴다 (실제로 그랬다).
+let sentAsked = false;
+
+/** 틱이 올 때마다 — 결과가 왔거나 실패했으면 다시 누를 수 있게 풀어준다 */
+function noteSent(box) {
+  const f = ((box && box.folders) || []).find((x) => x.id === 'sent');
+  if (f && (!f.lazy || f.error)) sentAsked = false;
+}
+
+/** 폴더가 비었을 때 뭐라고 할지 — 이유가 다르면 말도 달라야 한다 */
+function emptyWord(f, box) {
+  if (!f) return '새 메일 없음';
+  if (f.id === 'sent') {
+    if (f.loading || (f.lazy && sentAsked)) return '보낸 메일을 불러오는 중…';
+    if (f.lazy) return '누르면 보낸 메일을 불러옵니다';
+    return f.error || '보낸 메일이 없습니다';
+  }
+  if (f.id === 'in') {
+    return box && box.filtered ? `새 메일 없음 · 필터가 ${box.filtered}통 숨김` : '새 메일 없음';
+  }
+  return '이 폴더는 비어 있어요';
+}
 
 /**
  * 지금 보고 있는 폴더.
@@ -570,7 +594,18 @@ function folderStrip(box, redraw) {
     b.title = `${f.name} · ${f.count}통`
       + (f.unread ? ` · 안 읽음 ${f.unread}` : '')
       + (f.id === 'hidden' ? '\n규칙이 걸러낸 것들입니다. 오른쪽 클릭해서 그 규칙을 끌 수 있어요.' : '');
-    b.onclick = (e) => { e.stopPropagation(); mailFolder = f.id; redraw(); };
+    b.onclick = (e) => {
+      e.stopPropagation();
+      mailFolder = f.id;
+      // 보낸메일함은 폴링에 안 실린다 — 처음 누를 때 가져온다.
+      // 이미 보낸 요청이 돌고 있으면 또 보내지 않는다. 느린 서버에 같은 명령을
+      // 두 번 보내면 그만큼 더 기다리게 될 뿐이다.
+      if (f.lazy && !f.loading && !sentAsked) {
+        sentAsked = true;
+        window.nunsseom.mailSent();   // 결과는 다음 틱에 실려 온다
+      }
+      redraw();
+    };
     strip.append(b);
   }
   if (!strip.children.length) return null;
@@ -599,6 +634,7 @@ function renderMail(box) {
   const cur = currentFolder(box);
   const key = box ? `${box.unread}:${folders.length}:${cur ? cur.id + cur.count : '-'}` : 'none';
   lastMailBox = box;
+  noteSent(box);    // 보낸메일함 결과가 왔는지 먼저 본다
   paintNote(box);   // 목록이 비어 아래에서 일찍 빠져나가도 결과는 보여야 한다
   if (mailCard.classList.contains('mailon')) paintMailPanel();
   if (key !== lastMailRender) {
@@ -642,7 +678,7 @@ function renderMail(box) {
   if (cur && !cur.items.length) {
     const p = document.createElement('div');
     p.className = 'empty';
-    p.textContent = '이 폴더는 비어 있어요';
+    p.textContent = emptyWord(cur, box);
     host.append(p);
   }
 }
@@ -739,7 +775,7 @@ function paintMailPanel() {
   if (cur && !cur.items.length) {
     const p = document.createElement('div');
     p.className = 'calempty';
-    p.textContent = cur.id === 'in' ? '새 메일 없음' : '이 폴더는 비어 있어요';
+    p.textContent = emptyWord(cur, box);
     host.append(p);
   }
 }

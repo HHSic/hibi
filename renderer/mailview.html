@@ -344,8 +344,24 @@
     };
     for (const [id, kind] of [['reply', 'reply'], ['forward', 'forward']]) {
       const b = $(id);
+      // 보낸메일함의 메일은 내가 쓴 것이다 — 답장하면 나에게 간다. 전달만 남긴다.
+      if (kind === 'reply' && m.fromSelf) continue;
       b.style.display = '';
-      b.onclick = () => window.nunsseom.composeOpen({ kind, accountId: m.accountId, source: src });
+      b.onclick = async () => {
+        // 결과를 안 보면 실패했을 때 눌러도 아무 일도 안 일어난다 —
+        // 계정이 꺼져 있거나 지워졌을 때 그랬다. 이유를 말해줘야 한다.
+        b.disabled = true;
+        try {
+          const r = await window.nunsseom.composeOpen({ kind, accountId: m.accountId, source: src });
+          if (r && r.ok === false) {
+            b.title = r.message || '쓰기 창을 열지 못했습니다';
+            $('blocked').style.display = 'block';
+            $('blocked').textContent = b.title;
+          }
+        } finally {
+          b.disabled = false;
+        }
+      };
     }
   }
 

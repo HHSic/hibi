@@ -117,12 +117,23 @@ function connect(account, { timeoutMs = CONNECT_TIMEOUT_MS } = {}) {
  * @param limit      제목을 몇 개까지 들고 올지
  * @returns { unread, total, messages: [{ uid, subject, from, at, seen }] }
  */
-async function fetchSummary(account, { limit = 5, onlyUnread = true } = {}) {
+/**
+ * @param box 'inbox'(기본) | 'sent' — 보낸메일함은 폴더 이름이 서버마다 달라 찾아서 연다.
+ *   못 찾으면 받은편지함으로 슬쩍 넘어가지 않고 실패한다. 보낸 메일을 보러 왔는데
+ *   받은 메일이 나오면 «보낸메일함이 원래 이런가»로 오해한다.
+ */
+async function fetchSummary(account, { limit = 5, onlyUnread = true, box: which = 'inbox' } = {}) {
   const take = Math.max(1, Math.min(PREVIEW_HARD_MAX, Math.round(limit) || 5));
   const client = connect(account);
   await client.connect();
   try {
-    const box = await client.mailboxOpen(account.mailbox || 'INBOX', { readOnly: true });
+    let path = account.mailbox || 'INBOX';
+    if (which === 'sent') {
+      const found = await findBox(client, 'sent');
+      if (!found) throw new Error('보낸편지함을 찾지 못했습니다');
+      path = found.path;
+    }
+    const box = await client.mailboxOpen(path, { readOnly: true });
     // 안 읽은 수는 무엇을 보여주든 항상 필요하다 (뱃지에 쓰인다)
     const unseen = await client.search({ seen: false }, { uid: true }) || [];
 
@@ -136,7 +147,12 @@ async function fetchSummary(account, { limit = 5, onlyUnread = true } = {}) {
       await collect(client, `${from}:*`, {}, messages);
     }
     messages.sort((a, b) => b.at - a.at);
-    return { unread: unseen.length, total: box.exists || 0, messages: messages.slice(0, take) };
+    // 어느 폴더에서 왔는지 붙여 보낸다 — 나중에 이 메일을 열 때 그 폴더를 다시 열어야 한다
+    for (const m of messages) m.mailbox = path;
+    return {
+      unread: unseen.length, total: box.exists || 0, mailbox: path,
+      messages: messages.slice(0, take)
+    };
   } finally {
     try { await client.logout(); } catch { client.close(); }
   }
@@ -222,7 +238,11 @@ async function markRead(account, uids, { read = true } = {}) {
  * 이름은 서버마다 다르다. 용도 표시(\Junk)를 먼저 믿고, 없으면 흔한 이름으로 짐작한다.
  * 이카운트처럼 용도를 안 알려주는 서버가 있어서 이름 짐작이 실제로 필요하다.
  */
-const JUNK_NAME = /^(junk|junk e-?mail|spam|bulk mail|스팸|스팸메일함|스팸 메일함|정크)$/i;
+const BOX_NAMES = {
+  junk: /^(junk|junk e-?mail|spam|bulk mail|스팸|스팸메일함|스팸 메일함|정크)$/i,
+  sent: /^(sent|sent items|sent messages|sent mail|보낸편지함|보낸 편지함|보낸메일함|보낸 메일함)$/i
+};
+const BOX_USE = { junk: '\\Junk', sent: '\\Sent' };
 
 /**
  * UID 목록 다듬기.
@@ -233,13 +253,26 @@ function uidList(uids) {
   return (uids || []).map(Number).filter((n) => Number.isInteger(n) && n > 0);
 }
 
-async function findJunk(client) {
+/**
+ * 용도별 폴더 찾기 — 이름은 서버마다 다르다.
+ * 서버가 알려주는 용도 표시(\Sent, \Junk)를 먼저 믿고, 없으면 흔한 이름으로 짐작한다.
+ * 이카운트처럼 용도를 안 알려주는 서버가 있어서 이름 짐작이 실제로 필요하다.
+ * @param kind 'junk' | 'sent'
+ */
+async function findBox(client, kind) {
+  const re = BOX_NAMES[kind];
+  if (!re) return null;
   const boxes = await client.list();
-  return boxes.find((b) => b.specialUse === '\\Junk')
-    || boxes.find((b) => JUNK_NAME.test(b.name))
-    // 하위 폴더로 둔 서버도 있다 (INBOX/스팸메일함)
-    || boxes.find((b) => JUNK_NAME.test(String(b.path).split(b.delimiter || '/').pop()))
+  return boxes.find((b) => b.specialUse === BOX_USE[kind])
+    || boxes.find((b) => re.test(b.name))
+    // 하위 폴더로 둔 서버도 있다 (INBOX/보낸편지함)
+    || boxes.find((b) => re.test(String(b.path).split(b.delimiter || '/').pop()))
     || null;
+}
+
+/** 예전 이름 — 부르는 곳이 있어 그대로 둔다 */
+function findJunk(client) {
+  return findBox(client, 'junk');
 }
 
 /**
@@ -301,11 +334,14 @@ async function collect(client, range, opts, out) {
  *
  * 본문은 메일 원래 모양대로 보여주되(buildViewHtml), 위험한 것과 원격 이미지는 걷어낸다.
  */
-async function fetchBody(account, uid, { markSeen = true, maxChars = 8000, allowRemote = false } = {}) {
+async function fetchBody(account, uid, { markSeen = true, maxChars = 8000, allowRemote = false, mailbox = '' } = {}) {
   const client = connect(account);
   await client.connect();
   try {
-    await client.mailboxOpen(account.mailbox || 'INBOX', { readOnly: !markSeen });
+    // 메일이 어느 폴더에 있는지는 부르는 쪽이 안다 — 보낸메일함의 메일을
+    // 받은편지함에서 같은 번호로 열면 전혀 다른 메일이 나온다 (UID는 폴더마다 따로 돌아간다).
+    const path = mailbox || account.mailbox || 'INBOX';
+    await client.mailboxOpen(path, { readOnly: !markSeen });
     const msg = await client.fetchOne(String(uid),
       { envelope: true, internalDate: true, source: true, flags: true }, { uid: true });
     if (!msg || !msg.source) throw new Error('메일을 찾을 수 없습니다');
@@ -337,7 +373,7 @@ async function fetchBody(account, uid, { markSeen = true, maxChars = 8000, allow
       // 백업 파일 이름은 서버가 받은 시각으로 짓는다. 보낸 사람이 적은 날짜(Date: 헤더)를
       // 쓰면 전체 백업이 지은 이름과 어긋나 같은 메일이 두 번 저장된다.
       receivedAt: (msg.internalDate || new Date()).getTime(),
-      mailbox: account.mailbox || 'INBOX',
+      mailbox: path,
       // 열었다고 무조건 읽음으로 바꾸지 않는다 — 창에서 직접 누르게 한다
       seen: markSeen ? true : wasSeen,
       // 원본 버퍼는 저장할 때만 쓰므로 여기 남겨두고, 화면에는 요약만 보낸다
@@ -495,4 +531,4 @@ function friendly(e) {
   return raw.slice(0, 120);
 }
 
-module.exports = { PRESETS, preset, connect, smtpOf, fromOf, cleanHtml, fetchSummary, fetchBody, markRead, moveToSpam, findJunk, test, senderOf, friendly, htmlToText, attachmentsForView, buildViewHtml };
+module.exports = { PRESETS, preset, connect, smtpOf, fromOf, cleanHtml, fetchSummary, fetchBody, markRead, moveToSpam, findJunk, findBox, test, senderOf, friendly, htmlToText, attachmentsForView, buildViewHtml };

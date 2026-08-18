@@ -79,6 +79,7 @@ contextBridge.exposeInMainWorld('nunsseom', {
   composeAttach: () => ipcRenderer.invoke('compose:attach'),
   composePickImage: () => ipcRenderer.invoke('compose:pick-image'),
   mailRowMenu: (m) => ipcRenderer.invoke('mail:row-menu', m),
+  mailSent: () => ipcRenderer.invoke('mail:sent'),
   mailRules: () => ipcRenderer.invoke('mail:rules'),
   mailRuleAdd: (r) => ipcRenderer.invoke('mail:rule-add', r),
   mailRuleUpdate: (id, patch) => ipcRenderer.invoke('mail:rule-update', { id, patch }),
