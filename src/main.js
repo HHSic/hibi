@@ -1387,9 +1387,12 @@ async function doMarkRead({ accountId, uids, read = true, mailbox = '' } = {}) {
     failed.length ? failed[0].replace(/^[^:]+:\s*/, '')
       : changed ? `${changed}통 ${read ? '읽음' : '안 읽음'}으로 표시했습니다`
         : '바꿀 메일이 없습니다');
-  // 서버 쪽이 바뀌었으니 화면 숫자도 바로 맞춘다. 마침 폴링이 돌고 있으면
-  // 그게 끝나기를 기다렸다가 다시 부른다 — 그냥 넘기면 다음 주기(몇 분)까지 숫자가 안 바뀐다.
-  await refreshMail({ force: true });
+  // 서버 쪽이 바뀌었으니 화면 숫자도 맞춘다. 다만 **기다리지 않는다** —
+  // 이 서버는 새로고침 한 번이 1분을 넘긴 적이 있고, 여기서 기다리면 그동안
+  // 부른 쪽이 잠긴다. 메일 보기 창의 읽음 칩이 실제로 그랬다: 눌러서 바뀐 것을
+  // 되돌리려고 다시 눌러도 1분 넘게 아무 일도 안 일어났다.
+  // 서버는 이미 바뀌었으니 «됐다»는 지금 말할 수 있다. 숫자는 조금 뒤 틱에 따라온다.
+  refreshMail({ force: true }).catch(() => { /* 실패는 다음 폴링이 알아서 다시 본다 */ });
   return {
     ok: failed.length === 0,
     changed,
@@ -1603,12 +1606,17 @@ ipcMain.handle('mail:row-menu', async (e, msg) => {
     { type: 'separator' }
   );
 
-  if (!msg.seen) {
-    items.push({
-      label: '읽음으로 표시',
-      click: () => doMarkRead({ accountId: msg.accountId, uids: [msg.uid], mailbox: msg.mailbox || '' })
-    }, { type: 'separator' });
-  }
+  // 읽음은 되돌릴 수 있어야 한다. 메일 보기 창의 칩은 양쪽으로 도는데
+  // 목록에는 «읽음으로»만 있어서, 잘못 누르면 창을 열어야만 되돌릴 수 있었다.
+  items.push({
+    label: msg.seen ? '안 읽음으로 되돌리기' : '읽음으로 표시',
+    click: () => doMarkRead({
+      accountId: msg.accountId,
+      uids: [msg.uid],
+      read: !msg.seen,
+      mailbox: msg.mailbox || ''
+    })
+  }, { type: 'separator' });
 
   // 이 메일이 규칙에 걸려서 여기 있는 것이라면, 그 규칙을 되돌리는 길이 제일 위에 와야 한다.
   // 숨김 폴더를 열어보는 이유가 대개 «이건 숨기면 안 되는데»이기 때문이다.
