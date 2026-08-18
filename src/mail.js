@@ -163,14 +163,16 @@ async function fetchSummary(account, { limit = 5, onlyUnread = true, box: which 
  * 열어보지 않고 뱃지만 지우고 싶을 때가 있다 — 광고 메일이 대표적이다.
  * @param uids 비우면 안 읽은 것 전부
  */
-async function markRead(account, uids, { read = true } = {}) {
+async function markRead(account, uids, { read = true, mailbox = '' } = {}) {
   // 여러 통을 한 번에 바꾸는 일이라 읽기보다 오래 걸린다.
   // 20초로는 스무 통에서도 소켓이 끊겼다 (실제로 끊겼다).
   const client = connect(account, { timeoutMs: WRITE_TIMEOUT_MS });
   await client.connect();
   try {
-    // 플래그를 바꿔야 하므로 읽기 전용으로 열면 안 된다
-    const box = await client.mailboxOpen(account.mailbox || 'INBOX', { readOnly: false });
+    // 플래그를 바꿔야 하므로 읽기 전용으로 열면 안 된다.
+    // 어느 폴더인지를 반드시 받아야 한다 — UID는 폴더마다 따로 돌아서,
+    // 보낸메일함 12번을 받은편지함에서 읽음 처리하면 전혀 다른 메일이 바뀐다.
+    const box = await client.mailboxOpen(mailbox || account.mailbox || 'INBOX', { readOnly: false });
 
     // 서버가 «이 폴더에 영구 저장할 수 있는 플래그»를 알려준다. 거기에 \Seen도 \*도 없으면
     // 라이브러리가 STORE를 보내지도 않고 false를 돌려준다 — 원인을 정확히 알려주려고 미리 본다.
@@ -283,7 +285,7 @@ function findJunk(client) {
  *
  * MOVE를 모르는 서버에서는 라이브러리가 알아서 복사 + 삭제표시 + 정리로 대신한다.
  */
-async function moveToSpam(account, uids) {
+async function moveToSpam(account, uids, { mailbox = '' } = {}) {
   const list = uidList(uids);
   if (!list.length) return { moved: 0 };
 
@@ -292,7 +294,9 @@ async function moveToSpam(account, uids) {
   try {
     const junk = await findJunk(client);
     if (!junk) throw new Error('스팸 폴더를 찾지 못했습니다');
-    const box = await client.mailboxOpen(account.mailbox || 'INBOX', { readOnly: false });
+    // 여기도 UID는 폴더마다 따로 돌다 — 언젠가 받은편지함 밖에서 불리면
+    // 엉뚜한 메일을 스팸으로 보낸다. 지금 부르는 곳이 하나뿐이어도 문을 열어둔다.
+    const box = await client.mailboxOpen(mailbox || account.mailbox || 'INBOX', { readOnly: false });
     if (box.path === junk.path) return { moved: 0, mailbox: junk.path };
 
     let moved = 0;

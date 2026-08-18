@@ -550,8 +550,11 @@ function emptyWord(f, box) {
   if (!f) return '새 메일 없음';
   if (f.id === 'sent') {
     if (f.loading || (f.lazy && sentAsked)) return '보낸 메일을 불러오는 중…';
+    // 사유가 있으면 그게 먼저다. 계정이 없을 때 lazy가 안 풀려서
+    // «누르면 불러옵니다» ↔ «불러오는 중»만 오갈 뿐 이유는 끝내 안 나왔다.
+    if (f.error) return f.error;
     if (f.lazy) return '누르면 보낸 메일을 불러옵니다';
-    return f.error || '보낸 메일이 없습니다';
+    return '보낸 메일이 없습니다';
   }
   if (f.id === 'in') {
     return box && box.filtered ? `새 메일 없음 · 필터가 ${box.filtered}통 숨김` : '새 메일 없음';

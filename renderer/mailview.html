@@ -324,8 +324,10 @@
       busy = true;
       seen = want;             // 서버를 기다리지 않고 먼저 바꿔 보여준다
       paint();
+      // 폴더를 안 보내면 받은편지함의 «같은 번호» 메일이 바뀐다 — UID는 폴더마다 따로 돈다.
+      // 보낸메일함 12번을 읽음 처리했더니 받은편지함 12번이 읽음이 되는 식이다.
       const r = await window.nunsseom.mailMarkRead({
-        accountId: m.accountId, uids: [m.uid], read: want
+        accountId: m.accountId, uids: [m.uid], read: want, mailbox: m.mailbox || ''
       });
       busy = false;
       if (!r || r.ok === false) {

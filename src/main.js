@@ -1357,7 +1357,7 @@ function notice(kind, text) {
   mailState.notice = { at: Date.now(), kind, text };
 }
 
-async function doMarkRead({ accountId, uids, read = true } = {}) {
+async function doMarkRead({ accountId, uids, read = true, mailbox = '' } = {}) {
   const accounts = mailAccountsForUse().filter((a) => !accountId || a.id === accountId);
   if (!accounts.length) {
     notice('bad', '쓸 수 있는 계정이 없습니다');
@@ -1369,7 +1369,7 @@ async function doMarkRead({ accountId, uids, read = true } = {}) {
   const failed = [];
   for (const acc of accounts) {
     try {
-      const r = await mail.markRead(acc, uids, { read });
+      const r = await mail.markRead(acc, uids, { read, mailbox });
       changed += r.changed;
     } catch (e) {
       failed.push(`${acc.name || acc.user}: ${e.message || mail.friendly(e)}`);
@@ -1406,14 +1406,23 @@ ipcMain.handle('mail:mark-read', (_e, opts) => doMarkRead(opts || {}));
 let composeWin = null;
 let composePayload = null;
 let composeSize = null;
+// 보내는 중인가. 두 번 나가는 것을 막고, 그 사이에 들어오는 새 초안도 거절한다.
+// openCompose가 이걸 보므로 그보다 위에 선언한다 (선언 전 사용으로 화면이 죽은 적이 여러 번 있다).
+let sendingNow = false;
 
 function openCompose(payload) {
   if (composeWin && !composeWin.isDestroyed()) {
+    // 보내는 중이면 화면이 갈아끼우기를 그냥 버린다. 그걸 성공이라고 돌려주면
+    // 답장을 눌렀는데 아무 일도 안 일어나고 이유도 안 나온다 — 여기서 거절한다.
+    // (이 서버는 보내는 데 수십 초가 걸려서 그 사이가 짧지 않다)
+    if (sendingNow) {
+      return { ok: false, message: '쓰기 창이 메일을 보내는 중입니다 — 끝나면 다시 눌러주세요' };
+    }
     // 쓰던 글이 있는데 새 초안으로 갈아끼우면 그 글은 그대로 사라진다.
     // 화면에 물어보고, 아니라고 하면 쓰던 것을 그대로 둔다.
     composeWin.focus();
     composeWin.webContents.send('compose:replace', payload);
-    return true;
+    return { ok: true, message: '' };
   }
   composePayload = payload;
   const saved = store.settings.composeSize;
@@ -1433,7 +1442,7 @@ function openCompose(payload) {
   lockToOurPage(composeWin);
   composeWin.loadFile(page('compose.html'), { query: glassQuery({ radius: '20' }) });
   composeWin.on('closed', () => { composeWin = null; composePayload = null; });
-  return true;
+  return { ok: true, message: '' };
 }
 
 /**
@@ -1454,7 +1463,7 @@ function startCompose({ kind = 'new', accountId, source } = {}) {
 
   const draft = kind === 'new' ? { to: '', subject: '', text: '' } : send.draftFrom(kind, source);
   const stored = store.mailAccounts.find((a) => a.id === acc.id) || {};
-  const ok = openCompose({
+  const opened = openCompose({
     accountId: acc.id,
     signature: stored.signature || '',
     signatures: Object.fromEntries(store.mailAccounts.map((a) => [a.id, a.signature || ''])),
@@ -1468,7 +1477,7 @@ function startCompose({ kind = 'new', accountId, source } = {}) {
     }),
     ...draft
   });
-  return { ok, message: '' };
+  return opened;
 }
 
 ipcMain.handle('compose:open', (_e, opts) => startCompose(opts || {}));
@@ -1500,8 +1509,6 @@ ipcMain.handle('compose:attach', async () => {
 });
 
 const ATTACH_MAX = 25 * 1024 * 1024;   // 대부분의 메일 서버가 이쯤에서 거절한다
-
-let sendingNow = false;
 
 ipcMain.handle('compose:send', async (_e, msg) => {
   // 화면 쪽 잠금이 풀린 틈에 두 번 들어와도 두 번 나가지 않게 한다
@@ -1599,7 +1606,7 @@ ipcMain.handle('mail:row-menu', async (e, msg) => {
   if (!msg.seen) {
     items.push({
       label: '읽음으로 표시',
-      click: () => doMarkRead({ accountId: msg.accountId, uids: [msg.uid] })
+      click: () => doMarkRead({ accountId: msg.accountId, uids: [msg.uid], mailbox: msg.mailbox || '' })
     }, { type: 'separator' });
   }
 
@@ -1633,21 +1640,30 @@ ipcMain.handle('mail:row-menu', async (e, msg) => {
     );
   }
 
+  // 규칙은 «받는 메일»에 대한 것이다. 보낸메일함 줄에서는 보여주지 않는다 —
+  // 그 줄의 보낸사람은 나라서, «이 보낸사람 숨기기»가 내 주소를 거르는 규칙이 된다.
+  // 그러면 받은편지함의 내게쓴메일·반송·사내 배포메일이 대신 숨겨지거나 스팸으로 간다.
+  // (받는 사람 기준으로 규칙을 만들려면 목록이 To를 들고 있어야 하는데 지금은 From만 든다)
+  if (!msg.fromSelf) {
+    items.push(
+      { label: `숨기기 — ${short}`, click: () => add('hide') },
+      ...(base.domain ? [{ label: `숨기기 — ${base.domain} 전부`, click: () => add('hide', { match: base.domain }) }] : []),
+      { label: `알림 안 함 — ${short}`, click: () => add('mute') },
+      { label: `자동 읽음 — ${short}`, click: () => add('read') },
+      { type: 'separator' },
+      {
+        // 물어보는 일은 okToSpam 한 곳에서만 한다 — 입구마다 따로 두면 하나씩 빠진다
+        label: `스팸으로 보내기 — ${short}`,
+        click: async () => {
+          const rule = { ...base, action: 'spam' };
+          if (await okToSpam(rule, win)) add('spam');
+        }
+      },
+      { type: 'separator' }
+    );
+  }
+
   items.push(
-    { label: `숨기기 — ${short}`, click: () => add('hide') },
-    ...(base.domain ? [{ label: `숨기기 — ${base.domain} 전부`, click: () => add('hide', { match: base.domain }) }] : []),
-    { label: `알림 안 함 — ${short}`, click: () => add('mute') },
-    { label: `자동 읽음 — ${short}`, click: () => add('read') },
-    { type: 'separator' },
-    {
-      // 물어보는 일은 okToSpam 한 곳에서만 한다 — 입구마다 따로 두면 하나씩 빠진다
-      label: `스팸으로 보내기 — ${short}`,
-      click: async () => {
-        const rule = { ...base, action: 'spam' };
-        if (await okToSpam(rule, win)) add('spam');
-      }
-    },
-    { type: 'separator' },
     { label: '필터 관리…', click: openSettings }
   );
   Menu.buildFromTemplate(items).popup({ window: win || undefined });
@@ -1691,7 +1707,9 @@ async function loadSent() {
   if (mailState.sent.loading) return mailState.sent;
   const accounts = mailAccountsForUse();
   if (!accounts.length) {
-    mailState.sent = { ...mailState.sent, error: '쓸 수 있는 계정이 없습니다' };
+    // at을 찍어야 «한 번 해봤고 안 됐다»가 된다. 안 찍으면 lazy가 안 풀려서
+    // 화면이 «누르면 불러옵니다»로 되돌아가고 사유는 끝내 안 보인다.
+    mailState.sent = { ...mailState.sent, at: Date.now(), loading: false, error: '쓸 수 있는 계정이 없습니다' };
     return mailState.sent;
   }
   mailState.sent = { ...mailState.sent, loading: true, error: '' };
