@@ -368,6 +368,26 @@ async function backupAccount(account, dir, { onProgress, shouldStop, onlyNew = f
   return result;
 }
 
+/**
+ * 이미 백업해둔 메일이 있나 — 있으면 그 파일 경로.
+ * 자동 백업을 켜둔 사람은 본문이 이미 디스크에 다 있다 —
+ * 그걸 두고 서버를 다시 부르는 것은 느린 서버에 대한 예의가 아니다.
+ */
+function savedFile(dir, account, mailbox, uid) {
+  if (!dir) return null;
+  const want = Number(uid);
+  if (!Number.isInteger(want) || want <= 0) return null;
+  try {
+    const boxDir = boxDirFor(dir, account, mailbox, genOf(loadState(dir), account, mailbox));
+    for (const n of fs.readdirSync(boxDir)) {
+      const m = n.match(UID_IN_NAME);
+      if (m && Number(m[1]) === want) return path.join(boxDir, n);
+    }
+  } catch { /* 폴더가 없거나 못 읽으면 그냥 없는 것으로 */ }
+  return null;
+}
+
 module.exports = {
+  savedFile,
   backupAccount, saveOne, safeName, loadState, uidsIn, boxDirFor, genOf, STATE_FILE
 };

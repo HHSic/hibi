@@ -30,6 +30,7 @@ const mailrules = require('./mailrules');
 const mailtally = require('./mailtally');
 const mailmark = require('./mailmark');
 const contactcsv = require('./contactcsv');
+const mailcache = require('./mailcache');
 const send = require('./send');
 const secret = require('./secret');
 
@@ -299,6 +300,9 @@ async function refreshMail({ force = false } = {}) {
   }
   // 새로 온 것을 파일로 남긴다. 기다리지 않는다 — 메일 목록은 이미 화면에 올라가야 한다.
   autoBackupNew();
+  // 본문도 미리 받아둔다 — 목록은 이미 올라갔고, 이건 뒤에서 천천히 해도 된다.
+  // 그래야 메일을 두 번 눌렀을 때 창이 곧바로 뜬다.
+  prefetchBodies();
   // 서버를 만지는 규칙(자동 읽음·스팸)도 뒤에서 따로 돈다. 여기서 기다리면
   // 느린 서버에서 목록이 1분 넘게 안 뜬다 (실제로 88초가 걸린 적이 있다).
   runServerRules();
@@ -1911,6 +1915,93 @@ ipcMain.handle('mail:sent', async () => {
   return { loading: r.loading, count: r.messages.length, error: r.error };
 });
 
+// ── 본문 곳간 ────────────────────────────
+// 목록을 읽을 때 본문까지 미리 받아둔다. 그래야 메일을 두 번 눌렀을 때 창이
+// 곳바로 뜼다 — 이 서버는 본문 한 통에도 몇 초가 걸린다.
+const CACHE_DIR = () => path.join(app.getPath('userData'), 'mailcache');
+const PREFETCH_MAX = 12;
+let prefetching = false;
+
+/** 이 메일의 원문이 이미 디스크에 있나 — 백업본이 먼저다 (같은 것을 두 번 두지 않게) */
+function localSource(acc, mailbox, uid) {
+  const dir = store.settings.mailBackupDir;
+  if (dir && store.settings.mailAutoBackup) {
+    const f = mailbackup.savedFile(dir, acc, mailbox || acc.mailbox || 'INBOX', uid);
+    if (f) {
+      try { return fs.readFileSync(f); } catch { /* 그 사이 지워졌으면 곳간을 본다 */ }
+    }
+  }
+  return mailcache.read(CACHE_DIR(), acc.id, mailbox, uid);
+}
+
+/**
+ * 본문 한 통 — 디스크에 있으면 거기서, 없으면 서버에서.
+ * 읽음 상태는 원문에 없으므로 목록이 아는 값을 넘긴다.
+ */
+async function localOrServer(acc, msg) {
+  const box = msg.mailbox || '';
+  const allowRemote = store.settings.mailRemoteImages !== false;
+  const src = localSource(acc, box, msg.uid);
+  if (src) {
+    evlog.log('메일', `본문 · 디스크에서 바로 열음 (uid ${msg.uid})`);
+    return mail.viewFromSource(src, {
+      uid: msg.uid,
+      mailbox: box || acc.mailbox || 'INBOX',
+      seen: !!msg.seen,
+      receivedAt: msg.at || 0,
+      allowRemote
+    });
+  }
+  const got = await mail.fetchBody(acc, msg.uid, { markSeen: false, allowRemote, mailbox: box });
+  // 받은 김에 적어둔다 — 같은 메일을 다시 열 때는 서버를 안 부른다
+  if (got && got.source) {
+    mailcache.write(CACHE_DIR(), acc.id, got.mailbox || box, msg.uid, got.source);
+  }
+  return got;
+}
+
+/**
+ * 목록에 있는데 아직 원문이 없는 것들을 뒤에서 받아둔다.
+ * 자동 백업이 켜져 있으면 그쪽이 이미 다 받아 놓으므로 여기선 건드리지 않는다.
+ */
+async function prefetchBodies() {
+  if (prefetching) return;
+  if (store.settings.mailAutoBackup && store.settings.mailBackupDir) return;
+  const dir = CACHE_DIR();
+  const byAccount = new Map();
+  for (const m of mailState.messages) {
+    if (!m.accountId || !m.uid) continue;
+    const box = m.mailbox || '';
+    if (mailcache.has(dir, m.accountId, box, m.uid)) continue;
+    const k = m.accountId + '|' + box;
+    if (!byAccount.has(k)) byAccount.set(k, { accountId: m.accountId, mailbox: box, uids: [] });
+    const slot = byAccount.get(k);
+    if (slot.uids.length < PREFETCH_MAX) slot.uids.push(m.uid);
+  }
+  if (!byAccount.size) return;
+
+  prefetching = true;
+  try {
+    for (const slot of byAccount.values()) {
+      const acc = mailAccountsForUse().find((a) => a.id === slot.accountId);
+      if (!acc) continue;
+      try {
+        const n = await mail.fetchSources(acc, slot.uids, {
+          mailbox: slot.mailbox,
+          onOne: (one) => mailcache.write(dir, acc.id, one.mailbox, one.uid, one.source)
+        });
+        if (n) evlog.log('메일', `본문 미리 받기 · ${n}통`);
+      } catch (e) {
+        // 미리 받기는 덕이지 의무가 아니다 — 안 되면 열 때 서버를 부르면 그만이다
+        evlog.log('메일', `미리 받기 건너뜀 — ${mail.friendly(e)}`);
+      }
+    }
+    mailcache.sweep(dir);
+  } finally {
+    prefetching = false;
+  }
+}
+
 /** 화면이 지금 알고 있는 메일 전부 (보이는 것 · 묶인 것 · 숨긴 것 · 보낸 것) */
 function knownMessages() {
   return [
@@ -2432,11 +2523,7 @@ function openMailView(msg) {
     // 목록을 훑다가 잘못 연 메일까지 읽음이 되면 다시 찾아내기 어렵다.
     // 보낸메일함의 메일을 받은편지함에서 같은 번호로 열면 전혀 다른 메일이 나온다 —
     // UID는 폴더마다 따로 돈다. 목록이 알려준 폴더를 그대로 연다.
-    mail.fetchBody(acc, msg.uid, {
-      markSeen: false,
-      allowRemote: store.settings.mailRemoteImages !== false,
-      mailbox: msg.mailbox || ''
-    })
+    localOrServer(acc, msg)
       .then((m) => {
         // 원문 버퍼는 화면으로 보내지 않는다 — 백업에만 쓰고 여기서 떼어낸다
         const { source, ...forView } = m;

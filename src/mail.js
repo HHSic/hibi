@@ -338,6 +338,80 @@ async function collect(client, range, opts, out) {
  *
  * 본문은 메일 원래 모양대로 보여주되(buildViewHtml), 위험한 것과 원격 이미지는 걷어낸다.
  */
+/**
+ * 원문(RFC822 바이트) 하나를 화면에 올릴 모양으로.
+ *
+ * 서버를 부르지 않는다 — 그게 핵심이다. 미리 받아둔 것이나 백업해둔 .eml이
+ * 있으면 이 함수만으로 창을 열 수 있고, 그러면 느린 서버를 기다릴 일이 없다.
+ *
+ * 읽음 상태는 원문에 없다 (플래그는 따로 돌아간다) — 부르는 쪽이 목록에서 알고 넘긴다.
+ */
+async function viewFromSource(source, {
+  uid = 0, mailbox = 'INBOX', seen = false, receivedAt = 0,
+  maxChars = 8000, allowRemote = false
+} = {}) {
+  const parsed = await simpleParser(source, { skipImageLinks: true });
+  const view = buildViewHtml(parsed, { allowRemote });
+  let text = (parsed.text || '').trim();
+  if (!text && parsed.html) text = htmlToText(parsed.html);
+  if (text.length > maxChars) text = text.slice(0, maxChars) + '\n\n…(생략)';
+
+  const when = parsed.date ? parsed.date.getTime() : (receivedAt || Date.now());
+  return {
+    uid,
+    subject: parsed.subject || '(제목 없음)',
+    from: (parsed.from && parsed.from.text) || '',
+    fromAddress: (parsed.from && parsed.from.value && parsed.from.value[0]
+      && parsed.from.value[0].address) || '',
+    replyTo: (parsed.replyTo && parsed.replyTo.value && parsed.replyTo.value[0]
+      && parsed.replyTo.value[0].address) || '',
+    messageId: parsed.messageId || '',
+    at: when,
+    receivedAt: receivedAt || when,
+    mailbox,
+    seen: !!seen,
+    source,
+    attachments: parsed.attachments || [],
+    html: view.html,
+    blockedRemote: view.blockedRemote,
+    text
+  };
+}
+
+/**
+ * 여러 통의 원문을 한 번 접속으로 받아온다.
+ * 통마다 접속하면 느린 서버에서 몇 배가 된다 — 미리 받아두기에 쓴다.
+ * @param onOne 한 통씩 도착할 때마다 불린다 (받는 족족 적어두게)
+ */
+async function fetchSources(account, uids, { mailbox = '', onOne, shouldStop } = {}) {
+  const list = uidList(uids);
+  if (!list.length) return 0;
+  const client = connect(account, { timeoutMs: WRITE_TIMEOUT_MS });
+  await client.connect();
+  let got = 0;
+  try {
+    const path = mailbox || account.mailbox || 'INBOX';
+    // 읽기 전용으로 여는 것이 중요하다 — 미리 받았다고 읽음으로 바뀜어버리면 안 된다
+    await client.mailboxOpen(path, { readOnly: true });
+    for await (const msg of client.fetch(list, { source: true, internalDate: true }, { uid: true })) {
+      if (shouldStop && shouldStop()) break;
+      if (!msg || !msg.source) continue;
+      got += 1;
+      if (onOne) {
+        onOne({
+          uid: msg.uid,
+          mailbox: path,
+          receivedAt: (msg.internalDate || new Date()).getTime(),
+          source: msg.source
+        });
+      }
+    }
+    return got;
+  } finally {
+    try { await client.logout(); } catch { client.close(); }
+  }
+}
+
 async function fetchBody(account, uid, { markSeen = true, maxChars = 8000, allowRemote = false, mailbox = '' } = {}) {
   const client = connect(account);
   await client.connect();
@@ -352,41 +426,20 @@ async function fetchBody(account, uid, { markSeen = true, maxChars = 8000, allow
     const flags = msg.flags instanceof Set ? msg.flags : new Set(msg.flags || []);
     const wasSeen = flags.has('\\Seen');
 
-    const parsed = await simpleParser(msg.source, { skipImageLinks: true });
-    // 원래 모양대로 보여주는 게 우선 — HTML이 없을 때만 글로 떨어진다
-    const view = buildViewHtml(parsed, { allowRemote });
-    let text = (parsed.text || '').trim();
-    if (!text && parsed.html) text = htmlToText(parsed.html);
-    if (text.length > maxChars) text = text.slice(0, maxChars) + '\n\n…(생략)';
-
     if (markSeen) {
       // IMAP 플래그는 역슬래시로 시작한다 — 소스에서는 두 번 써야 한다
-      try { await client.messageFlagsAdd(String(uid), ['\\Seen'], { uid: true }); } catch { /* 실패해도 본문은 보여준다 */ }
+      try { await client.messageFlagsAdd(String(uid), ['\Seen'], { uid: true }); } catch { /* 실패해도 본문은 보여준다 */ }
     }
-    return {
+    // 원문에서 화면을 만드는 일은 한 곳에만 둔다 — 곳간에서 읽을 때도 같은 길을 쓴다
+    return viewFromSource(msg.source, {
       uid,
-      subject: parsed.subject || (msg.envelope && msg.envelope.subject) || '(제목 없음)',
-      from: (parsed.from && parsed.from.text) || senderOf(msg.envelope),
-      // 답장을 쓰려면 «누구에게»와 «어느 글에 이어»가 필요하다
-      fromAddress: (parsed.from && parsed.from.value && parsed.from.value[0]
-        && parsed.from.value[0].address) || '',
-      replyTo: (parsed.replyTo && parsed.replyTo.value && parsed.replyTo.value[0]
-        && parsed.replyTo.value[0].address) || '',
-      messageId: parsed.messageId || '',
-      at: (parsed.date || msg.internalDate || new Date()).getTime(),
-      // 백업 파일 이름은 서버가 받은 시각으로 짓는다. 보낸 사람이 적은 날짜(Date: 헤더)를
-      // 쓰면 전체 백업이 지은 이름과 어긋나 같은 메일이 두 번 저장된다.
-      receivedAt: (msg.internalDate || new Date()).getTime(),
       mailbox: path,
       // 열었다고 무조건 읽음으로 바꾸지 않는다 — 창에서 직접 누르게 한다
       seen: markSeen ? true : wasSeen,
-      // 원본 버퍼는 저장할 때만 쓰므로 여기 남겨두고, 화면에는 요약만 보낸다
-      source: msg.source,
-      attachments: parsed.attachments || [],
-      html: view.html,
-      blockedRemote: view.blockedRemote,
-      text
-    };
+      receivedAt: (msg.internalDate || new Date()).getTime(),
+      maxChars,
+      allowRemote
+    });
   } finally {
     try { await client.logout(); } catch { client.close(); }
   }
@@ -535,4 +588,4 @@ function friendly(e) {
   return raw.slice(0, 120);
 }
 
-module.exports = { PRESETS, preset, connect, smtpOf, fromOf, cleanHtml, fetchSummary, fetchBody, markRead, moveToSpam, findJunk, findBox, test, senderOf, friendly, htmlToText, attachmentsForView, buildViewHtml };
+module.exports = { PRESETS, preset, connect, smtpOf, fromOf, cleanHtml, fetchSummary, fetchBody, markRead, moveToSpam, findJunk, findBox, viewFromSource, fetchSources, test, senderOf, friendly, htmlToText, attachmentsForView, buildViewHtml };
