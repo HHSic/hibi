@@ -28,6 +28,7 @@ const mail = require('./mail');
 const mailbackup = require('./mailbackup');
 const mailrules = require('./mailrules');
 const mailtally = require('./mailtally');
+const mailmark = require('./mailmark');
 const send = require('./send');
 const secret = require('./secret');
 
@@ -172,6 +173,11 @@ const mailState = {
 // 쓰기 제한이 90초라, 한 번 걸러 넘어가면 그 메일은 영영 처리되지 않는다.
 // 스팸은 더 나쁘다 — 화면에서는 이미 숨겨져 «옮겨진 것»처럼 보이는데 서버에는 그대로 남는다.
 // 셈은 mailtally가 한다 (거기서만 시험할 수 있다).
+// 읽음 상태 임시 장부 — 서버가 대답하기 전에도 화면이 맞게 보이게 한다.
+// 이 서버는 읽음 표시 두 통에 88초가 걸린 적이 있고, 그동안 목록이 옷 값을
+// 들고 있으면 «눌렀는데 안 되네»가 된다. 서버가 따라오면 장부는 스스로 지워진다.
+const seenMarks = new mailmark.SeenMarks({ ttlMs: 10 * 60_000, max: 500 });
+
 const RULE_RETRY_MS = 5 * 60_000;
 const ruleLog = new mailtally.WorkLog({ tries: 3, retryMs: RULE_RETRY_MS });
 let ruleBusy = false;
@@ -234,6 +240,13 @@ async function refreshMail({ force = false } = {}) {
       .map((m) => ({ address: m.fromAddress, name: m.fromName })));
 
     messages.sort((a, b) => b.at - a.at);
+
+    // 사용자가 방금 바꾼 읽음 상태를 서버 값 위에 덮는다. 규칙보다 먼저 해야
+    // «자동 읽음»이 이미 읽은 메일을 또 건드리지 않는다.
+    // 뱃지 숫자도 같이 보정한다 — 목록은 읽음인데 숫자만 안 줄면 그게 더 이상하다.
+    const overlay = seenMarks.apply(messages);
+    messages = overlay.messages;
+    unread = Math.max(0, unread + overlay.delta);
 
     // 규칙 적용 — 화면에서 걷어내는 것과 알림에서 빼는 것은 다르다.
     //   숨김·스팸  → 목록에서도 빠지고 안읽음 수에서도 빠진다 (없는 셈)
@@ -1365,6 +1378,20 @@ async function doMarkRead({ accountId, uids, read = true, mailbox = '' } = {}) {
   }
   // 서버가 느리면 1분 넘게 걸린다. 그동안 아무 말이 없으면 «안 눌렸나» 싶어 또 누르게 된다.
   notice('wait', read ? '읽음 표시 중…' : '안 읽음으로 되돌리는 중…');
+
+  // 바꾸려는 값을 먼저 장부에 적는다. 다음 틱부터 목록과 뱃지가 곧바로 그 값으로 보인다 —
+  // 서버가 대답하는 건 그 한참 뒤다. 실패하면 아래에서 도로 지운다.
+  // uids를 안 주면 «안 읽은 것 전부»라서 목록으로 알 수 있는 것만 적는다.
+  // uid만으로는 어느 계정인지 알 수 없다 — 계정을 같이 받았을 때만 uid를 그대로 믿는다.
+  // 아니면 화면이 알고 있는 목록에서 조건에 맞는 것을 찾아 적는다.
+  const marked = (uids && uids.length && accountId)
+    ? uids.map((u) => ({ accountId, mailbox, uid: u }))
+    : knownMessages()
+      .filter((m) => (!accountId || m.accountId === accountId) && !!m.seen !== read)
+      .filter((m) => !uids || !uids.length || uids.includes(m.uid))
+      .map((m) => ({ accountId: m.accountId, mailbox: m.mailbox || '', uid: m.uid }));
+  seenMarks.markAll(marked, read);
+
   let changed = 0;
   const failed = [];
   for (const acc of accounts) {
@@ -1372,6 +1399,8 @@ async function doMarkRead({ accountId, uids, read = true, mailbox = '' } = {}) {
       const r = await mail.markRead(acc, uids, { read, mailbox });
       changed += r.changed;
     } catch (e) {
+      // 추측을 즉시 버린다 — 바뀜 척하면 안 된다
+      seenMarks.unmarkAll(marked.filter((x) => x.accountId === acc.id));
       failed.push(`${acc.name || acc.user}: ${e.message || mail.friendly(e)}`);
       // 왜 거부됐는지는 서버가 SELECT 때 알려준 것을 봐야 안다 — 그대로 남긴다
       if (e.diag) {
@@ -1729,6 +1758,9 @@ async function loadSent() {
       // 보낸 메일에 «안 읽음»은 뜻이 없다 — 내가 쓴 것이다. 최근 것부터 그냥 보여준다.
       const r = await mail.fetchSummary(acc, { limit: want, onlyUnread: false, box: 'sent' });
       // fromSelf — 내가 쓴 메일이라는 표시. 여기에 «답장»을 붙이면 나에게 답장이 간다.
+      // seen을 참으로 고정한다 — 내가 쓴 메일에 «안 읽음» 강조는 뜻이 없다.
+      // 그래서 이 목록에는 읽음 임시 장부를 덮지 않는다. 덮으면 «고정된 참»과 값이 같아져
+      // 장부가 곧바로 지워지고, 정작 메일을 다시 열었을 때 옛 값이 나온다.
       out.push(...r.messages.map((m) => ({
         ...m, account: acc.name, accountId: acc.id, seen: true, fromSelf: true
       })));
@@ -1750,6 +1782,16 @@ ipcMain.handle('mail:sent', async () => {
   const r = await loadSent();
   return { loading: r.loading, count: r.messages.length, error: r.error };
 });
+
+/** 화면이 지금 알고 있는 메일 전부 (보이는 것 · 묶인 것 · 숨긴 것 · 보낸 것) */
+function knownMessages() {
+  return [
+    ...mailState.messages,
+    ...mailState.groups.flatMap((g) => g.items),
+    ...mailState.folders.filter((f) => f.id === 'hidden').flatMap((f) => f.items),
+    ...mailState.sent.messages
+  ];
+}
 
 /** 지금 받아둔 것 중 이 조건에 걸리는 메일 — 규칙을 만들기 전에 보여준다 */
 function wouldHit(rule) {
@@ -2192,6 +2234,9 @@ function openMailView(msg) {
         mailViewPayload = { ...forView, accountId: acc.id,
           // 내가 쓴 메일이면 «답장»을 감춘다 — 나에게 답장이 가는 건 뜻이 없다
           fromSelf: !!msg.fromSelf,
+          // 방금 바꿔둔 값이 있으면 그것이 먼저다. 서버는 아직 옛 값을 말할 수 있는데,
+          // 그걸 그대로 보여주면 «분명히 읽음으로 바꿨는데 다시 열면 안 읽음»이 된다.
+          seen: seenMarks.seenOf({ accountId: acc.id, mailbox: forView.mailbox, uid: msg.uid }, forView.seen),
           attachments: mail.attachmentsForView(mailViewFiles) };
         refreshMail();
       })
