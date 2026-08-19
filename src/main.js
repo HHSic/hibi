@@ -1457,11 +1457,18 @@ function openCompose(payload) {
     if (sendingNow) {
       return { ok: false, message: '쓰기 창이 메일을 보내는 중입니다 — 끝나면 다시 눌러주세요' };
     }
+    // 창을 반드시 보이게 한 다음에 말을 건다.
+    // focus()만으로는 최소화된 창이 안 올라온다 — 그러면 답장을 눌렀는데
+    // 아무 일도 안 일어난다. 갈아끼울까 묻는 말도 안 보이는 창에서 뜼게 된다.
+    if (composeWin.isMinimized()) composeWin.restore();
+    if (!composeWin.isVisible()) composeWin.show();
+    composeWin.moveTop();
+    composeWin.focus();
     // 쓰던 글이 있는데 새 초안으로 갈아끼우면 그 글은 그대로 사라진다.
     // 화면에 물어보고, 아니라고 하면 쓰던 것을 그대로 둔다.
-    composeWin.focus();
     composeWin.webContents.send('compose:replace', payload);
-    return { ok: true, message: '' };
+    evlog.log('메일', '쓰기 창이 이미 열려 있어 갈아끼기를 물어봅니다');
+    return { ok: true, message: '쓰기 창이 이미 열려 있습니다 — 그쪽에서 물어봅니다', reused: true };
   }
   composePayload = payload;
   const saved = store.settings.composeSize;
@@ -1496,6 +1503,8 @@ function startCompose({ kind = 'new', accountId, source } = {}) {
   // 개인 메일에 회사 주소로 답장이 나간다 — 받는 사람 눈에는 그게 내 정체다.
   const asked = accounts.find((a) => a.id === accountId);
   if (!asked && kind !== 'new') {
+    evlog.log('메일', `쓰기 못 열음 · 계정 ${accountId}을 목록에서 못 찾음`
+      + ` (쓸 수 있는 계정: ${accounts.map((a) => a.id).join(',') || '없음'})`);
     return { ok: false, message: '이 메일을 받은 계정을 쓸 수 없습니다 (꺼져 있거나 지워졌습니다)' };
   }
   // 이어쓰는 것은 원래 쓰던 계정으로 — 그 계정이 없어졌으면 첫 계정으로 놓아둔다
@@ -1514,6 +1523,7 @@ function startCompose({ kind = 'new', accountId, source } = {}) {
     }
     : (kind === 'new' ? { to: '', subject: '', text: '' } : send.draftFrom(kind, source));
   const stored = store.mailAccounts.find((a) => a.id === acc.id) || {};
+  evlog.log('메일', `쓰기 열기 · ${kind} · 계정 ${acc.name || acc.user}`);
   const opened = openCompose({
     accountId: acc.id,
     signature: stored.signature || '',
@@ -1529,6 +1539,7 @@ function startCompose({ kind = 'new', accountId, source } = {}) {
     }),
     ...draft
   });
+  if (!opened.ok) evlog.log('메일', `쓰기 못 열음 · ${opened.message}`);
   return opened;
 }
 

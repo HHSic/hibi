@@ -353,13 +353,21 @@
         // 결과를 안 보면 실패했을 때 눌러도 아무 일도 안 일어난다 —
         // 계정이 꺼져 있거나 지워졌을 때 그랬다. 이유를 말해줘야 한다.
         b.disabled = true;
+        const tell = (why) => {
+          b.title = why;
+          $('blocked').style.display = 'block';
+          $('blocked').textContent = why;
+        };
         try {
           const r = await window.nunsseom.composeOpen({ kind, accountId: m.accountId, source: src });
-          if (r && r.ok === false) {
-            b.title = r.message || '쓰기 창을 열지 못했습니다';
-            $('blocked').style.display = 'block';
-            $('blocked').textContent = b.title;
-          }
+          // 메인이 아무것도 안 돌려주는 일은 없어야 하지만, 그러면 이유라도 남긴다
+          if (!r) tell('쓰기 창이 응답하지 않았습니다');
+          else if (r.ok === false) tell(r.message || '쓰기 창을 열지 못했습니다');
+          else if (r.reused) tell(r.message || '쓰기 창이 이미 열려 있습니다');
+        } catch (err) {
+          // catch가 없으면 메인에서 터졌을 때 눌러도 아무 일도 안 일어난다 —
+          // 이유 없이 안 되는 것처럼 보이는 게 제일 나쁘다.
+          tell('쓰기 창을 여는 중 오류 — ' + (err && err.message ? err.message : String(err)));
         } finally {
           b.disabled = false;
         }
