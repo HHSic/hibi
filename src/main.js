@@ -743,7 +743,9 @@ function pushTick() {
       // 위젯이 한 번에 한 칸만 보여준다.
       // 받은편지함을 아직 한 번도 못 읽었으면 보낸메일함 탭도 내보내지 않는다 —
       // 그것 하나만 남으면 화면이 «보낸메일함»에서 시작하고 돌아갈 곳이 없다.
-      folders: mailState.folders.length ? [...mailState.folders, sentFolder()] : [],
+      folders: mailState.folders.length
+        ? [...mailState.folders, draftFolder(), sentFolder()].filter(Boolean)
+        : [],
       filtered: mailState.filtered
     }
     : null;
@@ -1660,8 +1662,35 @@ ipcMain.handle('compose:send', async (_e, msg) => {
  * 직접 그리면 창 밖으로 잘린다.
  */
 ipcMain.handle('mail:row-menu', async (e, msg) => {
-  if (!msg || !msg.uid) return null;
   const win = BrowserWindow.fromWebContents(e.sender);
+
+  // 임시보관함의 줄은 메일이 아니다 — 읽음도 규칙도 뜻이 없다.
+  if (msg && msg.draft) {
+    Menu.buildFromTemplate([
+      { label: '이어서 쓰기', click: () => startCompose({ kind: 'new' }) },
+      { type: 'separator' },
+      {
+        label: '임시 저장 버리기',
+        click: async () => {
+          const { response } = await dialog.showMessageBox(win || undefined, {
+            type: 'question',
+            buttons: ['버리기', '그만두기'],
+            defaultId: 1,
+            cancelId: 1,
+            title: '임시보관함',
+            message: '쓰다 만 글을 버릴까요?',
+            detail: '되돌릴 수 없습니다.'
+          });
+          if (response !== 0) return;
+          store.clearMailDraft();
+          notice('good', '임시 저장을 버렸습니다');
+        }
+      }
+    ]).popup({ window: win || undefined });
+    return null;
+  }
+
+  if (!msg || !msg.uid) return null;
   const base = mailrules.ruleFor(msg, 'hide');
   const who = base.match || '(보낸사람 모름)';
   const short = who.length > 34 ? who.slice(0, 33) + '…' : who;
@@ -1786,6 +1815,35 @@ function rulesPayload() {
     groups: mailState.groups.map((g) => ({ name: g.name, count: g.items.length }))
   };
 }
+/**
+ * 임시보관함 한 칸.
+ *
+ * 쓰다 만 글이 «어딘가에 있다»고만 하면 없는 것과 같다.
+ * 아웃룭처럼 폴더로 보여야 «여기 있구나»가 된다.
+ * 서버의 Drafts가 아니라 이 PC에 적어둔 것이다 — 이 서버는 느려서
+ * 손이 멈출 때마다 서버에 올리면 그게 오히려 방해가 된다.
+ */
+function draftFolder() {
+  const d = store.mailDraft;
+  if (!d) return null;
+  const who = String(d.to || '').trim();
+  return {
+    id: 'draft',
+    name: '임시보관함',
+    items: [{
+      draft: true,
+      uid: 0,
+      accountId: d.accountId || '',
+      subject: String(d.subject || '').trim() || '(제목 없음)',
+      from: who ? `받는 사람: ${who}` : '받는 사람 없음',
+      at: d.at || 0,
+      seen: true
+    }],
+    count: 1,
+    unread: 0
+  };
+}
+
 /**
  * 보낸메일함 폴더 한 칸.
  * 아직 안 불러왔어도 «탭»은 있어야 한다 — 없으면 누를 것이 없어서 영영 안 불러온다.

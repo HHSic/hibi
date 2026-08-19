@@ -282,6 +282,9 @@
     gap: 0.25rem;
     padding: 0 0.75rem 0.625rem;
     min-height: 0;
+    /* 이게 없으면 긴 제목의 «줄이지 않은 폭»이 그리드 칸을 밀어내 패널이 카드 밖으로
+       비어져 나간다. 좁은 위젯에서 폴더 줄의 ⚙가 화면 밖으로 사라지던 원인이다. */
+    min-width: 0;
   }
   .card.calon .cal:not(.mailpanel) { display: flex; }
   .card.mailon .mailpanel { display: flex; }
@@ -381,11 +384,14 @@
   .cev.mailrow.read .nm { color: var(--secondary); font-weight: 400; }
   /* 메일 폴더 줄 — 아웃룩의 폴더 창을 좁은 위젯에 맞게 한 줄로 눕힌 것.
      칸이 모자라면 접히지 않고 옆으로 굴러간다 — 접히면 위젯 높이가 들쭉날쭉해진다. */
-  .mailtabs {
-    display: flex; gap: 0.125rem; margin-bottom: 0.1875rem;
+  .mailtabs { display: flex; align-items: center; gap: 0.125rem; margin-bottom: 0.1875rem; }
+  /* 탭만 옆으로 굴러가고 ⚙는 끝에 박혀 있는다 — 폴더가 늘면 톱니가 화면 밖으로
+     밀려나 필터 관리로 갈 길이 사라졌다 (넓은 폭에서는 안 보이던 문제다) */
+  .mailtabs .mtabs {
+    flex: 1; min-width: 0; display: flex; gap: 0.125rem;
     overflow-x: auto; scrollbar-width: none;
   }
-  .mailtabs::-webkit-scrollbar { display: none; }
+  .mailtabs .mtabs::-webkit-scrollbar { display: none; }
   .mailtabs .mtab {
     all: unset; cursor: default; flex: none;
     padding: 0.0625rem 0.3125rem; border-radius: 0.3125rem;
@@ -396,7 +402,7 @@
   .mailtabs .mtab.on { background: var(--fill-hi); color: var(--label); }
   /* 숨김은 «지금 보는 곳»이 아니라 «확인하러 가는 곳»이다 — 평소엔 뒤로 물러나 있어야 한다 */
   .mailtabs .mtab.dim:not(.on) { opacity: 0.6; }
-  .mailtabs .gear { margin-left: auto; font-size: 0.625rem; }
+  .mailtabs .gear { flex: none; font-size: 0.625rem; }
   /* 안 읽은 것이 있다는 표시. 숫자 자리를 뺏지 않으면서 눈에는 걸리게. */
   .mailtabs .mdot {
     display: inline-block; width: 0.25rem; height: 0.25rem; border-radius: 50%;

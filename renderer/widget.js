@@ -518,6 +518,18 @@ function paintNote(box) {
 }
 
 function attachMailRow(row, m) {
+  // 임시보관함의 줄은 메일이 아니라 «쓰다 만 것»이다 — 서버에서 열 것이 없다.
+  // 한 번만 눌러도 쓰기 창이 열리게 한다 (둘째 눌러 여는 것은 «읽는» 일이다).
+  if (m.draft) {
+    row.title = '누르면 이어서 씁니다';
+    row.onclick = (e) => { e.stopPropagation(); window.nunsseom.composeOpen({ kind: 'new' }); };
+    row.oncontextmenu = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      window.nunsseom.mailRowMenu({ ...m });
+    };
+    return;
+  }
   row.ondblclick = (e) => { e.stopPropagation(); window.nunsseom.mailOpen(m); };
   row.oncontextmenu = (e) => {
     e.preventDefault();
@@ -556,6 +568,7 @@ function emptyWord(f, box) {
     if (f.lazy) return '누르면 보낸 메일을 불러옵니다';
     return '보낸 메일이 없습니다';
   }
+  if (f.id === 'draft') return '쓰다 만 글이 없습니다';
   if (f.id === 'in') {
     return box && box.filtered ? `새 메일 없음 · 필터가 ${box.filtered}통 숨김` : '새 메일 없음';
   }
@@ -580,8 +593,12 @@ function currentFolder(box) {
  * @param cls 시트와 패널이 쓰는 칩 클래스가 같다 — 둘 다 이 함수를 쓴다
  */
 function folderStrip(box, redraw) {
+  // 탭은 옆으로 굴러가되, ⚙는 자리를 지킨다 — 폴더가 늘면 톱니가 화면 밖으로
+  // 밀려나가 필터 관리로 갈 길이 사라졌다 (좋은 폭에서는 안 보이는 문제였다).
+  const wrap = document.createElement('div');
+  wrap.className = 'mailtabs';
   const strip = document.createElement('div');
-  strip.className = 'mailtabs';
+  strip.className = 'mtabs';
   for (const f of (box && box.folders) || []) {
     const on = f.id === (currentFolder(box) || {}).id;
     const b = document.createElement('button');
@@ -617,8 +634,8 @@ function folderStrip(box, redraw) {
   gear.textContent = '⚙';
   gear.title = '필터 규칙 관리';
   gear.onclick = (e) => { e.stopPropagation(); window.nunsseom.openSettings('mail'); };
-  strip.append(gear);
-  return strip;
+  wrap.append(strip, gear);
+  return wrap;
 }
 
 /** 규칙에 걸려서 여기 있는 메일이면, 왜 그런지 한 줄 덧붙인다 */
