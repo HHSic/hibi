@@ -2491,10 +2491,33 @@ ipcMain.handle('mail:backup-start', async () => {
 
 // ── 메일 한 통 보기 ──────────────────────────────────────
 // 본문은 이때만 받는다. 폴링에서 매번 받으면 느리고, 대부분은 열어보지도 않는다.
-let mailWin = null;
-let mailViewPayload = null;
-let mailViewFiles = [];      // 원본 버퍼 — 저장할 때만 쓰고 화면에는 보내지 않는다
-let mailViewSize = null;     // 메일 보기 창의 기준 크기 (위젯과 같은 이유로 되읽지 않는다)
+/**
+ * 메일 보기 창들.
+ *
+ * 예전엔 하나였다 — 두 번째 메일을 열면 앞에 보던 것이 그 자리에서 바뀌어
+ * 둘을 나란히 놓고 볼 수가 없었다. 이젠 창마다 제 메일을 든다.
+ *
+ * 상태를 전역으로 두면 두 창이 같은 칸을 밟는다 — 열쇠는 그 창의 webContents id다.
+ * 물어보는 쪽(mail:view-data, 첨부 저장, 크기 조절)은 전부 e.sender로 자기 칸을 찾는다.
+ */
+const mailWins = new Map();   // webContents.id → { win, payload, files, seq, size }
+// 한 번에 열 수 있는 창 수. 실수로 목록을 드로그하듯 눌러도 화면이 안 덮이게.
+const MAIL_WIN_MAX = 8;
+let mailViewSize = null;     // 마지막으로 조절한 크기 (다음에 열 때 이 크기로)
+
+/** 그 창의 칸 — IPC는 전부 이걸로 자기 것을 찾는다 */
+function slotOf(e) {
+  return e && e.sender ? mailWins.get(e.sender.id) : null;
+}
+
+/** 제일 오래전에 열린 창 — 상한을 넘길 때 이걸 닫는다 */
+function oldestMailWin() {
+  let found = null;
+  for (const slot of mailWins.values()) {
+    if (!found || slot.at < found.at) found = slot;
+  }
+  return found;
+}
 
 /**
  * 이 창은 우리 페이지에서 절대 벗어나지 않는다.
@@ -2515,56 +2538,64 @@ function lockToOurPage(win) {
   win.webContents.on('will-attach-webview', (e) => e.preventDefault());
 }
 
-let mailViewSeq = 0;   // 늦게 도착한 예전 요청이 지금 보고 있는 메일을 덮어쓰지 못하게
+let mailViewSeq = 0;   // 늦게 도착한 예전 요청이 지금 보고 있는 메일을 덤어쓰지 못하게
 
+/**
+ * 새 창을 어디에 놓을까 — 정확히 같은 자리에 곹쳐 띄우면 둘이 하나처럼 보인다.
+ * 이미 열린 창이 있으면 그 옆으로 조금씩 비쪨 놓는다 (윈도우 기본 동작과 같은 모양).
+ */
+function cascadeFrom(width, height) {
+  const last = [...mailWins.values()].sort((x, y) => y.at - x.at)[0];
+  if (!last || !last.win || last.win.isDestroyed()) return {};
+  const b = last.win.getBounds();
+  const step = 28;
+  let x = b.x + step;
+  let y = b.y + step;
+  try {
+    const area = screen.getDisplayMatching(b).workArea;
+    // 화면 밖으로 나가면 다시 왼쪽 위로 돌아온다
+    if (x + width > area.x + area.width || y + height > area.y + area.height) {
+      x = area.x + step;
+      y = area.y + step;
+    }
+  } catch { /* 모니터를 못 읽으면 그냥 비쪨만 */ }
+  return { x: Math.round(x), y: Math.round(y) };
+}
+
+/**
+ * 메일 한 통을 새 창으로 열어 보여준다.
+ * 같은 메일을 또 열면 새 창을 만들지 않고 그 창을 앞으로 가져온다 —
+ * 같은 글이 두 번 떠 있을 이유가 없다.
+ */
 function openMailView(msg) {
-  mailViewPayload = null;
-  // 계정이 안 맞으면 그냥 실패시킨다. 예전에는 첫 계정으로 넘어갔는데,
-  // 그러면 엉뚱한 계정에서 같은 번호의 메일을 열고 읽음 표시까지 해 버린다.
   const acc = mailAccountsForUse().find((a) => a.id === msg.accountId);
-  if (!acc) {
-    mailViewPayload = { error: '이 메일의 계정을 찾을 수 없습니다' };
-    if (!mailWin || mailWin.isDestroyed()) return false;
+
+  // 이미 그 메일을 보고 있으면 그 창을 올린다
+  const key = `${msg.accountId}:${msg.mailbox || ''}:${msg.uid}`;
+  for (const slot of mailWins.values()) {
+    if (slot.key !== key || !slot.win || slot.win.isDestroyed()) continue;
+    if (slot.win.isMinimized()) slot.win.restore();
+    slot.win.moveTop();
+    slot.win.focus();
+    return true;
   }
 
-  const seq = ++mailViewSeq;
-  // 본문을 받아오는 동안 창을 먼저 띄운다 — 클릭했는데 한참 아무 일도 없으면 고장 같다
-  if (acc) {
-    // 열었다고 바로 읽음으로 바꾸지 않는다. 창의 «안 읽음» 칩을 눌러 사용자가 정한다 —
-    // 목록을 훑다가 잘못 연 메일까지 읽음이 되면 다시 찾아내기 어렵다.
-    // 보낸메일함의 메일을 받은편지함에서 같은 번호로 열면 전혀 다른 메일이 나온다 —
-    // UID는 폴더마다 따로 돈다. 목록이 알려준 폴더를 그대로 연다.
-    localOrServer(acc, msg)
-      .then((m) => {
-        // 원문 버퍼는 화면으로 보내지 않는다 — 백업에만 쓰고 여기서 떼어낸다
-        const { source, ...forView } = m;
-        autoBackupOne(acc, { ...forView, source });
-        if (seq !== mailViewSeq) return;   // 그 사이 다른 메일을 열었다
-        mailViewFiles = m.attachments || [];
-        // 창에서 읽음 표시를 누르려면 어느 계정의 몇 번 메일인지 알아야 한다
-        mailViewPayload = { ...forView, accountId: acc.id,
-          // 내가 쓴 메일이면 «답장»을 감춘다 — 나에게 답장이 가는 건 뜻이 없다
-          fromSelf: !!msg.fromSelf,
-          // 방금 바꿔둔 값이 있으면 그것이 먼저다. 서버는 아직 옛 값을 말할 수 있는데,
-          // 그걸 그대로 보여주면 «분명히 읽음으로 바꿨는데 다시 열면 안 읽음»이 된다.
-          seen: seenMarks.seenOf({ accountId: acc.id, mailbox: forView.mailbox, uid: msg.uid }, forView.seen),
-          attachments: mail.attachmentsForView(mailViewFiles) };
-        refreshMail();
-      })
-      .catch((e) => {
-        if (seq !== mailViewSeq) return;
-        mailViewPayload = { error: mail.friendly(e) };
-      });
+  // 너무 많이 쌓이면 제일 오래된 것부터 닫는다
+  while (mailWins.size >= MAIL_WIN_MAX) {
+    const old = oldestMailWin();
+    if (!old || !old.win || old.win.isDestroyed()) break;
+    old.win.close();
+    mailWins.delete(old.id);
   }
 
-  if (mailWin && !mailWin.isDestroyed()) { mailWin.focus(); return true; }
   const saved = store.settings.mailViewSize;
-  // 큰 모니터에서 키워 둔 크기를 작은 화면에서 그대로 쓰면 창이 화면 밖으로 나간다
-  const cap = mailViewMax();
-  mailWin = new BrowserWindow({
-    width: Math.round(clamp((saved && saved.width) || 420 + PAD, 320, cap.width)),
-    height: Math.round(clamp((saved && saved.height) || 480 + PAD, 260, cap.height)),
-    minWidth: 320, minHeight: 260,
+  const cap = mailViewMax(null);
+  const width = Math.round(clamp((saved && saved.width) || 420 + PAD, 320, cap.width));
+  const height = Math.round(clamp((saved && saved.height) || 480 + PAD, 260, cap.height));
+
+  const win = new BrowserWindow({
+    width, height, minWidth: 320, minHeight: 260,
+    ...cascadeFrom(width, height),
     frame: false,
     // 크기 조절은 렌더러의 리사이즈 존이 맡는다 (네이티브는 투명 창에서 폭주한다)
     resizable: false,
@@ -2575,34 +2606,85 @@ function openMailView(msg) {
     ...glass.windowOptions(),
     webPreferences: { preload: PRELOAD }
   });
-  mailViewSize = { width: mailWin.getSize()[0], height: mailWin.getSize()[1] };
+
+  const id = win.webContents.id;
+  const slot = {
+    id, win, key,
+    payload: null,
+    files: [],
+    seq: ++mailViewSeq,
+    size: { width: win.getSize()[0], height: win.getSize()[1] },
+    at: Date.now()
+  };
+  mailWins.set(id, slot);
+
+  // 계정을 못 찾으면 그냥 실패시킨다. 예전에는 첫 계정으로 넘어갔는데,
+  // 그러면 엉뚜한 계정에서 같은 번호의 메일을 열고 읽음 표시까지 해 버린다.
+  if (!acc) {
+    slot.payload = { error: '이 메일의 계정을 찾을 수 없습니다' };
+  } else {
+    // 본문을 받아오는 동안 창을 먼저 띄운다 — 클릭했는데 한참 아무 일도 없으면 고장 같다.
+    // 열었다고 바로 읽음으로 바꾸지 않는다. 창의 «안 읽음» 칩을 눌러 사용자가 정한다.
+    localOrServer(acc, msg)
+      .then((m) => {
+        // 원문 버퍼는 화면으로 보내지 않는다 — 백업에만 쓰고 여기서 떼어낸다
+        const { source, ...forView } = m;
+        autoBackupOne(acc, { ...forView, source });
+        if (win.isDestroyed()) return;      // 받는 사이에 닫았으면 버린다
+        slot.files = m.attachments || [];
+        slot.payload = {
+          ...forView,
+          accountId: acc.id,
+          // 내가 쓴 메일이면 «답장»을 감춘다 — 나에게 답장이 가는 건 뜻이 없다
+          fromSelf: !!msg.fromSelf,
+          // 방금 바꿔둔 값이 있으면 그것이 먼저다. 서버는 아직 옷 값을 말할 수 있는데,
+          // 그걸 그대로 보여주면 «분명히 읽음으로 바꾸었는데 다시 열면 안 읽음»이 된다.
+          seen: seenMarks.seenOf({ accountId: acc.id, mailbox: forView.mailbox, uid: msg.uid }, forView.seen),
+          attachments: mail.attachmentsForView(slot.files)
+        };
+        refreshMail();
+      })
+      .catch((e) => {
+        if (win.isDestroyed()) return;
+        slot.payload = { error: mail.friendly(e) };
+      });
+  }
+
   // 메일 본문은 남이 쓴 것이다. 그 안의 링크로 이 창이 이동해 버리면 그 사이트가
-  // preload 다리(메일 보내기·파일 첨부)를 그대로 쥔다. 창은 우리 페이지에 못박고
+  // preload 다리(메일 보내기·파일 첨부)를 그대로 쥐다. 창은 우리 페이지에 못박고
   // 바깥 주소는 기본 브라우저로 보낸다.
-  lockToOurPage(mailWin);
-  mailWin.loadFile(page('mailview.html'), {
+  lockToOurPage(win);
+  win.loadFile(page('mailview.html'), {
     query: glassQuery({ radius: '20',
       remote: store.settings.mailRemoteImages !== false ? '1' : '' })
   });
-  mailWin.on('closed', () => { mailWin = null; mailViewPayload = null; mailViewFiles = []; });
+  win.on('closed', () => { mailWins.delete(id); });
   return true;
 }
 
 ipcMain.handle('mail:open', (_e, msg) => openMailView(msg));
 /** 렌더러가 본문을 달라고 하면, 도착할 때까지 잠깐 기다렸다 준다 */
-ipcMain.handle('mail:view-data', async () => {
-  for (let i = 0; i < 60 && !mailViewPayload; i++) {
+ipcMain.handle('mail:view-data', async (e) => {
+  const slot = slotOf(e);
+  if (!slot) return { error: '창을 찾지 못했습니다' };
+  for (let i = 0; i < 60 && !slot.payload; i++) {
     await new Promise((r) => setTimeout(r, 250));
   }
-  return mailViewPayload || { error: '시간이 초과되었습니다' };
+  return slot.payload || { error: '시간이 초과되었습니다' };
 });
-ipcMain.on('mail:view-close', () => mailWin && !mailWin.isDestroyed() && mailWin.close());
+ipcMain.on('mail:view-close', (e) => {
+  const slot = slotOf(e);
+  if (slot && !slot.win.isDestroyed()) slot.win.close();
+});
 
 /** 첨부 저장 — 어디에 저장할지는 사용자가 고른다 */
-ipcMain.handle('mail:save-attachment', async (_e, index) => {
-  const a = mailViewFiles[index];
+ipcMain.handle('mail:save-attachment', async (e, index) => {
+  // 첨부는 창마다 따로 든다 — 전역 목록을 쓰면 두 번째 창을 연 순간
+  // 첫 창의 «첨부 저장»이 엉뚱한 파일을 내놓는다.
+  const slot = slotOf(e);
+  const a = slot && slot.files[index];
   if (!a || !a.content) return { ok: false, message: '첨부를 찾을 수 없습니다' };
-  const { canceled, filePath } = await dialog.showSaveDialog(mailWin || undefined, {
+  const { canceled, filePath } = await dialog.showSaveDialog(slot.win || undefined, {
     defaultPath: a.filename || '첨부파일',
     title: '첨부 저장'
   });
@@ -2619,25 +2701,27 @@ ipcMain.handle('mail:save-attachment', async (_e, index) => {
 ipcMain.on('mail:reveal', (_e, p) => { if (p) shell.showItemInFolder(p); });
 
 /** 메일 보기 창 크기 조절 — 위젯과 같은 방식(기준 크기를 못박아 되먹임을 끊는다) */
-ipcMain.on('mailview:move', (_e, { x, y }) => {
-  if (!mailWin || mailWin.isDestroyed() || !mailViewSize) return;
+ipcMain.on('mailview:move', (e, { x, y }) => {
+  const slot = slotOf(e);
+  if (!slot || slot.win.isDestroyed() || !slot.size) return;
   // setPosition은 배율이 100%가 아닐 때 호출마다 창을 부풀린다 — 크기를 못박아 옮긴다
-  mailWin.setBounds({ x: Math.round(x), y: Math.round(y), ...mailViewSize });
+  slot.win.setBounds({ x: Math.round(x), y: Math.round(y), ...slot.size });
 });
 
-ipcMain.handle('mailview:bounds', () => {
-  if (!mailWin || mailWin.isDestroyed()) return { x: 0, y: 0, width: 420, height: 480 };
-  return mailWin.getBounds();
+ipcMain.handle('mailview:bounds', (e) => {
+  const slot = slotOf(e);
+  if (!slot || slot.win.isDestroyed()) return { x: 0, y: 0, width: 420, height: 480 };
+  return slot.win.getBounds();
 });
 /**
  * 얼마나 크게 늘릴 수 있나. 고정 숫자로 막으면 큰 화면에서 답답하다 —
  * 그 창이 놓인 모니터의 작업 영역만큼 허용한다.
  * 창에는 그림자 여백(PAD)이 붙어 있으므로 그만큼 더해야 보이는 카드가 화면을 꽉 채운다.
  */
-function mailViewMax() {
+function mailViewMax(win) {
   try {
-    const d = mailWin && !mailWin.isDestroyed()
-      ? screen.getDisplayMatching(mailWin.getBounds())
+    const d = win && !win.isDestroyed()
+      ? screen.getDisplayMatching(win.getBounds())
       : screen.getPrimaryDisplay();
     return { width: d.workAreaSize.width + PAD, height: d.workAreaSize.height + PAD };
   } catch {
@@ -2645,16 +2729,19 @@ function mailViewMax() {
   }
 }
 
-ipcMain.on('mailview:set-bounds', (_e, { x, y, width, height, dir }) => {
-  if (!mailWin || mailWin.isDestroyed()) return;
-  const max = mailViewMax();
+ipcMain.on('mailview:set-bounds', (e, { x, y, width, height, dir }) => {
+  const slot = slotOf(e);
+  if (!slot || slot.win.isDestroyed()) return;
+  const max = mailViewMax(slot.win);
   const w = Math.round(clamp(width, 320, max.width));
   const h = Math.round(clamp(height, 260, max.height));
   const nx = Math.round(String(dir).includes('w') ? x + (width - w) : x);
   const ny = Math.round(String(dir).includes('n') ? y + (height - h) : y);
-  mailViewSize = { width: w, height: h };
-  mailWin.setBounds({ x: nx, y: ny, width: w, height: h });
-  store.setSettings({ mailViewSize });   // 다음에 열 때 이 크기로
+  slot.size = { width: w, height: h };
+  slot.win.setBounds({ x: nx, y: ny, width: w, height: h });
+  // 마지막으로 조절한 크기를 다음 창의 기본으로 쓴다
+  mailViewSize = slot.size;
+  store.setSettings({ mailViewSize });
 });
 
 /** 우리가 넣어둔 안내 링크만 연다 — 렌더러가 임의 주소를 열지 못하게 http(s)로 제한 */
