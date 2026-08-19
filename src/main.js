@@ -1492,15 +1492,28 @@ function startCompose({ kind = 'new', accountId, source } = {}) {
   if (!asked && kind !== 'new') {
     return { ok: false, message: '이 메일을 받은 계정을 쓸 수 없습니다 (꺼져 있거나 지워졌습니다)' };
   }
-  const acc = asked || accounts[0];
+  // 이어쓰는 것은 원래 쓰던 계정으로 — 그 계정이 없어졌으면 첫 계정으로 놓아둔다
+  const draftAcc = kind === 'new' && store.mailDraft
+    ? accounts.find((x) => x.id === store.mailDraft.accountId)
+    : null;
+  const acc = asked || draftAcc || accounts[0];
 
-  const draft = kind === 'new' ? { to: '', subject: '', text: '' } : send.draftFrom(kind, source);
+  // 쓰다 말은 것이 있으면 이어서 쓴다. 답장·전달은 새 초안이 분명하므로 건드리지 않는다.
+  const kept = kind === 'new' ? store.mailDraft : null;
+  const draft = kept
+    ? {
+      to: kept.to, cc: kept.cc, bcc: kept.bcc, subject: kept.subject,
+      bodyHtml: kept.bodyHtml, inReplyTo: kept.inReplyTo, references: kept.references,
+      restored: true, restoredAt: kept.at, restoredNames: kept.attachNames || []
+    }
+    : (kind === 'new' ? { to: '', subject: '', text: '' } : send.draftFrom(kind, source));
   const stored = store.mailAccounts.find((a) => a.id === acc.id) || {};
   const opened = openCompose({
     accountId: acc.id,
     signature: stored.signature || '',
     signatures: Object.fromEntries(store.mailAccounts.map((a) => [a.id, a.signature || ''])),
-    title: kind === 'reply' ? '답장' : kind === 'forward' ? '전달' : '새 메일',
+    title: kept ? (kept.title || '이어 쓰기')
+      : kind === 'reply' ? '답장' : kind === 'forward' ? '전달' : '새 메일',
     // 새 메일은 어느 계정으로 보낼지 고를 수 있어야 한다 — 안 그러면 «마지막에 온 메일의
     // 계정»으로 정해져서, 받은 순서가 내 발신 주소를 결정하게 된다
     pickable: kind === 'new',
@@ -1514,6 +1527,13 @@ function startCompose({ kind = 'new', accountId, source } = {}) {
 }
 
 ipcMain.handle('compose:open', (_e, opts) => startCompose(opts || {}));
+
+// 쓰다 말은 것을 계속 적어둔다. 화면이 손이 멈출 때마다 보낸다 —
+// 창을 닫았거나 앱이 죽어도 다음에 새 메일을 열면 그대로 나온다.
+ipcMain.on('compose:draft-save', (_e, d) => {
+  try { store.setMailDraft(d || null); } catch (err) { evlog.log('메일', `임시 저장 실패 — ${err.message}`); }
+});
+ipcMain.on('compose:draft-clear', () => store.clearMailDraft());
 
 ipcMain.handle('compose:data', () => composePayload);
 ipcMain.on('compose:close', () => composeWin && !composeWin.isDestroyed() && composeWin.close());
@@ -1576,6 +1596,9 @@ ipcMain.handle('compose:send', async (_e, msg) => {
     store.rememberContacts([
       ...send.addresses(msg.to), ...send.addresses(msg.cc), ...send.addresses(msg.bcc)
     ].map((a) => ({ address: a.replace(/^.*<|>.*$/g, '').trim(), name: '' })));
+    // 나갔으면 임시 저장은 지운다 — 안 그러면 다음에 «쓰기»를 눌렀을 때
+    // 방금 보낸 메일이 그대로 다시 떠서 두 번 보내게 된다.
+    store.clearMailDraft();
     refreshMail();
   }
   return r;

@@ -354,6 +354,52 @@ $('attach').onclick = async () => {
   renderFiles();
 };
 
+// ── 임시 저장 ─────────────────────────────
+// 긴 메일을 쓰다 창을 닫거나 앱이 죽으면 그것으로 끝이었다.
+// 손이 멈추면 메인에 적어둔다. 다음에 «쓰기»를 누르면 그대로 나온다.
+let saveTimer = null;
+let savedOnce = false;
+
+function draftNow() {
+  return {
+    accountId: (context && context.accountId) || '',
+    kind: (context && context.kind) || 'new',
+    title: $('ttl').textContent || '',
+    to: $('to').value,
+    cc: $('cc').value,
+    bcc: $('bcc').value,
+    subject: $('subject').value,
+    bodyHtml: body.innerHTML,
+    inReplyTo: (context && context.inReplyTo) || '',
+    references: (context && context.references) || '',
+    // 경로는 안 보낸다 — 메인은 «대화상자로 골람 파일»만 보내게 되어 있고,
+    // 저장해 둔 경로를 다시 믿으면 그 문이 열린다. 이름만 남긴다.
+    attachNames: attachments.map((a) => a.filename)
+  };
+}
+
+/** 빈 초안은 적지 않는다 — 새 메일을 열자마자 쓸데없는 것이 생기면 안 된다 */
+function worthSaving() {
+  return dirty();
+}
+
+function saveDraftSoon() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveDraftNow, 1200);
+}
+
+function saveDraftNow() {
+  clearTimeout(saveTimer);
+  if (worthSaving()) {
+    window.nunsseom.composeDraftSave(draftNow());
+    savedOnce = true;
+  } else if (savedOnce) {
+    // 다 지우고 빈 창이 됐으면 임시 저장도 비운다
+    window.nunsseom.composeDraftClear();
+    savedOnce = false;
+  }
+}
+
 /** 쓰던 글이 있나 — 있으면 함부로 버리지 않는다 */
 function dirty() {
   const base = context || {};
@@ -367,7 +413,8 @@ function dirty() {
 function tryClose() {
   // 보내는 중에 닫으면 결과를 아무도 못 본다. 이미 나갔는지도 모른 채 또 쓰게 된다.
   if (sending) { say('bad', '보내는 중입니다 — 끝나면 닫아주세요'); return; }
-  if (dirty() && !confirm('쓰던 내용을 버리고 닫을까요?')) return;
+  // 이제 물어보지 않는다 — 닫아도 쓰던 것은 남아 있다.
+  saveDraftNow();
   window.nunsseom.composeClose();
 }
 
@@ -404,6 +451,10 @@ async function send() {
     });
     ok = !!(r && r.ok);
     if (ok) {
+      // 나갔으면 임시 저장은 메인이 지운다. 여기서 또 적으면 방금 보낸 메일이
+      // 다음에 다시 떠서 두 번 보내게 된다.
+      clearTimeout(saveTimer);
+      savedOnce = false;
       // 일부만 갔거나 보낸편지함에 못 넣었으면 그건 읽고 넘어가야 한다 —
       // 1초 뒤 창이 사라지면 아무도 못 본다.
       if (r.warn) {
@@ -526,6 +577,50 @@ function setupFrom(d) {
   };
 }
 
+/**
+ * 이어쓰는 중이라고 알려준다.
+ * 말 없이 예전 글이 떠 있으면 «이게 왜 여기 있지»가 된다.
+ * 버리고 새로 쓸 길도 같이 둔다.
+ */
+function noteRestored(d) {
+  const when = d.restoredAt ? new Date(d.restoredAt) : null;
+  const pad = (n) => String(n).padStart(2, '0');
+  const stamp = when
+    ? `${when.getMonth() + 1}월 ${when.getDate()}일 ${pad(when.getHours())}:${pad(when.getMinutes())}`
+    : '';
+  const names = (d.restoredNames || []).filter(Boolean);
+  say('', `쓰다 만 글을 이어서 씁니다${stamp ? ` · ${stamp}` : ''}`
+    + (names.length ? ` · 첨부 ${names.length}개는 다시 붙여주세요 (${names.join(', ').slice(0, 60)})` : ''));
+
+  const btn = document.createElement('button');
+  btn.className = 'act ghost';
+  btn.id = 'btn-fresh';
+  btn.textContent = '새로 쓰기';
+  btn.title = '이어쓰던 글을 버리고 빈 메일로 시작합니다';
+  btn.onclick = () => {
+    if (!confirm('이어쓰던 글을 버릴까요?')) return;
+    window.nunsseom.composeDraftClear();
+    savedOnce = false;
+    $('to').value = '';
+    $('cc').value = '';
+    $('bcc').value = '';
+    $('subject').value = '';
+    context = { ...context, to: '', cc: '', bcc: '', subject: '', restored: false, inReplyTo: '', references: '' };
+    body.textContent = '';
+    const first = document.createElement('div');
+    first.append(document.createElement('br'));
+    body.append(first);
+    const sig = signatureNode(context.signature);
+    if (sig) body.append(sig);
+    context.bodyHtml = body.innerHTML.trim();
+    $('ttl').textContent = '새 메일';
+    btn.remove();
+    say('', '');
+    $('to').focus();
+  };
+  $('msg').after(btn);
+}
+
 function fill(d) {
   if (!d) { say('bad', '계정을 찾을 수 없습니다'); $('send').disabled = true; return; }
   $('ttl').textContent = d.title || '새 메일';
@@ -559,11 +654,23 @@ function fill(d) {
     });
     body.append(q);
   }
+  // 이어쓰기면 저장된 본문을 그대로 올린다 (서명·인용문은 이미 그 안에 있다)
+  if (d.restored && d.bodyHtml) {
+    body.innerHTML = cleanPasted(d.bodyHtml);
+    $('cc').value = d.cc || '';
+    $('bcc').value = d.bcc || '';
+    if (d.cc) { $('row-cc').classList.remove('hide'); $('btn-cc').style.display = 'none'; }
+    if (d.bcc) $('row-bcc').classList.remove('hide');
+  }
   d.bodyHtml = body.innerHTML.trim();
   attachments = [];
   renderFiles();
   say('', '');
   context = d;
+  if (d.restored) noteRestored(d);
+  // 손이 멈추면 적어둔다. 붙여넣기·글자판 모두 input으로 올라온다.
+  for (const id of ['to', 'cc', 'bcc', 'subject']) $(id).addEventListener('input', saveDraftSoon);
+  body.addEventListener('input', saveDraftSoon);
   // 답장이면 본문 맨 위에서 쓰기 시작한다 (인용문은 아래에 있다)
   // 커서는 언제나 첫 줄 안에 둔다. body 기준으로 잡으면 브라우저가 알아서
   // «글이 있는 첫 자리»로 옮겨버려 서명 안으로 들어간다.

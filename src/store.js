@@ -99,6 +99,7 @@ function blank() {
     mailAccounts: [],    // [{ id, name, provider, host, port, user, sealed, enabled }]
     contacts: [],        // [{ address, name, at, used }]
     mailRules: [],       // [{ id, on, field, match, action, label }]
+    mailDraft: null,     // 쓰다 말은 메일 한 통
     stats: {},           // { 'YYYY-MM-DD': { done, skipped } }
     widgetPos: null,
     widgetSize: null,
@@ -123,6 +124,7 @@ function load() {
       mailAccounts: Array.isArray(raw.mailAccounts) ? raw.mailAccounts : [],
       contacts: Array.isArray(raw.contacts) ? raw.contacts : [],
       mailRules: Array.isArray(raw.mailRules) ? raw.mailRules : [],
+      mailDraft: raw.mailDraft || null,
       stats: raw.stats || {},
       widgetPos: raw.widgetPos || null,
       widgetSize: raw.widgetSize || null,
@@ -347,6 +349,46 @@ module.exports = {
     s.mailRules = (s.mailRules || []).filter((x) => x.id !== id);
     save();
     return s.mailRules;
+  },
+
+  /**
+   * 쓰다 말은 메일 한 통.
+   *
+   * 쓰기 창이 하나뿐이므로 칸도 하나다. «지금 쓰기 창에 들어 있는 것»을
+   * 그대로 들고 있다가, 다음에 새 메일을 열 때 돌려준다. 보내면 비운다.
+   *
+   * 첨부파일 경로는 일부러 안 담는다 — 메인은 «대화상자로 골람 파일»만
+   * 보내도록 막아둔다. 저장해 둔 경로를 다시 믿어버리면 그 문이 열린다.
+   * 이름만 남겨 «다시 붙여주세요»라고 말한다.
+   */
+  get mailDraft() { return load().mailDraft; },
+  setMailDraft(d) {
+    const s = load();
+    const str = (v, n) => String(v === null || v === undefined ? '' : v).slice(0, n);
+    s.mailDraft = d ? {
+      at: Date.now(),
+      accountId: str(d.accountId, 60),
+      kind: d.kind === 'reply' || d.kind === 'forward' ? d.kind : 'new',
+      title: str(d.title, 20),
+      to: str(d.to, 2000),
+      cc: str(d.cc, 2000),
+      bcc: str(d.bcc, 2000),
+      subject: str(d.subject, 500),
+      // 본문은 그림이 base64로 들어있을 수 있어 큼직하다.
+      // 설정 파일 하나에 다 들어가므로 상한을 둔다 (넘으면 저장 자체를 안 한다).
+      bodyHtml: str(d.bodyHtml, 2 * 1024 * 1024),
+      inReplyTo: str(d.inReplyTo, 500),
+      references: str(d.references, 2000),
+      attachNames: (Array.isArray(d.attachNames) ? d.attachNames : [])
+        .slice(0, 20).map((n) => str(n, 120))
+    } : null;
+    save();
+    return s.mailDraft;
+  },
+  clearMailDraft() {
+    const s = load();
+    s.mailDraft = null;
+    save();
   },
 
   /**

@@ -90,6 +90,8 @@ contextBridge.exposeInMainWorld('nunsseom', {
   mailContactsImport: () => ipcRenderer.invoke('mail:contacts-import'),
   mailContactsExport: () => ipcRenderer.invoke('mail:contacts-export'),
   composeClose: () => ipcRenderer.send('compose:close'),
+  composeDraftSave: (d) => ipcRenderer.send('compose:draft-save', d),
+  composeDraftClear: () => ipcRenderer.send('compose:draft-clear'),
   composeAcceptReplace: (p) => ipcRenderer.send('compose:accept-replace', p),
   composeSetAccount: (id) => ipcRenderer.send('compose:set-account', id),
   onComposeReplace: (cb) => ipcRenderer.on('compose:replace', (_e, p) => cb(p)),

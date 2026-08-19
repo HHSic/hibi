@@ -1,3 +1,4 @@
+<!DOCTYPE html>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy"
       content="default-src 'none'; script-src file: 'unsafe-inline'; style-src file: 'unsafe-inline'; font-src file:; img-src data:">
@@ -171,6 +172,12 @@
   }
   .body:empty::before { content: attr(data-ph); color: #9aa0a6; }
   .body img { max-width: 100%; height: auto; }
+  /* 서명은 대개 표로 짜여 있다. 이 창에 doctype이 빠져 있던 동안 표 안 글자가
+     흰 종이 위에서 흰색으로 나왔다 — quirks mode에서 크롬은 표의 색을 부모가 아니라
+     페이지 <body>(다크 테마라 흰색)에서 물려받게 한다.
+     doctype으로 고쳤지만, 표가 색을 물려받는 길을 여기서 한 번 더 못박아 둔다.
+     서명이 제 색을 지정했으면 인라인 스타일이 이겨서 그대로 나온다. */
+  .body table, .body td, .body th, .body tbody, .body tr { color: inherit; }
   .body::-webkit-scrollbar { width: 8px; }
   .body::-webkit-scrollbar-thumb { background: transparent; border-radius: 4px; transition: background 0.15s; }
   .body:hover::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.22); }
