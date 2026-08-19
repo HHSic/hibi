@@ -1076,6 +1076,39 @@ async function loadBook() {
   renderBook();
 }
 
+/** 파일로 주고받기 — 결과를 반드시 말해준다. 조용히 끝나면 «된 건가»가 된다. */
+function bookMsg(kind, text) {
+  const el = $('cb-msg');
+  el.textContent = text || '';
+  el.style.color = kind === 'bad' ? 'var(--sun, #ff8f8f)'
+    : kind === 'good' ? 'var(--accent)' : 'var(--tertiary)';
+}
+
+$('btn-cb-import').onclick = async () => {
+  bookMsg('', '불러오는 중…');
+  $('btn-cb-import').disabled = true;
+  try {
+    const r = await window.nunsseom.mailContactsImport();
+    if (r && r.canceled) { bookMsg('', ''); return; }
+    if (r && r.contacts) { book = r.contacts; renderBook(); }
+    bookMsg(r && r.ok ? 'good' : 'bad', (r && r.message) || '불러오지 못했습니다');
+  } finally {
+    $('btn-cb-import').disabled = false;
+  }
+};
+
+$('btn-cb-export').onclick = async () => {
+  bookMsg('', '저장하는 중…');
+  $('btn-cb-export').disabled = true;
+  try {
+    const r = await window.nunsseom.mailContactsExport();
+    if (r && r.canceled) { bookMsg('', ''); return; }
+    bookMsg(r && r.ok ? 'good' : 'bad', (r && r.message) || '저장하지 못했습니다');
+  } finally {
+    $('btn-cb-export').disabled = false;
+  }
+};
+
 // 보내기는 받기와 서버가 달라 따로 확인해야 한다. 메일을 보내지는 않고 로그인만 해 본다.
 $('btn-smtp-test').onclick = async () => {
   const acc = mailForm();
