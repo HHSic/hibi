@@ -629,6 +629,36 @@ function folderStrip(box, redraw) {
     strip.append(b);
   }
   if (!strip.children.length) return null;
+
+  // 옆으로 넘기는 길 — 보통 마우스에는 가로 휠이 없으므로
+  // 세로 휠을 가로로 바꿔 준다. 가로 휠(터치패드)이 오면 그걸 쓴다.
+  strip.addEventListener('wheel', (e) => {
+    if (strip.scrollWidth <= strip.clientWidth) return;
+    const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+    if (!d) return;
+    strip.scrollLeft += d;
+    e.preventDefault();     // 위젯 전체가 스크롤되지 않게
+  }, { passive: false });
+
+  // 어느 쪽에 더 있는지 후위에 표시한다 (자리를 안 차지하는 힐말이다)
+  const syncEdges = () => {
+    const room = strip.scrollWidth - strip.clientWidth;
+    strip.classList.toggle('more-l', room > 1 && strip.scrollLeft > 1);
+    strip.classList.toggle('more-r', room > 1 && strip.scrollLeft < room - 1);
+  };
+  strip.addEventListener('scroll', syncEdges);
+  // 그려진 뒤에야 폭을 안다
+  requestAnimationFrame(() => {
+    // 고른 탭이 안 보이는 자리에 있으면 끌어다 놓는다
+    const on = strip.querySelector('.mtab.on');
+    if (on) {
+      const right = on.offsetLeft + on.offsetWidth - strip.clientWidth;
+      if (on.offsetLeft < strip.scrollLeft) strip.scrollLeft = on.offsetLeft;
+      else if (right > strip.scrollLeft) strip.scrollLeft = right;
+    }
+    syncEdges();
+  });
+
   const gear = document.createElement('button');
   gear.className = 'mtab gear';
   gear.textContent = '⚙';

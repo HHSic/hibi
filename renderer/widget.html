@@ -389,9 +389,31 @@
      밀려나 필터 관리로 갈 길이 사라졌다 (넓은 폭에서는 안 보이던 문제다) */
   .mailtabs .mtabs {
     flex: 1; min-width: 0; display: flex; gap: 0.125rem;
-    overflow-x: auto; scrollbar-width: none;
+    overflow-x: auto;
+    /* 가로로만 흘러야 한다 — 세로로 달기면 탭이 위아래로 흔들린다 */
+    overflow-y: hidden;
   }
-  .mailtabs .mtabs::-webkit-scrollbar { display: none; }
+  /* 앱 전체의 규칙과 같게 — 평소엔 안 보이고 그 자리에 마우스를 올리면 드러난다.
+     scrollbar-width: none를 쓰면 크롬도 바를 통째로 없애버려 호버로도 안 나온다. */
+  .mailtabs .mtabs::-webkit-scrollbar { height: 0.1875rem; }
+  .mailtabs .mtabs::-webkit-scrollbar-thumb {
+    background: transparent; border-radius: 0.125rem; transition: background 0.15s;
+  }
+  .mailtabs:hover .mtabs::-webkit-scrollbar-thumb { background: var(--fill-hi); }
+  /* 옆에 더 있다는 표시 — 스크롤바를 숨기면 «이게 끝인줄» 알 길이 없다.
+     자리를 차지하지 않고 방향까지 알려준다. */
+  .mailtabs .mtabs.more-r {
+    -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 1.25rem), transparent);
+    mask-image: linear-gradient(90deg, #000 calc(100% - 1.25rem), transparent);
+  }
+  .mailtabs .mtabs.more-l {
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 1.25rem);
+    mask-image: linear-gradient(90deg, transparent, #000 1.25rem);
+  }
+  .mailtabs .mtabs.more-l.more-r {
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 1.25rem, #000 calc(100% - 1.25rem), transparent);
+    mask-image: linear-gradient(90deg, transparent, #000 1.25rem, #000 calc(100% - 1.25rem), transparent);
+  }
   .mailtabs .mtab {
     all: unset; cursor: default; flex: none;
     padding: 0.0625rem 0.3125rem; border-radius: 0.3125rem;
