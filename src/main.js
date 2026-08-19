@@ -1535,6 +1535,52 @@ ipcMain.on('compose:draft-save', (_e, d) => {
 });
 ipcMain.on('compose:draft-clear', () => store.clearMailDraft());
 
+/**
+ * 쓰기 창이 물어볼 것들.
+ * 브라우저 confirm은 테두리 없는 창에서 동떨어지게 뜨고 버튼이 둘뿐이다.
+ * 닫기는 세 갈래길이다 — 저장 / 버림 / 계속 쓰기.
+ */
+ipcMain.handle('compose:ask', async (_e, kind) => {
+  const win = composeWin && !composeWin.isDestroyed() ? composeWin : undefined;
+  if (kind === 'replace') {
+    // «임시 저장하고 열기»는 여기서 넣지 않는다 — 칸이 하나라 새 답장을
+    // 치는 순간 그게 덮인다. 할 수 없는 걸 리스트에 두면 그게 거짓말이 된다.
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'question',
+      buttons: ['버리고 열기', '그만두기'],
+      defaultId: 1,
+      cancelId: 1,
+      title: '메일 쓰기',
+      message: '쓰던 글을 버리고 새로 여시겠습니까?',
+      detail: '임시 저장은 한 통뿐이라 새 글을 쓰기 시작하면 지금 글은 사라집니다.\n'
+        + '지금 글을 지키려면 «그만두기»를 누르고 먼저 보내거나 닫으세요.'
+    });
+    return response === 0 ? 'discard' : 'cancel';
+  }
+  if (kind === 'discard') {
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'question',
+      buttons: ['버리기', '그만두기'],
+      defaultId: 1,
+      cancelId: 1,
+      title: '새로 쓰기',
+      message: '이어쓰던 글을 버릴까요?',
+      detail: '빈 메일로 시작합니다. 버린 글은 되돌릴 수 없습니다.'
+    });
+    return response === 0 ? 'discard' : 'cancel';
+  }
+  const { response } = await dialog.showMessageBox(win, {
+    type: 'question',
+    buttons: ['임시 저장', '저장 안 함', '계속 쓰기'],
+    defaultId: 0,
+    cancelId: 2,
+    title: '메일 쓰기',
+    message: '쓰다 만 메일을 임시 저장할까요?',
+    detail: '저장하면 다음에 «쓰기»를 누를 때 이어서 씁니다.'
+  });
+  return response === 0 ? 'save' : response === 1 ? 'discard' : 'cancel';
+});
+
 ipcMain.handle('compose:data', () => composePayload);
 ipcMain.on('compose:close', () => composeWin && !composeWin.isDestroyed() && composeWin.close());
 /** 화면이 «갈아끼워도 좋다»고 하면 그때 초안을 바꾼다 */

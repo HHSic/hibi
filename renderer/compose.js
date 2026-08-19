@@ -410,11 +410,32 @@ function dirty() {
     || attachments.length > 0;
 }
 
-function tryClose() {
+let asking = false;
+
+async function tryClose() {
   // 보내는 중에 닫으면 결과를 아무도 못 본다. 이미 나갔는지도 모른 채 또 쓰게 된다.
   if (sending) { say('bad', '보내는 중입니다 — 끝나면 닫아주세요'); return; }
-  // 이제 물어보지 않는다 — 닫아도 쓰던 것은 남아 있다.
-  saveDraftNow();
+  // 쓸 것이 없으면 묻지 않는다
+  if (!dirty()) { window.nunsseom.composeClose(); return; }
+  // Esc를 연타해도 대화상자가 곹쳐 뜨지 않게
+  if (asking) return;
+  asking = true;
+  let answer;
+  try {
+    answer = await window.nunsseom.composeAsk('close');
+  } finally {
+    asking = false;
+  }
+  if (answer === 'cancel') return;
+  if (answer === 'save') {
+    saveDraftNow();
+  } else {
+    // «저장 안 함»은 진짜로 안 남기는 것이어야 한다 —
+    // 쓰는 동안 적어둔 것까지 같이 지운다. 안 그러면 대답이 아무 뜻도 없다.
+    clearTimeout(saveTimer);
+    window.nunsseom.composeDraftClear();
+    savedOnce = false;
+  }
   window.nunsseom.composeClose();
 }
 
@@ -479,9 +500,19 @@ async function send() {
 $('send').onclick = send;
 
 /** 다른 곳에서 «쓰기»를 또 눌렀을 때 — 쓰던 글이 있으면 물어본다 */
-window.nunsseom.onComposeReplace((next) => {
+window.nunsseom.onComposeReplace(async (next) => {
   if (sending) return;
-  if (dirty() && !confirm('쓰던 내용을 버리고 새로 쓸까요?')) return;
+  if (dirty()) {
+    if (asking) return;
+    asking = true;
+    let answer;
+    try { answer = await window.nunsseom.composeAsk('replace'); } finally { asking = false; }
+    if (answer !== 'discard') return;
+    // 새 초안이 이 칸을 차지한다 — 적어둔 것을 먼저 지우고 간다
+    clearTimeout(saveTimer);
+    window.nunsseom.composeDraftClear();
+    savedOnce = false;
+  }
   window.nunsseom.composeAcceptReplace(next);
   fill(next);
 });
@@ -597,8 +628,9 @@ function noteRestored(d) {
   btn.id = 'btn-fresh';
   btn.textContent = '새로 쓰기';
   btn.title = '이어쓰던 글을 버리고 빈 메일로 시작합니다';
-  btn.onclick = () => {
-    if (!confirm('이어쓰던 글을 버릴까요?')) return;
+  btn.onclick = async () => {
+    if (await window.nunsseom.composeAsk('discard') !== 'discard') return;
+    clearTimeout(saveTimer);
     window.nunsseom.composeDraftClear();
     savedOnce = false;
     $('to').value = '';
