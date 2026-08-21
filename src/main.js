@@ -155,6 +155,7 @@ const mailState = {
   lastAnnouncedAt: 0,   // 마지막으로 "새 메일 n통"을 알린 시각
   pending: 0,           // 알리지 않고 쌓아둔 새 메일 수
   quiet: 0,             // 규칙이 걸러낸(숨김·스팸·알림 안 함) 안 읽은 메일 수
+  total: 0,             // 서버 메일함의 전체 통수 («더 보기»가 끝을 안다)
   // «새 메일 n통»은 통수 뺄셈으로 세면 안 된다. 규칙을 껐다 켜기만 해도 숫자가 움직여서
   // 오지도 않은 메일이 왔다고 뜬다. 지난번에 무엇을 봤는지를 들고 있다가 진짜 새로 나타난
   // 것만 센다. 비어 있으면 «아직 한 번도 안 봤다»는 뜻이라 그 판은 세지 않는다 —
@@ -193,6 +194,19 @@ function mailAccountsForUse() {
     .filter((a) => a.pass);
 }
 
+// ── 더 보기 ────────────────────────────
+// 목록은 설정한 만큼만 받는다. 그 끝까지 내려가면 예전 것도 볼 수 있어야 한다.
+//
+// 늘려놓은 통수는 다음 폴링에도 그대로 쓴다 — 가져오자마자 다시 줄어들면
+// 보던 것이 눈앞에서 사라진다. 대신 상한을 둔다 — 많이 받을수록 폴링이 느려진다.
+const MAIL_MORE_MAX = 200;
+let mailMore = 0;    // 설정값에서 얼마나 더 보기로 했나
+
+function wantNow() {
+  const base = Math.max(1, Math.round(store.settings.mailCount) || 5);
+  return Math.min(MAIL_MORE_MAX, base + mailMore);
+}
+
 /**
  * @param force 이미 도는 중이면 그게 끝나기를 기다렸다 다시 읽는다.
  *   읽음 표시처럼 "방금 서버를 바꿔놓고 숫자를 맞춰야 하는" 경우에 쓴다.
@@ -217,12 +231,14 @@ async function refreshMail({ force = false } = {}) {
 
   mailState.loading = true;
   const rules = store.mailRules.filter((r) => r.on !== false);
-  const want = Math.max(1, Math.round(store.settings.mailCount) || 5);
+  // 보여줄 통수 — 설정값이 기본이고, «더 보기»를 누를 때마다 늘어난다
+  const want = wantNow();
   // 규칙이 걷어낼 몫만큼 더 받아온다. 안 그러면 광고 다섯 통을 숨긴 자리가 빈 채로 남는다.
   const limit = rules.length ? Math.min(want * 3, want + 20) : want;
   try {
     const errors = [];
     let unread = 0;
+    let total = 0;
     let messages = [];
     for (const acc of accounts) {
       try {
@@ -231,6 +247,7 @@ async function refreshMail({ force = false } = {}) {
           onlyUnread: store.settings.mailOnlyUnread !== false
         });
         unread += r.unread;
+        total += r.total || 0;
         messages.push(...r.messages.map((m) => ({ ...m, account: acc.name, accountId: acc.id })));
       } catch (e) {
         errors.push({ name: acc.name, message: mail.friendly(e) });
@@ -264,6 +281,7 @@ async function refreshMail({ force = false } = {}) {
     // 0 아래로는 내려가지 않게 막는다 (목록 밖에 숨길 것이 더 있으면 어긋난다).
     mailState.unread = Math.max(0, unread - hiddenUnread);
     mailState.quiet = hiddenUnread + mutedUnread;
+    mailState.total = total;
     mailState.filtered = cut.hidden.length;
     mailState.groups = cut.groups.map((g) => ({
       name: g.name,
@@ -1921,6 +1939,31 @@ async function loadSent() {
     + (bad.length ? ` · 실패 ${bad.join(' / ')}` : ''));
   return mailState.sent;
 }
+
+/**
+ * 더 보기 — 목록 끝까지 내려갔을 때 화면이 부른다.
+ * 한 번에 설정값만큼씩 늘린다 (20이면 20 → 40 → 60…).
+ * 끝까지 왔으면 그렇다고 말해준다 — 아무 말도 없으면 계속 누르게 된다.
+ */
+ipcMain.handle('mail:more', async () => {
+  const base = Math.max(1, Math.round(store.settings.mailCount) || 5);
+  const before = wantNow();
+  if (before >= MAIL_MORE_MAX) {
+    return { ok: false, more: false, count: mailState.messages.length,
+      message: `여기까지입니다 (최대 ${MAIL_MORE_MAX}통)` };
+  }
+  // 서버에 있는 것보다 많이 부르면 더 나올 게 없다
+  if (mailState.total && before >= mailState.total) {
+    return { ok: false, more: false, count: mailState.messages.length, message: '마지막입니다' };
+  }
+  mailMore = Math.min(MAIL_MORE_MAX, before + base) - base;
+  notice('wait', '이전 메일을 불러오는 중…');
+  const had = mailState.messages.length;
+  await refreshMail({ force: true });
+  const now = mailState.messages.length;
+  notice(now > had ? 'good' : '', now > had ? `${now - had}통 더 불렀습니다` : '더 없습니다');
+  return { ok: true, more: now > had, count: now };
+});
 
 ipcMain.handle('mail:sent', async () => {
   const r = await loadSent();

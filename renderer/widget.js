@@ -550,6 +550,42 @@ let mailFolder = 'in';
 // 이걸 안 들고 있으면 «비어 있음»과 «아직 안 왔음»을 구별할 수 없어서,
 // 누르자마자 «보낸 메일이 없습니다»가 떴다 (실제로 그랬다).
 let sentAsked = false;
+// «더 보기»를 부르는 중인가 — 스크롤은 연속으로 터져서 막지 않으면 수십 번 부른다
+let moreBusy = false;
+let moreDone = false;   // 서버가 «마지막»이라고 했으면 다시 안 물어본다
+let moreArmed = true;   // 바닥에서 한 번 불렀으면 올라갔다 내려와야 다시 부른다
+
+/**
+ * 목록 끝에 닿았으면 이전 메일을 더 불러온다.
+ * 받은편지함에서만 한다 — 숨김·묶음·임시보관함은 이미 있는 것을 나눈 칸이고,
+ * 보낸메일함은 제 불러오기가 따로 있다.
+ */
+function hookMore(host, folderId) {
+  // 다른 폴더로 옴기면 반드시 떼준다 — 그냥 두면 숨김 폴더를 보는 중에도
+  // 이전 메일을 불러온다 (실제로 그랬다).
+  if (folderId !== 'in') { host.onscroll = null; return; }
+  host.onscroll = async () => {
+    if (moreBusy || moreDone) return;
+    const room = host.scrollHeight - host.clientHeight;
+    const atEnd = host.scrollTop >= room - 40;
+    // 한 번 불러온 뒤에는 위로 올라갔다 다시 내려와야 또 부른다.
+    // 안 그랬면 목록이 늘어도 여전히 바닥이라 20→40→60…으로 사슬처럼 불러온다.
+    if (!moreArmed) {
+      if (host.scrollTop < room - 120) moreArmed = true;
+      return;
+    }
+    if (!atEnd) return;
+    moreArmed = false;
+    moreBusy = true;
+    try {
+      const r = await window.nunsseom.mailMore();
+      // 더 없다고 했으면 그만 묻는다. 새로고침을 누르면 다시 풀린다.
+      if (!r || r.ok === false || r.more === false) moreDone = true;
+    } finally {
+      moreBusy = false;
+    }
+  };
+}
 
 /** 틱이 올 때마다 — 결과가 왔거나 실패했으면 다시 누를 수 있게 풀어준다 */
 function noteSent(box) {
@@ -828,6 +864,8 @@ function paintMailPanel() {
     p.textContent = emptyWord(cur, box);
     host.append(p);
   }
+  // 끝까지 내려가면 이전 메일을 더 불러온다
+  hookMore(host, cur && cur.id);
 }
 
 // 보여줄 개수에 상한이 없으므로, 목록이 길다고 위젯이 화면 끝까지 자라면 안 된다.
@@ -865,6 +903,9 @@ for (const id of ['mail-refresh', 'mp-refresh']) {
     e.stopPropagation();
     if (refreshing) return;
     refreshing = true;
+    // 새로 읽었으니 «더 없음»도 «이미 불렀음»도 푼다
+    moreDone = false;
+    moreArmed = true;
     try { await window.nunsseom.mailRefresh(); } finally { refreshing = false; }
   };
   $(id).addEventListener('pointerdown', (e) => e.stopPropagation());
