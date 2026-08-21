@@ -111,9 +111,10 @@ function primeCalendarsFromCache() {
   cal.sources = cached.sources;
   cal.fetchedAt = cached.fetchedAt;
   cal.stale = true;                  // 갱신에 성공하면 false가 된다
+  // 종일·한가함도 그대로 들고 온다. 무엇을 «바쁨»으로 칠지는 planner가 정하고,
+  // 달력 화면은 이 목록을 그대로 보여준다.
   cal.occurrences = calendar.expandRange(
-    cached.sources, now - 2 * 86400000, now + 2 * 86400000,
-    { includeAllDay: store.settings.calendarAllDay }
+    cached.sources, now - 2 * 86400000, now + 2 * 86400000
   );
   console.log(`[calendar] 저장해둔 일정 ${cal.occurrences.length}건으로 시작합니다`);
 }
@@ -124,9 +125,7 @@ async function refreshCalendars() {
   if (cal.loading) return;
   cal.loading = true;
   try {
-    const r = await calendar.loadOccurrences(list, {
-      includeAllDay: store.settings.calendarAllDay
-    });
+    const r = await calendar.loadOccurrences(list);
     cal.occurrences = r.occurrences;
     cal.errors = r.errors;
     cal.sources = r.sources;      // 달력에서 다른 달을 펼칠 때 쓴다
@@ -255,8 +254,14 @@ async function refreshMail({ force = false } = {}) {
     }
     // 주소록은 받은 메일에서 자란다 — 이름과 주소가 한 쌍씩 들어 있다.
     // 이렇게 해두면 나중에 «김부장»만 쳐도 주소가 나온다.
+    //
+    // 새로 온 것만 센다. 목록에 있는 20통을 확인할 때마다 다시 세면 «자주 쓰는 사람»이
+    // 아니라 «메일함에 오래 머무른 사람»을 세게 된다 — 몇 분마다 도니까 하룻밤 두면
+    // 한 통이 백 통이 되고, 자동완성 차례가 통째로 뒤집힌다.
+    // (mailState.known은 지난번에 본 목록이다. 아래에서 이번 것으로 바뀐다.)
+    const seenLastTime = mailState.known;
     store.rememberContacts(messages
-      .filter((m) => m.fromAddress)
+      .filter((m) => m.fromAddress && (!seenLastTime || !seenLastTime.has(mailtally.keyOf(m))))
       .map((m) => ({ address: m.fromAddress, name: m.fromName })));
 
     messages.sort((a, b) => b.at - a.at);
@@ -482,7 +487,8 @@ function holdReason(needMs = 0) {
     // 일정 중일 때만이 아니라, 일정 직전이라 휴식이 온전히 들어갈 자리가 없을 때도 미룬다
     const p = planner.check(cal.occurrences, now, s.calendarLead ? needMs : 0, {
       leadMs: (s.calendarLeadMin || 0) * 60_000,
-      joinMs: (s.calendarJoinMin || 0) * 60_000
+      joinMs: (s.calendarJoinMin || 0) * 60_000,
+      allDayBusy: s.calendarAllDay
     });
     if (p) reason = p.label;
     cal.hold = p;
@@ -1674,10 +1680,12 @@ ipcMain.handle('compose:send', async (_e, msg) => {
       + `${r.sentBox ? ` · 보낸편지함(${r.sentBox})에 저장` : ''}`
     : `보내기 실패 · ${r.message}`);
   if (r.ok) {
-    // 보낸 주소는 다음부터 자동완성된다 — 주소록을 손으로 채우게 하면 아무도 안 채운다
+    // 보낸 주소는 다음부터 자동완성된다 — 주소록을 손으로 채우게 하면 아무도 안 채운다.
+    // 받은 것보다 무겁게 센다: 내가 답장한 사람이 진짜 아는 사람이다.
+    // 소식지는 매일 오지만 나는 한 번도 답하지 않는다.
     store.rememberContacts([
       ...send.addresses(msg.to), ...send.addresses(msg.cc), ...send.addresses(msg.bcc)
-    ].map((a) => ({ address: a.replace(/^.*<|>.*$/g, '').trim(), name: '' })));
+    ].map((a) => ({ address: a.replace(/^.*<|>.*$/g, '').trim(), name: '' })), { weight: 5 });
     // 나갔으면 임시 저장은 지운다 — 안 그러면 다음에 «쓰기»를 눌렀을 때
     // 방금 보낸 메일이 그대로 다시 떠서 두 번 보내게 된다.
     store.clearMailDraft();
@@ -1751,8 +1759,9 @@ ipcMain.handle('mail:row-menu', async (e, msg) => {
         kind,
         accountId: acc.id,
         source: {
-          subject: m.subject, from: m.from, fromAddress: m.fromAddress,
-          replyTo: m.replyTo, messageId: m.messageId, at: m.receivedAt, text: m.text
+          subject: m.subject, from: m.from, fromAddress: m.fromAddress, to: m.to,
+          replyTo: m.replyTo, messageId: m.messageId, at: m.receivedAt,
+          text: m.text, html: m.html
         }
       });
       notice(r.ok ? '' : 'bad', r.ok ? '' : r.message);
@@ -2903,9 +2912,7 @@ ipcMain.handle('cal:test', async (_e, url) => {
     const text = await calendar.fetchText(calendar.normalizeUrl(url));
     if (!/BEGIN:VCALENDAR/i.test(text)) return { ok: false, message: 'iCalendar 형식이 아닙니다' };
     const now = Date.now();
-    const occ = calendar.occurrencesIn(text, now - 7 * 86400000, now + 30 * 86400000, {
-      includeAllDay: store.settings.calendarAllDay
-    });
+    const occ = calendar.occurrencesIn(text, now - 7 * 86400000, now + 30 * 86400000);
     return { ok: true, message: `연결됨 · 앞으로 30일 일정 ${occ.length}건` };
   } catch (e) {
     return { ok: false, message: String(e.message || e).slice(0, 120) };

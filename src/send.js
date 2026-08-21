@@ -199,30 +199,97 @@ async function sendMail(account, msg) {
   };
 }
 
-/** 답장·전달 초안 — 제목 접두사와 인용문을 만든다 */
+// 인용문으로 들고 갈 수 있는 원문 크기. 초안은 2MB까지 저장하므로 그 안에서 넉넉히 잡는다.
+const QUOTE_MAX = 400_000;
+
+/**
+ * 웹메일이 HTML과 함께 보내는 text/plain은 사람이 읽으라고 만든 것이 아니다.
+ * 기계가 표를 글로 옮긴 결과라서 두 가지가 늘 따라온다.
+ *  - 서명이 표로 짜여 있으면 칸마다 빈 줄이 생긴다. 서명 하나가 빈 줄 스무 개가 된다.
+ *  - 링크가 «<http://x/> x»처럼 주소와 이름 두 번으로 나온다.
+ * 인용문에 넣기 전에 이 둘을 걷어낸다.
+ */
+function tidyText(text) {
+  return String(text || '')
+    .replace(/\r\n?/g, '\n')
+    // 꺾쇠에 든 주소 뒤에 글이 이어지면 그 글이 곧 링크 이름이다 — 주소 쪽이 군더더기다.
+    // 뒤가 줄 끝이면 그 주소 자체가 본문이므로 꺾쇠만 벗긴다.
+    .replace(/<((?:mailto:|https?:\/\/)[^\s<>]*)>[ \t]*/g, (m, url, at, whole) => (
+      /^[^\n]*\S/.test(whole.slice(at + m.length)) ? '' : url.replace(/^mailto:/, '')
+    ))
+    .replace(/[ \t]+$/gm, '')
+    .replace(/\n{3,}/g, '\n\n')   // 빈 줄이 줄줄이 이어지는 것을 하나로
+    .trim();
+}
+
+/**
+ * 원문 HTML을 인용문으로 쓸 수 있게 다듬는다.
+ *
+ * 여기 오는 HTML은 이미 buildViewHtml을 지나 바깥 그림이 걷힌 것이지만, 그 사실에 기대지
+ * 않는다 — 부르는 자리가 하나 늘어나는 순간 그 약속은 조용히 깨진다. cleanHtml을 다시 돌리고
+ * 그 위에 두 가지를 더 한다.
+ *  - <style>은 쓰기 창 전체에 걸린다. 남의 메일이 내 도구 모음을 다시 칠하게 둘 수 없다.
+ *  - <html>/<body>는 문서 한 벌이라 인용문 안에 들어가면 안 된다.
+ * 너무 크면 본문에 박힌 그림부터 덜어내고, 그래도 크면 글로 인용한다.
+ */
+function quoteHtmlOf(html) {
+  let h = String(html || '').trim();
+  if (!h) return '';
+  h = mail.cleanHtml(h)
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<title[\s\S]*?<\/title>/gi, '')
+    .replace(/<\/?(html|head|body)\b[^>]*>/gi, '')
+    .trim();
+  if (h.length > QUOTE_MAX) {
+    h = h.replace(/<img\b[^>]*src\s*=\s*["']data:[^"']*["'][^>]*>/gi, '');
+  }
+  return h.length > QUOTE_MAX ? '' : h;
+}
+
+/** 전달 머리글 — 원문이 누구에게서 언제 왔는지. 아웃룩·지메일이 붙이는 그 줄들이다. */
+function forwardHead(src, when) {
+  return [
+    '---------- 전달된 메일 ----------',
+    `보낸사람: ${src.from || src.fromAddress || ''}`,
+    `날짜: ${when}`,
+    `제목: ${src.subject || ''}`,
+    src.to ? `받는사람: ${src.to}` : ''
+  ].filter(Boolean).join('\n');
+}
+
+/**
+ * 답장·전달 초안 — 제목 접두사와 인용문을 만든다.
+ *
+ * 인용문은 원문 서식을 그대로 쓴다. 예전엔 함께 온 text/plain을 «> »로 줄마다 찍어 넣었는데,
+ * 웹메일이 기계로 만든 그 글은 빈 줄과 두 번씩 나온 주소로 가득해서, 답장 창을 열면
+ * 내가 쓸 자리보다 그것이 먼저 보였다. 원문 HTML이 없을 때만 글로 인용한다.
+ */
 function draftFrom(kind, src) {
   if (!src) return { to: '', subject: '', text: '' };
   const when = new Date(src.at || Date.now()).toLocaleString('ko-KR');
-  const quoted = String(src.text || '')
-    .split('\n')
-    .map((l) => `> ${l}`)
-    .join('\n');
-  const head = `\n\n\n${when} ${src.from || ''} 님이 쓴 글:\n`;
+  const quote = {
+    quoteHtml: quoteHtmlOf(src.html),
+    // 서식으로 인용하더라도 글 인용문을 같이 넘긴다 — 글로만 읽는 곳으로 나갈 몫이다
+    text: tidyText(src.text),
+    quoteHead: kind === 'forward'
+      ? forwardHead(src, when)
+      : `${when} ${src.from || ''} 님이 쓴 글:`
+  };
 
   if (kind === 'forward') {
     return {
       to: '',
       subject: /^fwd:/i.test(src.subject || '') ? src.subject : `Fwd: ${src.subject || ''}`,
-      text: `${head}${quoted}`
+      ...quote
     };
   }
   return {
     to: src.replyTo || src.fromAddress || '',
     subject: /^re:/i.test(src.subject || '') ? src.subject : `Re: ${src.subject || ''}`,
-    text: `${head}${quoted}`,
+    ...quote,
     inReplyTo: src.messageId || '',
     references: src.messageId || ''
   };
 }
 
-module.exports = { sendMail, verify, appendToSent, draftFrom, addresses, looksLikeAddress, problemWith };
+module.exports = { sendMail, verify, appendToSent, draftFrom, addresses, looksLikeAddress, problemWith, tidyText, quoteHtmlOf };

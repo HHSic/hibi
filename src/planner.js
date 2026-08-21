@@ -52,7 +52,7 @@ function labelOf(kind, block) {
 /**
  * 지금 휴식을 띄우면 안 되는 이유. 띄워도 되면 null.
  *
- * @param occurrences 캘린더 일정 [{ start, end, summary }]
+ * @param occurrences 캘린더 일정 [{ start, end, summary, allDay, free }]
  * @param at          기준 시각
  * @param needMs      휴식에 필요한 시간. 다음 일정까지 남은 틈이 이보다 좁으면 미룬다.
  * @returns null | { kind: 'during'|'before', until, summary, label }
@@ -60,7 +60,13 @@ function labelOf(kind, block) {
  */
 function check(occurrences, at, needMs = 0, opts = {}) {
   const leadMs = Number.isFinite(opts.leadMs) ? opts.leadMs : LEAD_MS;
-  const busy = mergeBusy(occurrences, Number.isFinite(opts.joinMs) ? opts.joinMs : JOIN_MS);
+  // 달력에 «보이는 것»과 «바쁨으로 치는 것»은 다르다.
+  //  - «한가함»으로 표시된 일정은 보이되 휴식을 막지 않는다.
+  //  - 종일 일정은 설정(종일 일정도 바쁨으로)을 켰을 때만 막는다.
+  // 예전엔 이 둘을 목록에서 아예 빼버려서, 달력 화면에서도 같이 사라졌다.
+  const blocking = (occurrences || [])
+    .filter((e) => e && !e.free && (opts.allDayBusy || !e.allDay));
+  const busy = mergeBusy(blocking, Number.isFinite(opts.joinMs) ? opts.joinMs : JOIN_MS);
 
   const cur = blockAt(busy, at);
   if (cur) {

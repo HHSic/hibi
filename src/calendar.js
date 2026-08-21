@@ -341,6 +341,9 @@ function expand(ev, from, to) {
         start: s, end: e,
         summary: ev.summary || '(제목 없음)',
         allDay: !!ev.allDay,
+        // «한가함»으로 표시된 일정. 지우지 않고 표시만 해서 들고 간다 —
+        // 달력에는 보여야 하고, 휴식을 막는 데만 쓰지 않으면 된다.
+        free: ev.transp === 'TRANSPARENT',
         uid: ev.uid || null,
         url: ev.url || null
       });
@@ -403,12 +406,19 @@ function expand(ev, from, to) {
 }
 
 /** ICS 텍스트에서 [from, to] 구간의 일정 목록을 뽑는다 */
-function occurrencesIn(icsText, from, to, { includeAllDay = false } = {}) {
+/**
+ * ICS 글에서 [from, to] 구간의 일정을 뽑는다.
+ *
+ * 예전엔 «한가함»과 종일 일정을 여기서 버렸다. 그런데 이 목록은 달력 화면도 같이 쓴다 —
+ * 구글·아웃룩은 종일 일정을 기본으로 «한가함»으로 내보내므로, 휴가도 출장도 달력에서
+ * 통째로 사라졌다. 버리는 것은 부르는 쪽이 정한다. 여기서는 다 준다.
+ */
+function occurrencesIn(icsText, from, to, { includeAllDay = true, includeFree = true } = {}) {
   const out = [];
   for (const ev of parseEvents(icsText)) {
-    if (ev.status === 'CANCELLED') continue;
-    if (ev.transp === 'TRANSPARENT') continue;   // "한가함"으로 표시된 일정은 방해로 치지 않음
-    if (ev.allDay && !includeAllDay) continue;   // 종일 일정은 회의가 아니므로 기본 제외
+    if (ev.status === 'CANCELLED') continue;   // 취소된 일정만 통째로 버린다
+    if (ev.allDay && !includeAllDay) continue;
+    if (ev.transp === 'TRANSPARENT' && !includeFree) continue;
     out.push(...expand(ev, from, to));
   }
   out.sort((a, b) => a.start - b.start);
@@ -419,7 +429,7 @@ function occurrencesIn(icsText, from, to, { includeAllDay = false } = {}) {
  * 구독 주소들을 읽어 오늘 앞뒤 구간의 일정을 모은다.
  * @param {{url:string,name?:string,enabled?:boolean}[]} calendars
  */
-async function loadOccurrences(calendars, { windowDays = 2, includeAllDay = false } = {}) {
+async function loadOccurrences(calendars, { windowDays = 2, includeAllDay = true, includeFree = true } = {}) {
   const now = Date.now();
   const from = now - windowDays * 86400000;
   const to = now + windowDays * 86400000;
@@ -432,7 +442,7 @@ async function loadOccurrences(calendars, { windowDays = 2, includeAllDay = fals
     try {
       const text = await fetchText(cal.url);
       sources.push({ name: cal.name || '캘린더', url: cal.url, text });
-      const occ = occurrencesIn(text, from, to, { includeAllDay });
+      const occ = occurrencesIn(text, from, to, { includeAllDay, includeFree });
       results.push(...occ.map((o) => ({ ...o, calendar: cal.name || '캘린더', calUrl: cal.url })));
     } catch (e) {
       errors.push({ url: cal.url, name: cal.name, message: e.message });
@@ -443,11 +453,11 @@ async function loadOccurrences(calendars, { windowDays = 2, includeAllDay = fals
 }
 
 /** 이미 받아둔 원문에서 임의 구간을 펼친다 (달력에서 달을 넘길 때 다시 받지 않게) */
-function expandRange(sources, from, to, { includeAllDay = true } = {}) {
+function expandRange(sources, from, to, { includeAllDay = true, includeFree = true } = {}) {
   const out = [];
   for (const s of sources || []) {
     try {
-      out.push(...occurrencesIn(s.text, from, to, { includeAllDay })
+      out.push(...occurrencesIn(s.text, from, to, { includeAllDay, includeFree })
         .map((o) => ({ ...o, calendar: s.name, calUrl: s.url })));
     } catch { /* 한 캘린더가 깨져도 나머지는 보여준다 */ }
   }
@@ -456,7 +466,10 @@ function expandRange(sources, from, to, { includeAllDay = true } = {}) {
 
 /** 지금 진행 중인 일정 (없으면 null) */
 function currentEvent(occurrences, at = Date.now()) {
-  return (occurrences || []).find((o) => o.start <= at && at < o.end) || null;
+  const on = (occurrences || []).filter((o) => o.start <= at && at < o.end);
+  // 종일 일정은 하루를 통째로 덮는다. «휴가» 중에 회의가 잡혀 있으면 지금 하는 일은 회의다 —
+  // 시작이 이른 쪽을 고르면 자정에 시작한 종일 일정이 늘 이긴다.
+  return on.find((o) => !o.allDay) || on[0] || null;
 }
 
 /** 다음에 시작할 일정 */

@@ -120,7 +120,7 @@ function bodyForSend() {
   return {
     html: `<div style="font-family:'맑은 고딕','Malgun Gothic',sans-serif;font-size:14px;`
       + `line-height:1.65;color:#1a1a1a">${clone.innerHTML}</div>`,
-    text: (body.innerText || '').trim(),
+    text: plainText(),
     inline
   };
 }
@@ -310,6 +310,115 @@ function cleanPasted(input) {
     .replace(/(href|src|xlink:href)\s*=\s*"\s*javascript:[^"]*"/gi, '$1="#"')
     .replace(/(href|src|xlink:href)\s*=\s*'\s*javascript:[^']*'/gi, "$1='#'")
     .replace(/(href|src|xlink:href)\s*=\s*javascript:[^\s>]*/gi, '$1="#"');
+}
+
+/**
+ * 글로만 읽는 곳으로 나갈 몫.
+ *
+ * 화면에서는 인용문에 세로줄을 그어 구분하지만, 글에는 선을 그을 수 없다.
+ * 글로 받는 쪽에서는 «> »가 그 자리를 대신한다 — 이게 없으면 내가 쓴 글과
+ * 남이 쓴 글이 한 덩어리로 붙어버린다.
+ */
+function plainText() {
+  let text = (body.innerText || '').trim();
+  for (const q of body.querySelectorAll('blockquote')) {
+    const raw = (q.innerText || '').trim();
+    if (!raw) continue;
+    const marked = raw.split('\n').map((l) => (l.trim() ? `> ${l}` : '>')).join('\n');
+    // 첫 자리만 바꾼다. 인용문의 글 그대로를 찾는 것이라 엉뚱한 데가 걸릴 일은 없다.
+    text = text.replace(raw, () => marked);
+  }
+  return text;
+}
+
+/** 여러 줄 글을 글자 노드로만 넣는다 — 남이 쓴 글 안의 태그가 살아날 자리를 없앤다 */
+function linesInto(host, text) {
+  String(text || '').split('\n').forEach((line, i) => {
+    if (i) host.append(document.createElement('br'));
+    host.append(document.createTextNode(line));
+  });
+  return host;
+}
+
+/*
+ * 인용문에 살려둘 태그와 속성.
+ *
+ * cleanPasted는 «위험한 것을 지우는» 방식이다. 지우는 쪽은 빠뜨린 모양이 하나라도 있으면
+ * 그대로 샌다. 인용문은 남이 보낸 글이므로 반대로 간다 — 여기 적힌 것만 새로 지어 올리고,
+ * 나머지는 애초에 만들지 않는다. 회사 메일 서명이 표·색·굵기로 짜여 있어서 이만큼은 살린다.
+ */
+const QUOTE_TAGS = new Set([
+  'DIV', 'P', 'SPAN', 'BR', 'HR', 'PRE', 'CODE', 'BLOCKQUOTE', 'CENTER',
+  'B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE', 'SUP', 'SUB', 'SMALL', 'FONT',
+  'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'UL', 'OL', 'LI', 'DL', 'DT', 'DD',
+  'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TD', 'TH', 'CAPTION', 'COLGROUP', 'COL',
+  'A', 'IMG'
+]);
+const QUOTE_ATTRS = new Set([
+  'style', 'align', 'valign', 'width', 'height', 'colspan', 'rowspan',
+  'bgcolor', 'color', 'face', 'size', 'border', 'cellpadding', 'cellspacing', 'span'
+]);
+
+/** 인용문 안의 링크 — 사람이 눌러서 갈 수 있는 곳만 */
+function quoteHref(v) {
+  return /^\s*(https?:|mailto:)/i.test(String(v || '')) ? String(v).trim() : '';
+}
+
+/** 인용문 안의 그림 — 메일에 담겨 온 것(data:)만. 바깥 주소는 열어본 사실을 흘린다. */
+function quoteSrc(v) {
+  return /^\s*data:image\//i.test(String(v || '')) ? String(v).trim() : '';
+}
+
+/** style 속성 — 바깥을 부르거나 창 밖으로 삐져나오는 것만 걷어낸다 */
+function quoteStyle(v) {
+  const s = String(v || '');
+  if (/url\s*\(|expression\s*\(|javascript:|behavior\s*:|position\s*:\s*(fixed|absolute)/i.test(s)) {
+    return s.replace(/(url\s*\([^)]*\)|expression\s*\([^)]*\))/gi, '')
+      .replace(/(behavior|position)\s*:[^;]*;?/gi, '');
+  }
+  return s;
+}
+
+/**
+ * 남이 보낸 HTML을 허락한 것만 골라 다시 지어 host 안에 넣는다.
+ *
+ * DOMParser는 글을 문서로 읽기만 한다 — 스크립트를 돌리지도, 그림을 받아오지도 않는다.
+ * 목록에 없는 태그는 껍데기만 벗기고 안쪽 글은 살린다. 표 하나 때문에 본문이 통째로
+ * 사라지면 인용문의 뜻이 없다.
+ */
+function quoteInto(host, html) {
+  const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
+  const copy = (src, into) => {
+    for (const node of src.childNodes) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        into.append(document.createTextNode(node.nodeValue));
+        continue;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) continue;
+      const tag = node.tagName.toUpperCase();
+      if (!QUOTE_TAGS.has(tag)) {
+        // 안쪽 글만 건져 올린다. 단 이 셋은 안쪽이 «글»이 아니라 코드다.
+        if (!['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT'].includes(tag)) copy(node, into);
+        continue;
+      }
+      const el = document.createElement(tag.toLowerCase());
+      for (const at of node.attributes) {
+        const name = at.name.toLowerCase();
+        const val = name === 'style' ? quoteStyle(at.value)
+          : name === 'href' && tag === 'A' ? quoteHref(at.value)
+            : name === 'src' && tag === 'IMG' ? quoteSrc(at.value)
+              : name === 'alt' && tag === 'IMG' ? at.value
+                : QUOTE_ATTRS.has(name) ? at.value : '';
+        if (val) el.setAttribute(name, val);
+      }
+      // 주소가 살아남지 못한 그림은 빈 네모로 남는다 — 아예 넣지 않는다
+      if (tag === 'IMG' && !el.getAttribute('src')) continue;
+      copy(node, el);
+      into.append(el);
+    }
+  };
+  copy(doc.body, host);
+  return host;
 }
 
 /**
@@ -678,12 +787,19 @@ function fill(d) {
   // 서명은 내가 쓸 자리 바로 아래, 인용문 위에 온다 (답장 맨 밑에 달리면 아무도 안 읽는다)
   const sig = signatureNode(d.signature);
   if (sig) body.append(sig);
-  if (d.text) {
+  // 인용문 — «누가 언제 썼다» 한 줄, 그 아래 원문.
+  // 원문 서식(quoteHtml)이 있으면 그걸 쓴다. 웹메일이 기계로 만들어 함께 보내는
+  // text/plain은 표를 글로 옮긴 것이라 빈 줄과 두 번씩 적힌 주소로 가득하다.
+  if (d.quoteHead) {
+    const h = document.createElement('div');
+    h.className = 'qhead';
+    linesInto(h, d.quoteHead);
+    body.append(h);
+  }
+  if (d.quoteHtml || d.text) {
     const q = document.createElement('blockquote');
-    String(d.text).split('\n').forEach((line, i) => {
-      if (i) q.append(document.createElement('br'));
-      q.append(document.createTextNode(line));
-    });
+    if (d.quoteHtml) quoteInto(q, d.quoteHtml);
+    else linesInto(q, d.text);
     body.append(q);
   }
   // 이어쓰기면 저장된 본문을 그대로 올린다 (서명·인용문은 이미 그 안에 있다)

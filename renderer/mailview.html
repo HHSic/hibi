@@ -87,8 +87,13 @@
     flex: 1; min-height: 0; overflow-y: auto;
     padding: 10px 16px 16px;
     border-top: 0.5px solid var(--separator);
-    font-size: 12.5px; line-height: 1.62; color: var(--secondary);
-    white-space: pre-wrap; word-break: break-word;
+    font-size: 12.5px; line-height: 1.72; color: var(--secondary);
+    white-space: pre-wrap;
+    /* 한글은 크롬 기본값으로는 아무 글자 사이에서나 줄이 넘어가서, 낱말 한가운데가
+       잘리고 자간이 들쭉날쭉해 보인다. keep-all은 띄어쓰기에서만 넘긴다.
+       띄어쓰기 없는 긴 주소만 anywhere로 따로 풀어준다. */
+    word-break: keep-all;
+    overflow-wrap: anywhere;
     user-select: text;
   }
   /* 메일 원본 HTML을 그릴 때는 pre-wrap을 풀고 메일이 정한 서식을 살린다.
@@ -437,9 +442,13 @@
 
   /** 답장·전달 — 쓰기 창에 원문을 넘겨 초안을 만들게 한다 */
   function setupCompose(m) {
+    // html도 같이 넘긴다 — 인용문을 원문 서식 그대로 넣기 위해서다.
+    // 글(text)만 넘기던 때는 웹메일이 기계로 만든 text/plain이 인용문이 되어,
+    // 답장 창을 열면 빈 줄과 두 번씩 적힌 주소부터 보였다.
     const src = {
-      subject: m.subject, from: m.from, fromAddress: m.fromAddress,
-      replyTo: m.replyTo, messageId: m.messageId, at: m.at, text: m.text
+      subject: m.subject, from: m.from, fromAddress: m.fromAddress, to: m.to,
+      replyTo: m.replyTo, messageId: m.messageId, at: m.at,
+      text: m.text, html: m.html
     };
     for (const [id, kind] of [['reply', 'reply'], ['forward', 'forward']]) {
       const b = $(id);

@@ -166,9 +166,14 @@
     flex: 1; min-height: 0; overflow-y: auto;
     background: #fff; color: #1a1a1a;
     font-family: "맑은 고딕", "Malgun Gothic", Pretendard, sans-serif;
-    font-size: 14px; line-height: 1.65;
+    font-size: 14px; line-height: 1.7;
     padding: 14px 16px; outline: none;
-    word-break: break-word;
+    /* 한글은 아무 글자 사이에서나 줄이 넘어간다 — 크롬 기본값이 그렇다.
+       그래서 «에스티씨엔지니」/«어링»처럼 낱말 한가운데가 잘려서 자간이 들쭉날쭉해 보인다.
+       keep-all은 띄어쓰기에서만 넘기게 한다 (한국어 조판의 기본).
+       대신 띄어쓰기 없는 긴 주소가 창을 밀어내므로 그건 anywhere로 따로 풀어준다. */
+    word-break: keep-all;
+    overflow-wrap: anywhere;
   }
   .body:empty::before { content: attr(data-ph); color: #9aa0a6; }
   .body img { max-width: 100%; height: auto; }
@@ -181,9 +186,19 @@
   .body::-webkit-scrollbar { width: 8px; }
   .body::-webkit-scrollbar-thumb { background: transparent; border-radius: 4px; transition: background 0.15s; }
   .body:hover::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.22); }
-  .body blockquote {
-    margin: 8px 0; padding-left: 10px; border-left: 2px solid #d7dae0; color: #5f6368;
+  /* 인용문 — 아웃룩·지메일과 같은 모양. 왼쪽 세로줄 하나로 «여기부터는 남이 쓴 글»을 말한다.
+     예전엔 줄마다 «> »를 찍었는데, 답장에 답장을 하면 «> > >»로 불어나 글이 안 읽혔다. */
+  .qhead {
+    margin: 14px 0 0; padding-top: 10px; border-top: 1px solid #e3e5e9;
+    font-size: 12.5px; color: #6b7076;
   }
+  .body blockquote {
+    margin: 6px 0 0; padding: 2px 0 2px 12px;
+    border-left: 2px solid #d7dae0; color: #4a4f55;
+  }
+  /* 인용문 안의 표는 대개 서명이다. 원문 너비를 그대로 들고 오면 창을 밀어낸다. */
+  .body blockquote table { max-width: 100%; }
+  .body blockquote img { max-width: 100%; height: auto; }
 
   .files { flex: none; padding: 0 14px 6px; display: flex; flex-wrap: wrap; gap: 5px; }
   .file {

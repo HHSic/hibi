@@ -7,6 +7,14 @@ const grass = require('./grass');
 
 const FILE = () => path.join(app.getPath('userData'), 'nunsseom.json');
 
+/**
+ * 자동으로 모으지 않을 주소.
+ *
+ * 주소록은 «다시 연락할 사람»의 목록이다. 답장이 되돌아오는 곳이 없는 주소는
+ * 아무리 자주 와도 그 목록에 낄 이유가 없다 — 자동완성만 어지럽힌다.
+ */
+const NO_REPLY = /^(no[-_.]?reply|do[-_.]?not[-_.]?reply|noreply|mailer-daemon|postmaster|bounce|auto(mated)?[-_.]?(reply|mail)|notification[s]?)@|@(bounce|mailer)\./i;
+
 // 앱 이름(눈쉼 → Hibi)이 바뀌면 userData 폴더도 바뀐다.
 // 새 폴더에 설정이 없고 예전 폴더에 있으면 한 번만 복사해 온다.
 // (한 번 실행되면 새 파일이 생기므로 다시 실행되지 않는다)
@@ -392,27 +400,34 @@ module.exports = {
   },
 
   /**
-   * 주소록 — 보낸 적 있는 주소를 자동으로 모은다.
-   * 따로 입력하게 하면 아무도 안 채운다. 한 번 보내고 나면 다음부터 자동완성된다.
+   * 주소록 — 주고받은 주소를 자동으로 모은다.
+   * 따로 입력하게 하면 아무도 안 채운다. 한 번 주고받으면 다음부터 자동완성된다.
+   *
+   * used는 «얼마나 자주 쓰는 사람인가»다. 자동완성과 주소 고르기의 차례를 이걸로 정한다.
+   * 내가 보낸 쪽에 weight를 더 주는 이유: 내가 답장한 사람이 진짜 아는 사람이다.
+   * 소식지는 매일 오지만 나는 한 번도 답하지 않는다 — 받은 횟수만 세면 그쪽이 위로 온다.
    */
   get contacts() { return load().contacts || []; },
-  rememberContacts(list) {
+  rememberContacts(list, { weight = 1 } = {}) {
     const s = load();
     if (!Array.isArray(s.contacts)) s.contacts = [];
     let changed = false;
     for (const one of list || []) {
       const address = String(one.address || '').trim().toLowerCase();
       if (!address || !address.includes('@')) continue;
+      if (NO_REPLY.test(address)) continue;   // 답장이 갈 수 없는 곳은 주소록이 아니다
       const found = s.contacts.find((c) => c.address === address);
       if (found) {
         found.at = Date.now();
-        found.used = (found.used || 1) + 1;
+        found.used = (found.used || 1) + weight;
         // 사람이 직접 고친 이름은 건드리지 않는다
         if (one.name && !found.pinned && one.name !== found.name) {
           found.name = String(one.name).slice(0, 60);
         }
       } else {
-        s.contacts.push({ address, name: String(one.name || '').slice(0, 60), at: Date.now(), used: 1 });
+        s.contacts.push({
+          address, name: String(one.name || '').slice(0, 60), at: Date.now(), used: weight
+        });
       }
       changed = true;
     }
