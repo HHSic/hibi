@@ -167,7 +167,8 @@ const mailState = {
   toSpam: [],           // 규칙이 «스팸으로»로 지목한 것
   // 보낸메일함은 폴링 때 같이 가져오지 않는다. 이 서버는 받은편지함 한 번 읽는 데도
   // 오래 걸려서, 매번 폴더를 하나 더 열면 그만큼 늘어난다. 탭을 눌렀을 때만 가져온다.
-  sent: { at: 0, loading: false, messages: [], error: '' }
+  // total — 서버의 보낸메일함에 실제로 몇 통 있나. «마지막입니다»를 말하려면 이게 있어야 한다.
+  sent: { at: 0, loading: false, messages: [], error: '', total: 0 }
 };
 
 // 자동 처리는 한 번씩만 — 서버가 느려 몇십 초씩 걸리는데,
@@ -199,11 +200,32 @@ function mailAccountsForUse() {
 // 늘려놓은 통수는 다음 폴링에도 그대로 쓴다 — 가져오자마자 다시 줄어들면
 // 보던 것이 눈앞에서 사라진다. 대신 상한을 둔다 — 많이 받을수록 폴링이 느려진다.
 const MAIL_MORE_MAX = 200;
-let mailMore = 0;    // 설정값에서 얼마나 더 보기로 했나
+// 폴더마다 따로 센다 — 받은편지함을 200통까지 펼쳤다고 해서 보낸메일함까지
+// 200통을 받아올 이유가 없다. 느린 서버에서 그건 몇 분이다.
+let mailMore = 0;    // 받은편지함이 설정값에서 얼마나 더 보기로 했나
+let sentMore = 0;    // 보낸메일함 몫
+
+// 실제로 서버를 읽어 목록을 갈아끼운 횟수. «더 보기»가 이 수를 앞뒤로 비교해서
+// «정말 다시 읽었나»를 안다.
+//
+// 이게 왜 필요한가: refreshMail도 loadSent도 이미 도는 것이 있으면 15초까지만
+// 기다리고 포기한다. 이 서버는 읽음 표시 두 통에 88초가 걸린 적이 있어서 15초는 짧다.
+// 포기한 것을 «다 읽었는데 더 없더라»와 구별하지 못하면, 통수만 늘려놓고 화면에는
+// «더 없습니다»라고 말한 뒤 그 폴더를 잠가버린다.
+let mailLoads = 0;
+let sentLoads = 0;
+
+/** 설정값 — «한 번에 몇 통 보여줄까» */
+function mailBase() {
+  return Math.max(1, Math.round(store.settings.mailCount) || 5);
+}
 
 function wantNow() {
-  const base = Math.max(1, Math.round(store.settings.mailCount) || 5);
-  return Math.min(MAIL_MORE_MAX, base + mailMore);
+  return Math.min(MAIL_MORE_MAX, mailBase() + mailMore);
+}
+
+function sentWantNow() {
+  return Math.min(MAIL_MORE_MAX, mailBase() + sentMore);
 }
 
 /**
@@ -286,7 +308,9 @@ async function refreshMail({ force = false } = {}) {
     // 0 아래로는 내려가지 않게 막는다 (목록 밖에 숨길 것이 더 있으면 어긋난다).
     mailState.unread = Math.max(0, unread - hiddenUnread);
     mailState.quiet = hiddenUnread + mutedUnread;
-    mailState.total = total;
+    // 실패한 계정 몫이 빠진 total로 «마지막입니다»를 말하면, 남은 메일이 있는데도
+    // 더 보기를 잠근다. 반쯤 아는 것보다 모르는 편이 낫다 (0이면 그 판단을 안 한다).
+    mailState.total = errors.length ? 0 : total;
     mailState.filtered = cut.hidden.length;
     mailState.groups = cut.groups.map((g) => ({
       name: g.name,
@@ -321,6 +345,8 @@ async function refreshMail({ force = false } = {}) {
     if (errors.length) console.warn('[mail]', errors.map((e) => `${e.name}: ${e.message}`).join(', '));
   } finally {
     mailState.loading = false;
+    // 여기까지 왔다면 앞의 관문(꺼짐·이미 도는 중·계정 없음)을 다 지나 실제로 한 바퀴 돈 것이다
+    mailLoads += 1;
   }
   // 새로 온 것을 파일로 남긴다. 기다리지 않는다 — 메일 목록은 이미 화면에 올라가야 한다.
   autoBackupNew();
@@ -1911,8 +1937,17 @@ function sentFolder() {
  * 폴더 이름이 서버마다 달라서 mail.findBox가 찾아준다. 못 찾으면 받은편지함으로
  * 슬쩍 넘어가지 않고 그 사실을 말한다.
  */
-async function loadSent() {
-  if (mailState.sent.loading) return mailState.sent;
+async function loadSent({ force = false } = {}) {
+  if (mailState.sent.loading) {
+    // «더 보기»는 이미 도는 것이 끝나기를 기다렸다 다시 읽어야 한다 —
+    // 그냥 돌아가면 통수를 늘려놓고 안 가져온 셈이 되어, 화면은 그대로인데
+    // 다음에 부를 때는 «이미 늘렸으니 그만»이 된다.
+    if (!force) return mailState.sent;
+    for (let i = 0; i < 60 && mailState.sent.loading; i++) {
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    if (mailState.sent.loading) return mailState.sent;
+  }
   const accounts = mailAccountsForUse();
   if (!accounts.length) {
     // at을 찍어야 «한 번 해봤고 안 됐다»가 된다. 안 찍으면 lazy가 안 풀려서
@@ -1921,9 +1956,10 @@ async function loadSent() {
     return mailState.sent;
   }
   mailState.sent = { ...mailState.sent, loading: true, error: '' };
-  const want = Math.max(1, Math.round(store.settings.mailCount) || 5);
+  const want = sentWantNow();
   const out = [];
   const bad = [];
+  let total = 0;
   for (const acc of accounts) {
     try {
       // 보낸 메일에 «안 읽음»은 뜻이 없다 — 내가 쓴 것이다. 최근 것부터 그냥 보여준다.
@@ -1932,6 +1968,7 @@ async function loadSent() {
       // seen을 참으로 고정한다 — 내가 쓴 메일에 «안 읽음» 강조는 뜻이 없다.
       // 그래서 이 목록에는 읽음 임시 장부를 덮지 않는다. 덮으면 «고정된 참»과 값이 같아져
       // 장부가 곧바로 지워지고, 정작 메일을 다시 열었을 때 옛 값이 나온다.
+      total += r.total || 0;
       out.push(...r.messages.map((m) => ({
         ...m, account: acc.name, accountId: acc.id, seen: true, fromSelf: true
       })));
@@ -1942,9 +1979,14 @@ async function loadSent() {
   out.sort((a, b) => b.at - a.at);
   mailState.sent = {
     at: Date.now(), loading: false, messages: out.slice(0, want),
+    // 계정 하나가 실패하면 그 몫이 빠져 total이 실제보다 작아진다. 그 작은 수로
+    // «마지막입니다»를 판단하면 남은 메일이 있는데도 폴더를 잠근다 — 모르는 편이 낫다.
+    total: bad.length ? 0 : total,
     error: out.length ? '' : (bad[0] || '보낸 메일이 없습니다')
   };
+  sentLoads += 1;
   evlog.log('메일', `보낸메일함 · ${out.length}건`
+    + (want > mailBase() ? ` (${want}통까지 폈음)` : '')
     + (bad.length ? ` · 실패 ${bad.join(' / ')}` : ''));
   return mailState.sent;
 }
@@ -1954,25 +1996,81 @@ async function loadSent() {
  * 한 번에 설정값만큼씩 늘린다 (20이면 20 → 40 → 60…).
  * 끝까지 왔으면 그렇다고 말해준다 — 아무 말도 없으면 계속 누르게 된다.
  */
-ipcMain.handle('mail:more', async () => {
-  const base = Math.max(1, Math.round(store.settings.mailCount) || 5);
-  const before = wantNow();
+ipcMain.handle('mail:more', async (_e, folder) => (
+  folder === 'sent' ? moreSent() : moreInbox()
+));
+
+/**
+ * 더 부를 자리가 남았는지 — 상한과 서버에 있는 통수를 본다.
+ * 남았으면 null, 아니면 화면에 그대로 보여줄 대답.
+ */
+function moreRoom(before, total, count) {
   if (before >= MAIL_MORE_MAX) {
-    return { ok: false, more: false, count: mailState.messages.length,
-      message: `여기까지입니다 (최대 ${MAIL_MORE_MAX}통)` };
+    return { ok: false, more: false, count, message: `여기까지입니다 (최대 ${MAIL_MORE_MAX}통)` };
   }
   // 서버에 있는 것보다 많이 부르면 더 나올 게 없다
-  if (mailState.total && before >= mailState.total) {
-    return { ok: false, more: false, count: mailState.messages.length, message: '마지막입니다' };
-  }
+  if (total && before >= total) return { ok: false, more: false, count, message: '마지막입니다' };
+  return null;
+}
+
+/**
+ * 늘려놓고 못 가져왔을 때 되돌린다.
+ *
+ * refreshMail·loadSent는 앞의 것이 안 끝나면 15초까지만 기다리고 포기한다.
+ * 포기한 채로 «다 읽었는데 더 없더라»라고 하면 두 가지가 한꺼번에 어긋난다 —
+ * 화면은 그 폴더를 «끝»으로 적어 잠그고, 통수는 받아오지도 않은 채 늘어난 상태로
+ * 남아 그 뒤 새로고침마다 이 느린 서버에서 그만큼씩 더 받는다.
+ */
+function notLoaded(count) {
+  notice('bad', '서버가 아직 응답하지 않습니다 — 잠시 뒤 다시 해보세요');
+  return { ok: false, more: false, retry: true, count, message: '서버가 아직 응답하지 않습니다' };
+}
+
+async function moreInbox() {
+  const base = mailBase();
+  const before = wantNow();
+  const full = moreRoom(before, mailState.total, mailState.messages.length);
+  if (full) return full;
+
+  const was = mailMore;
   mailMore = Math.min(MAIL_MORE_MAX, before + base) - base;
   notice('wait', '이전 메일을 불러오는 중…');
   const had = mailState.messages.length;
+  const loads = mailLoads;
   await refreshMail({ force: true });
+  if (mailLoads === loads) { mailMore = was; return notLoaded(had); }
   const now = mailState.messages.length;
   notice(now > had ? 'good' : '', now > had ? `${now - had}통 더 불렀습니다` : '더 없습니다');
   return { ok: true, more: now > had, count: now };
-});
+}
+
+/**
+ * 보낸메일함 더 보기 — 받은편지함과 같은 셈을 제 통수로 한다.
+ * 아직 한 번도 안 불러왔으면 늘리지 않는다. 처음 여는 것이 곧 첫 20통이고,
+ * 여기서 늘려버리면 열자마자 40통을 받으러 간다.
+ */
+async function moreSent() {
+  const count = mailState.sent.messages.length;
+  // 첫 목록도 아직 안 왔다. «끝»이 아니라 «조금 뒤에»다 — retry를 달아 구별해 준다.
+  if (!mailState.sent.at) {
+    return { ok: false, more: false, retry: true, count, message: '아직 안 불러왔습니다' };
+  }
+
+  const base = mailBase();
+  const before = sentWantNow();
+  const full = moreRoom(before, mailState.sent.total, count);
+  if (full) return full;
+
+  const was = sentMore;
+  sentMore = Math.min(MAIL_MORE_MAX, before + base) - base;
+  notice('wait', '이전 보낸 메일을 불러오는 중…');
+  const loads = sentLoads;
+  await loadSent({ force: true });
+  if (sentLoads === loads) { sentMore = was; return notLoaded(count); }
+  const now = mailState.sent.messages.length;
+  notice(now > count ? 'good' : '', now > count ? `${now - count}통 더 불렀습니다` : '더 없습니다');
+  return { ok: true, more: now > count, count: now };
+}
 
 ipcMain.handle('mail:sent', async () => {
   const r = await loadSent();

@@ -550,37 +550,61 @@ let mailFolder = 'in';
 // 이걸 안 들고 있으면 «비어 있음»과 «아직 안 왔음»을 구별할 수 없어서,
 // 누르자마자 «보낸 메일이 없습니다»가 떴다 (실제로 그랬다).
 let sentAsked = false;
-// «더 보기»를 부르는 중인가 — 스크롤은 연속으로 터져서 막지 않으면 수십 번 부른다
+// 서버에서 더 받아올 수 있는 폴더. 나머지는 이미 받아둔 것을 나눈 칸이라
+// «더 보기»가 뜻이 없다 (숨김·묶음·임시보관함).
+const CAN_MORE = new Set(['in', 'sent']);
+// «더 보기»를 부르는 중인가 — 스크롤은 연속으로 터져서 막지 않으면 수십 번 부른다.
+// 부르는 것은 한 번에 하나뿐이라 이것만 전역이다.
 let moreBusy = false;
-let moreDone = false;   // 서버가 «마지막»이라고 했으면 다시 안 물어본다
-let moreArmed = true;   // 바닥에서 한 번 불렀으면 올라갔다 내려와야 다시 부른다
+// 아래 둘은 폴더마다 따로 든다. 하나로 두면 받은편지함에서 끝까지 내려간 순간
+// 보낸메일함도 «끝»으로 잠긴다 — 한 번도 안 내려가 봤는데도.
+// 끝에서 이만큼 안쪽이면 «바닥»으로 친다. 딱 맞게 재면 배율이 100%가 아닐 때
+// 소수점 때문에 영영 안 닿는다.
+const SLACK = 40;
+const moreDone = new Set();    // 서버가 «마지막»이라고 한 폴더
+const moreArmed = new Map();   // 폴더 → 바닥에서 다시 부를 준비가 됐나
+let paintedFolder = null;      // 지금 목록에 그려져 있는 폴더 (바뀌면 맨 위로 돌린다)
+
+/** 새로 읽었으니 «더 없음»도 «이미 불렀음»도 푼다 */
+function rearmMore() {
+  moreDone.clear();
+  moreArmed.clear();
+}
 
 /**
  * 목록 끝에 닿았으면 이전 메일을 더 불러온다.
- * 받은편지함에서만 한다 — 숨김·묶음·임시보관함은 이미 있는 것을 나눈 칸이고,
- * 보낸메일함은 제 불러오기가 따로 있다.
+ * 받은편지함과 보낸메일함에서만 한다 — 나머지는 서버에 더 부를 것이 없다.
  */
 function hookMore(host, folderId) {
-  // 다른 폴더로 옴기면 반드시 떼준다 — 그냥 두면 숨김 폴더를 보는 중에도
-  // 이전 메일을 불러온다 (실제로 그랬다).
-  if (folderId !== 'in') { host.onscroll = null; return; }
+  // 더 부를 수 없는 폴더로 옮기면 반드시 떼준다 — 그냥 두면 숨김 폴더를 보는
+  // 중에도 이전 메일을 불러온다 (실제로 그랬다).
+  if (!CAN_MORE.has(folderId)) { host.onscroll = null; return; }
   host.onscroll = async () => {
-    if (moreBusy || moreDone) return;
+    if (moreBusy || moreDone.has(folderId)) return;
     const room = host.scrollHeight - host.clientHeight;
-    const atEnd = host.scrollTop >= room - 40;
+    // «바닥»은 끝에서 SLACK 안쪽이라는 뜻이다. 그런데 굴릴 자리 자체가 그보다 좁으면
+    // 맨 위가 곧 바닥이라 이 재기가 성립하지 않는다 — 짧은 폴더로 옮기기만 해도
+    // 손도 안 댄 채 이전 메일을 불러온다 (목록을 다시 그릴 때 스크롤이 0으로 잘리면서
+    // 사건이 하나 나기 때문이다. 폴더 탭 줄만 남아도 자리가 십몇 픽셀은 된다).
+    if (room <= SLACK) return;
+    const atEnd = host.scrollTop >= room - SLACK;
     // 한 번 불러온 뒤에는 위로 올라갔다 다시 내려와야 또 부른다.
-    // 안 그랬면 목록이 늘어도 여전히 바닥이라 20→40→60…으로 사슬처럼 불러온다.
-    if (!moreArmed) {
-      if (host.scrollTop < room - 120) moreArmed = true;
+    // 안 그러면 목록이 늘어도 여전히 바닥이라 20→40→60…으로 사슬처럼 불러온다.
+    if (moreArmed.get(folderId) === false) {
+      if (host.scrollTop < room - 120) moreArmed.set(folderId, true);
       return;
     }
     if (!atEnd) return;
-    moreArmed = false;
+    moreArmed.set(folderId, false);
     moreBusy = true;
     try {
-      const r = await window.nunsseom.mailMore();
+      const r = await window.nunsseom.mailMore(folderId);
+      // «지금은 못 한다»와 «서버에 더 없다»는 다르다.
+      // 아직 첫 목록이 안 왔거나 앞의 읽기가 안 끝난 것은 잠깐의 일인데,
+      // 이걸 «끝»으로 적어버리면 새로고침을 누르기 전까지 그 폴더가 조용히 죽는다.
+      if (r && r.retry) return;
       // 더 없다고 했으면 그만 묻는다. 새로고침을 누르면 다시 풀린다.
-      if (!r || r.ok === false || r.more === false) moreDone = true;
+      if (!r || r.ok === false || r.more === false) moreDone.add(folderId);
     } finally {
       moreBusy = false;
     }
@@ -835,6 +859,9 @@ function paintMailPanel() {
     p.className = 'calempty';
     p.textContent = box ? '새 메일 없음' : '설정에서 메일을 연결하세요';
     host.append(p);
+    // 여기서 그냥 돌아가면 직전 폴더에 묶인 스크롤 처리기가 그대로 살아 있는다.
+    // 폴더가 사라졌는데도 그 폴더로 «더 보기»를 부르게 된다.
+    hookMore(host, null);
     return;
   }
   // 폴더가 «메일» 하나뿐이면 줄을 안 그린다 — 규칙을 안 쓰면 없던 것과 같아야 한다
@@ -863,6 +890,14 @@ function paintMailPanel() {
     p.className = 'calempty';
     p.textContent = emptyWord(cur, box);
     host.append(p);
+  }
+  // 폴더를 옮겼으면 목록을 맨 위로 돌린다.
+  // 내려둔 자리를 물려주면 «보낸메일함 탭을 눌렀을 뿐인데 이미 바닥»이 되어,
+  // 손도 안 댔는데 이전 메일을 불러온다 (실제로 그랬다).
+  if (cur && cur.id !== paintedFolder) {
+    paintedFolder = cur.id;
+    host.scrollTop = 0;
+    moreArmed.set(cur.id, true);
   }
   // 끝까지 내려가면 이전 메일을 더 불러온다
   hookMore(host, cur && cur.id);
@@ -903,9 +938,7 @@ for (const id of ['mail-refresh', 'mp-refresh']) {
     e.stopPropagation();
     if (refreshing) return;
     refreshing = true;
-    // 새로 읽었으니 «더 없음»도 «이미 불렀음»도 푼다
-    moreDone = false;
-    moreArmed = true;
+    rearmMore();
     try { await window.nunsseom.mailRefresh(); } finally { refreshing = false; }
   };
   $(id).addEventListener('pointerdown', (e) => e.stopPropagation());
