@@ -31,6 +31,7 @@ const mailtally = require('./mailtally');
 const mailmark = require('./mailmark');
 const contactcsv = require('./contactcsv');
 const mailcache = require('./mailcache');
+const preview = require('./preview');
 const send = require('./send');
 const secret = require('./secret');
 
@@ -2695,6 +2696,70 @@ ipcMain.handle('mail:save-attachment', async (e, index) => {
   } catch (e) {
     return { ok: false, message: e.message };
   }
+});
+
+/**
+ * 첨부 미리보기 — 저장하지 않고 그 자리에서 본다.
+ *
+ * 그림은 이미 창이 data:로 그리고 있으므로 여기 오지 않는다.
+ * 글은 글자로 풀어 돌려주고, PDF는 크로미움 뷰어를 띄운다.
+ * 열 수 없는 것은 그렇다고 말한다 — 눌렀는데 아무 일도 없는 게 제일 나쁘다.
+ */
+const PREVIEW_DIR = () => path.join(app.getPath('userData'), 'preview');
+const pdfWins = new Set();
+
+ipcMain.handle('mail:preview-attachment', async (e, index) => {
+  const slot = slotOf(e);
+  const a = slot && slot.files[index];
+  if (!a || !a.content) return { kind: 'none', message: '첨부를 찾을 수 없습니다' };
+
+  const kind = preview.kindOf(a);
+  if (kind === 'toobig') {
+    return { kind: 'none', message: '파일이 커서 미리보기를 건너뜁니다 — 저장한 뒤 열어주세요' };
+  }
+  if (kind === 'none') {
+    return { kind: 'none', message: '이 형식은 미리보기를 못 합니다 — 저장한 뒤 열어주세요' };
+  }
+
+  if (kind === 'text') {
+    // 한국어 윈도우에서 만든 텍스트는 CP949인 경우가 많다 — 주소록에서 쓰던 판별을 그대로 쓴다.
+    // HTML이어도 글자로만 돌려준다. 첨부로 온 HTML을 그려주면 그건 남의 페이지를 여는 것이다.
+    const { text, encoding } = contactcsv.decode(a.content);
+    return { kind: 'text', text, encoding, filename: a.filename };
+  }
+
+  // PDF — 임시 파일로 떨구고 크로미움 뷰어로 연다
+  const dir = PREVIEW_DIR();
+  const file = preview.tempPathFor(dir, a, '.pdf');
+  if (!file) return { kind: 'none', message: '미리보기 파일을 만들지 못했습니다' };
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(file, a.content);
+  } catch (err) {
+    return { kind: 'none', message: `미리보기 파일을 쓰지 못했습니다 — ${err.message}` };
+  }
+
+  const win = new BrowserWindow({
+    width: 900, height: 1000,
+    title: a.filename || '첨부 미리보기',
+    backgroundColor: '#2b2b2b',
+    // 이 창에는 다리를 놓지 않는다 — 남이 보낸 파일을 여는 창이다
+    webPreferences: { preload: undefined, nodeIntegration: false, contextIsolation: true, sandbox: true, plugins: true }
+  });
+  pdfWins.add(win);
+  // 이 창은 그 파일에서 절대 벗어나지 않는다
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('will-navigate', (ev, url) => {
+    if (url !== `file:///${file.replace(/\\/g, '/')}`) ev.preventDefault();
+  });
+  win.on('closed', () => {
+    pdfWins.delete(win);
+    // 본 뒤에는 남겨두지 않는다 — 첨부가 임시 폴더에 쌓이면 그것대로 새는 길이다
+    try { fs.unlinkSync(file); } catch { /* 이미 없으면 그만 */ }
+  });
+  win.loadFile(file);
+  evlog.log('메일', `첨부 미리보기 · ${a.filename}`);
+  return { kind: 'pdf', filename: a.filename };
 });
 
 /** 저장한 첨부를 탐색기에서 보여준다 */

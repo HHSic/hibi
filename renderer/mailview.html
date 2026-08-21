@@ -138,6 +138,35 @@
   .file:hover { background: var(--fill-hi); }
   .file .sz { color: var(--tertiary); font-variant-numeric: tabular-nums; }
   .saved { font-size: 11px; color: var(--accent); margin-top: 8px; }
+  /* 파일 칩 — 이름을 누르면 미리보기, 저장은 따로 */
+  .file .go { color: var(--tertiary); font-size: 11px; }
+  .file:hover .go { color: var(--accent); }
+  .fsave {
+    all: unset; cursor: default; font-size: 11px; color: var(--tertiary);
+    padding: 5px 7px; border-radius: 8px; background: var(--fill);
+  }
+  .fsave:hover { background: var(--fill-hi); color: var(--label); }
+  .fpair { display: inline-flex; gap: 3px; }
+  /* 글 미리보기 — 첨부로 온 글은 글자로만 보여준다 (HTML이어도 그린 적이 없다) */
+  .ftext {
+    margin-top: 8px; max-height: 240px; overflow: auto;
+    background: #fff; color: #1a1a1a; border-radius: 8px; padding: 10px 12px;
+    font-family: Consolas, "D2Coding", monospace; font-size: 11.5px; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-word; user-select: text;
+  }
+  .ftext .cap { color: #5f6368; font-size: 10.5px; margin-bottom: 6px; }
+  /* 그림 크게 보기 — 창 안에서 덮는다 (새 창을 띄울 일이 아니다) */
+  .lightbox {
+    position: fixed; inset: 0; z-index: 20; display: none;
+    background: rgba(0, 0, 0, 0.82); place-items: center; padding: 24px;
+  }
+  .lightbox.on { display: grid; }
+  .lightbox img { max-width: 100%; max-height: 100%; border-radius: 8px; }
+  .lightbox .hint {
+    position: absolute; left: 0; right: 0; bottom: 10px; text-align: center;
+    color: rgba(255,255,255,0.72); font-size: 11px;
+  }
+  .shots img { cursor: zoom-in; }
 
   /* 가장자리 리사이즈 — 위젯과 같은 방식 (네이티브는 투명 창에서 폭주한다) */
   .rz { position: absolute; z-index: 9; }
@@ -171,7 +200,12 @@
     <div class="shots" id="shots"></div>
     <div class="files" id="files"></div>
     <div class="saved" id="saved"></div>
+    <div class="ftext" id="ftext" style="display:none"></div>
   </div>
+</div>
+<div class="lightbox" id="lightbox">
+  <img id="lightbox-img" alt="">
+  <div class="hint">아무 데나 누르면 닫힙니다</div>
 </div>
 <div class="rz rz-n" data-dir="n"></div>
 <div class="rz rz-s" data-dir="s"></div>
@@ -261,6 +295,51 @@
     ? (n / 1024 / 1024).toFixed(1) + 'MB'
     : Math.max(1, Math.round(n / 1024)) + 'KB');
 
+  /** 그림 크게 보기 */
+  function zoom(src, alt) {
+    $('lightbox-img').src = src;
+    $('lightbox-img').alt = alt || '';
+    $('lightbox').classList.add('on');
+  }
+  $('lightbox').onclick = () => {
+    $('lightbox').classList.remove('on');
+    $('lightbox-img').src = '';
+  };
+
+  /**
+   * 첨부 하나를 그 자리에서 본다.
+   * 그림은 이 창이 이미 들고 있으므로 바로 키우고, 나머지는 메인이 판단한다.
+   */
+  async function previewOne(a) {
+    $('saved').textContent = '';
+    if (a.dataUrl) { zoom(a.dataUrl, a.filename); return; }
+    $('ftext').style.display = 'none';
+    $('saved').textContent = '여는 중…';
+    let r;
+    try {
+      r = await window.nunsseom.mailPreviewAttachment(a.index);
+    } catch (err) {
+      $('saved').textContent = '미리보기 실패 — ' + (err && err.message ? err.message : String(err));
+      return;
+    }
+    if (!r) { $('saved').textContent = '미리보기가 응답하지 않았습니다'; return; }
+    if (r.kind === 'text') {
+      // 글자 노드로만 넣는다 — 첨부로 온 HTML이 여기서 살아나면 안 된다
+      const box = $('ftext');
+      box.textContent = '';
+      const cap = document.createElement('div');
+      cap.className = 'cap';
+      cap.textContent = `${a.filename} · ${kb(a.size)}`
+        + (r.encoding === 'cp949' ? ' · CP949로 읽음' : '');
+      box.append(cap, document.createTextNode(r.text || '(빈 파일)'));
+      box.style.display = 'block';
+      $('saved').textContent = '';
+      return;
+    }
+    if (r.kind === 'pdf') { $('saved').textContent = '새 창에서 열었습니다'; return; }
+    $('saved').textContent = r.message || '미리보기를 못 합니다';
+  }
+
   function renderAttachments(list) {
     if (!list.length) return;
     $('atts').style.display = 'block';
@@ -275,11 +354,16 @@
       const img = document.createElement('img');
       img.src = a.dataUrl;          // 메일에 담겨 온 그림이라 네트워크를 타지 않는다
       img.alt = a.filename;
-      img.title = `${a.filename} · ${kb(a.size)}`;
+      img.title = `${a.filename} · ${kb(a.size)} · 누르면 크게 봅니다`;
+      img.onclick = () => zoom(a.dataUrl, a.filename);
       $('shots').append(img);
     }
-    // 그림도 저장할 수 있어야 하므로 파일 칩은 전부 만든다
+    // 칩 하나에 둘이 붙는다 — 이름을 누르면 미리보기, 옆의 «저장»은 저장.
+    // 예전엔 누르면 곧바로 저장 대화상자였다. 안을 보려고 매번 저장할 이유가 없다.
     for (const a of list) {
+      const pair = document.createElement('span');
+      pair.className = 'fpair';
+
       const b = document.createElement('button');
       b.className = 'file';
       const nm = document.createElement('span');
@@ -287,8 +371,19 @@
       const sz = document.createElement('span');
       sz.className = 'sz';
       sz.textContent = kb(a.size);
-      b.append(nm, sz);
-      b.onclick = async () => {
+      const go = document.createElement('span');
+      go.className = 'go';
+      go.textContent = '보기';
+      b.append(nm, sz, go);
+      b.title = '누르면 미리보기';
+      b.onclick = () => previewOne(a);
+
+      const sv = document.createElement('button');
+      sv.className = 'fsave';
+      sv.textContent = '저장';
+      sv.title = '파일로 저장';
+      sv.onclick = async (ev) => {
+        ev.stopPropagation();
         const r = await window.nunsseom.mailSaveAttachment(a.index);
         if (r && r.ok) {
           $('saved').textContent = `저장했습니다 — ${r.path}`;
@@ -297,7 +392,9 @@
           $('saved').textContent = r.message;
         }
       };
-      $('files').append(b);
+
+      pair.append(b, sv);
+      $('files').append(pair);
     }
   }
 
