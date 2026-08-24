@@ -139,16 +139,28 @@
   }
 
   /* 알림 종류 행 */
-  .rem { display: grid; grid-template-columns: 26px 1fr auto auto; align-items: center; gap: 11px; padding: 10px 13px; }
+  /* 가운데 두 칸은 반드시 줄어들 수 있어야 한다.
+     1fr·auto는 안에 든 글의 최소 너비 아래로는 안 줄어서, 주소가 길면 그 칸이 부풀고
+     오른쪽 «삭제»가 창 밖으로 밀려난다. 설정 창은 크기 조절도 가로 스크롤도 없어서
+     한 번 밀려나면 영영 못 누른다 (주소록에서 실제로 그랬다 — 열두 줄 전부).
+     minmax(0, …)로 바닥을 0까지 열어주고, 넘치는 글은 …으로 줄인다. */
+  .rem { display: grid; grid-template-columns: 26px minmax(88px, 1fr) minmax(0, auto) auto; align-items: center; gap: 11px; padding: 10px 13px; }
   .rem + .rem { box-shadow: inset 0 0.5px 0 var(--separator); }
   .rem .g { width: 17px; height: 17px; justify-self: center; }
   .rem .g.emoji { font-size: 15px; display: grid; place-items: center; line-height: 1; }
   .rem .nm { font-size: 13.5px; font-weight: 540; }
   .rem .nm small { display: block; font-size: 11px; font-weight: 400; color: var(--tertiary); margin-top: 1px; }
-  .rem .val { font-size: 11.5px; color: var(--tertiary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .rem .val {
+    font-size: 11.5px; color: var(--tertiary); font-variant-numeric: tabular-nums;
+    /* 한 줄로 두되, 넘치면 잘라서 …으로. 잘린 전체 값은 title로 볼 수 있다. */
+    white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  }
   .rem.off .g, .rem.off .nm { opacity: 0.45; }
   /* 메일 계정 행 — 스위치 뒤에 삭제가 하나 더 붙는다 */
-  .rem.acct { grid-template-columns: 26px 1fr auto auto auto; }
+  /* 주소록·계정 줄은 왼쪽이 «고치는 칸»(이름)이고 가운데가 «읽는 값»(주소)이다.
+     둘이 자리를 다투면 고치는 칸을 먼저 지킨다 — 주소는 …으로 줄어도 title로 볼 수 있지만,
+     이름 칸이 몇 픽셀로 짓눌리면 고칠 수가 없다. */
+  .rem.acct { grid-template-columns: 26px minmax(96px, 1.2fr) minmax(0, 1fr) auto auto; }
   .rem.acct .mini { white-space: nowrap; }
 
   /* 스위치 */
@@ -211,7 +223,8 @@
     white-space: pre-wrap;
   }
   /* 주소록 줄 — 이름은 그 자리에서 고친다 */
-  .rem.acct input.cust-name { width: auto; padding: 4px 8px; font-size: 12.5px; }
+  /* 입력칸은 기본 너비(약 20글자)를 최소로 들고 버틴다 — min-width를 열어야 같이 줄어든다 */
+  .rem.acct input.cust-name { width: auto; min-width: 0; padding: 4px 8px; font-size: 12.5px; }
   /* 필터 줄 — 조건은 못 고치므로 입력칸 모양을 주지 않는다.
      동작은 아랫줄로 내린다. 옆에 두면 조건이 «*@stcdev....»로 잘려 쓸모가 없어진다. */
   .flcond { min-width: 0; }

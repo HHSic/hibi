@@ -1066,9 +1066,12 @@ function renderBook() {
     const val = document.createElement('span');
     val.className = 'val';
     val.textContent = c.address;
+    // 좁은 창에서는 주소가 …으로 잘린다. 잘린 것을 확인할 길은 남겨둔다.
+    val.title = c.address;
     const del = document.createElement('button');
     del.className = 'mini ghost';
     del.textContent = '삭제';
+    del.title = `${c.address} 지우기`;
     del.onclick = async () => { book = await window.nunsseom.mailContactRemove(c.address); renderBook(); };
     row.append(g, nm, val, del);
     host.append(row);
