@@ -1291,7 +1291,8 @@ window.nunsseom.getSettings().then((d) => {
 
   for (const key of ['dndEnabled', 'autoUpdate', 'calendarBusy', 'calendarAllDay',
                      'calendarLead', 'calendarShow', 'soundEnabled', 'breakNoEscape',
-                     'mailEnabled', 'mailShow', 'mailRemoteImages', 'mailAutoBackup']) {
+                     'mailEnabled', 'mailShow', 'mailRemoteImages', 'mailAutoBackup',
+                     'mailPerAccount']) {
     bindSwitch(key);
   }
   bindAutoLaunch();

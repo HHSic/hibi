@@ -319,7 +319,12 @@ async function refreshMail({ force = false } = {}) {
     // 폴더는 «메일 / 묶음들 / 숨김». 숨김은 want에 매이지 않는다 —
     // 무엇이 걸러졌는지 확인하러 여는 곳이라 잘려 있으면 확인이 안 된다.
     // 보낸메일함은 규칙과 무관하므로(내가 쓴 메일을 걸러낼 일은 없다) 여기서 따로 붙인다.
-    mailState.folders = mailrules.folders(cut, Math.max(want, 30));
+    // 계정이 둘 이상이고 설정을 켰을 때만 계정별로 나눈다 —
+    // 계정이 하나인데 그 이름으로 칸을 만들면 «메일»이 사라진 것처럼 보인다.
+    const split = store.settings.mailPerAccount && accounts.length > 1
+      ? accounts.map((a) => ({ id: a.id, name: a.name || a.user }))
+      : null;
+    mailState.folders = mailrules.folders(cut, Math.max(want, 30), { accounts: split });
     mailState.messages = cut.visible.slice(0, want);
     mailState.toRead = cut.read;
     mailState.toSpam = cut.spam;

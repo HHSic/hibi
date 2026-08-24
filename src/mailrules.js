@@ -153,7 +153,11 @@ function apply(messages, rules) {
  *
  * @param cap 폴더 하나에 담을 최대 통수 (위젯이 좁다)
  */
-function folders(result, cap = 50) {
+/**
+ * @param accounts 주면 계정마다 칸을 하나씩 낸다([{id,name}]). 안 주면 하나로 합친다.
+ *   메일이 한 통도 없는 계정도 칸은 낸다 — 안 그러면 계정이 사라진 것처럼 보인다.
+ */
+function folders(result, cap = 50, { accounts = null } = {}) {
   const box = (id, name, items) => ({
     id,
     name,
@@ -162,7 +166,20 @@ function folders(result, cap = 50) {
     unread: items.filter((m) => !m.seen).length
   });
 
-  const out = [box('in', '메일', result.visible)];
+  const out = [];
+  if (accounts && accounts.length) {
+    const bins = new Map(accounts.map((a) => [a.id, { name: a.name || '메일', items: [] }]));
+    const orphans = [];
+    for (const m of result.visible) {
+      const bin = bins.get(m.accountId);
+      if (bin) bin.items.push(m);
+      else orphans.push(m);   // 계정이 지워졌는데 목록에 남은 것
+    }
+    for (const [id, bin] of bins) out.push(box('acc:' + id, bin.name, bin.items));
+    if (orphans.length) out.push(box('in', '그 밖', orphans));
+  } else {
+    out.push(box('in', '메일', result.visible));
+  }
   for (const g of result.groups) out.push(box('g:' + g.name, g.name, g.items));
   // 숨길 것이 없으면 빈 폴더를 만들지 않는다 — 좁은 자리에 쓸모없는 칸이 는다
   if (result.hidden.length) out.push(box('hidden', '숨김', result.hidden));

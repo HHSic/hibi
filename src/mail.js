@@ -261,9 +261,10 @@ async function markRead(account, uids, { read = true, mailbox = '' } = {}) {
  */
 const BOX_NAMES = {
   junk: /^(junk|junk e-?mail|spam|bulk mail|스팸|스팸메일함|스팸 메일함|정크)$/i,
-  sent: /^(sent|sent items|sent messages|sent mail|보낸편지함|보낸 편지함|보낸메일함|보낸 메일함)$/i
+  sent: /^(sent|sent items|sent messages|sent mail|보낸편지함|보낸 편지함|보낸메일함|보낸 메일함)$/i,
+  trash: /^(trash|deleted|deleted items|deleted messages|bin|휴지통|지운편지함|지운 편지함|삭제된 항목)$/i
 };
-const BOX_USE = { junk: '\\Junk', sent: '\\Sent' };
+const BOX_USE = { junk: '\\Junk', sent: '\\Sent', trash: '\\Trash' };
 
 /**
  * UID 목록 다듬기.
@@ -294,6 +295,43 @@ async function findBox(client, kind) {
 /** 예전 이름 — 부르는 곳이 있어 그대로 둔다 */
 function findJunk(client) {
   return findBox(client, 'junk');
+}
+
+/**
+ * 휴지통으로 옮긴다 — 메일 클라이언트가 «삭제»라고 부르는 그 동작.
+ *
+ * IMAP의 진짜 삭제는 \Deleted 표시 + EXPUNGE인데, 그건 되돌릴 수 없다.
+ * 웹메일에서 지운 메일이 휴지통에 남는 것과 다르게 동작하면 «지웠는데 어디 갔지»가 되고,
+ * 잘못 지웠을 때 되찾을 길도 없다. 그래서 옮기기만 한다.
+ * 휴지통을 못 찾으면 지우지 않고 그 사실을 말한다 — 조용히 EXPUNGE로 넘어가면 안 된다.
+ */
+async function moveToTrash(account, uids, { mailbox = '' } = {}) {
+  const list = uidList(uids);
+  if (!list.length) return { moved: 0 };
+
+  const client = connect(account, { timeoutMs: WRITE_TIMEOUT_MS });
+  await client.connect();
+  try {
+    const trash = await findBox(client, 'trash');
+    if (!trash) throw new Error('휴지통 폴더를 찾지 못했습니다');
+    // UID는 폴더마다 따로 돈다 — 보낸메일함에서 지울 때 받은편지함의 같은 번호를
+    // 지우면 안 된다. 열어둔 폴더를 그대로 받아 쓴다.
+    const box = await client.mailboxOpen(mailbox || account.mailbox || 'INBOX', { readOnly: false });
+    // 이미 휴지통이면 더 옮길 곳이 없다. 여기서 진짜 삭제로 넘어가지 않는다 —
+    // «한 번 더 누르면 영영 사라진다»는 것은 화면이 따로 물어봐야 할 일이다.
+    if (box.path === trash.path) return { moved: 0, mailbox: trash.path, already: true };
+
+    let moved = 0;
+    for (let i = 0; i < list.length; i += FLAG_CHUNK) {
+      const part = list.slice(i, i + FLAG_CHUNK);
+      const r = await client.messageMove(part, trash.path, { uid: true });
+      if (r === false) throw new Error('서버가 옮기기를 거부했습니다');
+      moved += part.length;
+    }
+    return { moved, mailbox: trash.path };
+  } finally {
+    try { await client.logout(); } catch { client.close(); }
+  }
 }
 
 /**
@@ -585,8 +623,29 @@ function htmlToText(html) {
     .trim();
 }
 
+/**
+ * 받는 서버 자리에 POP3 주소를 넣었는가.
+ *
+ * 메일 회사 안내 페이지는 POP3와 IMAP을 나란히 보여준다. 위에 있는 POP3 줄을 그대로
+ * 옮겨 적기 쉬운데, 이 앱은 IMAP만 쓴다. 그대로 두면 20초를 기다린 끝에
+ * «Failed to receive greeting from server»가 뜬다 — 무엇이 잘못됐는지 알 길이 없는 말이다.
+ * 그래서 서버를 부르기 전에 알아본다.
+ */
+function popMistake(account) {
+  const host = String((account && account.host) || '').trim().toLowerCase();
+  const port = Number(account && account.port) || 0;
+  const isPop = /^pop\d?\./.test(host) || port === 995 || port === 110;
+  if (!isPop) return null;
+  // 같은 회사의 IMAP 주소를 짐작해 같이 알려준다 — 고치는 데 필요한 건 그 한 줄이다
+  const guess = /^pop\d?\./.test(host) ? host.replace(/^pop\d?\./, 'imap.') : '';
+  return 'POP3 주소로 보입니다 — 이 앱은 IMAP을 씁니다.'
+    + (guess ? ` 받는 서버를 «${guess}», 포트를 993으로 바꿔보세요.` : ' 받는 서버를 IMAP 주소로, 포트를 993으로 바꿔보세요.');
+}
+
 /** 연결만 확인 — 설정 화면의 "연결 테스트" */
 async function test(account) {
+  const pop = popMistake(account);
+  if (pop) return { ok: false, message: pop };
   try {
     const r = await fetchSummary(account, { limit: 1 });
     return { ok: true, message: `연결됨 · 안 읽은 메일 ${r.unread}통` };
@@ -607,6 +666,11 @@ function friendly(e) {
   }
   if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(raw)) return '서버 주소를 찾을 수 없습니다';
   if (/ECONNREFUSED/i.test(raw)) return '연결이 거부되었습니다 (포트를 확인하세요)';
+  // 붙기는 했는데 IMAP 인사말이 안 온다 — 대개 IMAP이 아닌 것에 붙은 것이다
+  // (POP3 주소·웹 포트 등). 「시간 초과」로만 말하면 서버 탓으로 오해한다.
+  if (/greeting/i.test(raw)) {
+    return '서버가 IMAP으로 응답하지 않습니다 — 받는 서버 주소와 포트(993)를 확인하세요';
+  }
   if (/timeout|ETIMEDOUT/i.test(raw)) return '서버가 응답하지 않습니다';
   if (/certificate|self.signed/i.test(raw)) return '서버 인증서를 확인할 수 없습니다';
   if (/Command failed.*IMAP|not enabled|disabled/i.test(raw)) {
@@ -615,4 +679,4 @@ function friendly(e) {
   return raw.slice(0, 120);
 }
 
-module.exports = { PRESETS, preset, connect, smtpOf, fromOf, cleanHtml, fetchSummary, fetchBody, markRead, moveToSpam, findJunk, findBox, viewFromSource, fetchSources, test, senderOf, friendly, htmlToText, attachmentsForView, buildViewHtml };
+module.exports = { PRESETS, preset, connect, smtpOf, fromOf, cleanHtml, fetchSummary, fetchBody, markRead, moveToSpam, moveToTrash, findJunk, findBox, viewFromSource, fetchSources, test, popMistake, senderOf, friendly, htmlToText, attachmentsForView, buildViewHtml };

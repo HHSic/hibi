@@ -553,6 +553,11 @@ let sentAsked = false;
 // 서버에서 더 받아올 수 있는 폴더. 나머지는 이미 받아둔 것을 나눈 칸이라
 // «더 보기»가 뜻이 없다 (숨김·묶음·임시보관함).
 const CAN_MORE = new Set(['in', 'sent']);
+// 계정별로 나눠 보는 중이면 받은편지함 칸의 id가 «acc:m1»처럼 된다.
+// 그것도 받은편지함이므로 더 부를 수 있어야 한다 — 나눠 봤다고 «더 보기»가 죽으면 안 된다.
+const canMore = (id) => CAN_MORE.has(id) || String(id || '').startsWith('acc:');
+// 서버에 무엇을 더 달라고 할지 — 계정 칸도 결국 받은편지함을 늘리는 것이다
+const moreKind = (id) => (id === 'sent' ? 'sent' : 'in');
 // «더 보기»를 부르는 중인가 — 스크롤은 연속으로 터져서 막지 않으면 수십 번 부른다.
 // 부르는 것은 한 번에 하나뿐이라 이것만 전역이다.
 let moreBusy = false;
@@ -578,7 +583,7 @@ function rearmMore() {
 function hookMore(host, folderId) {
   // 더 부를 수 없는 폴더로 옮기면 반드시 떼준다 — 그냥 두면 숨김 폴더를 보는
   // 중에도 이전 메일을 불러온다 (실제로 그랬다).
-  if (!CAN_MORE.has(folderId)) { host.onscroll = null; return; }
+  if (!canMore(folderId)) { host.onscroll = null; return; }
   host.onscroll = async () => {
     if (moreBusy || moreDone.has(folderId)) return;
     const room = host.scrollHeight - host.clientHeight;
@@ -598,7 +603,7 @@ function hookMore(host, folderId) {
     moreArmed.set(folderId, false);
     moreBusy = true;
     try {
-      const r = await window.nunsseom.mailMore(folderId);
+      const r = await window.nunsseom.mailMore(moreKind(folderId));
       // «지금은 못 한다»와 «서버에 더 없다»는 다르다.
       // 아직 첫 목록이 안 왔거나 앞의 읽기가 안 끝난 것은 잠깐의 일인데,
       // 이걸 «끝»으로 적어버리면 새로고침을 누르기 전까지 그 폴더가 조용히 죽는다.

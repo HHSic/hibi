@@ -53,6 +53,10 @@ const DEFAULT_SETTINGS = {
   // 타이머가 끝나면 메인이 알아서 닫는다(main.js의 tick).
   breakNoEscape: false,
 
+  // 계정마다 폴더 칸을 따로 낼지. 꺼두면 지금처럼 한 목록에 합쳐 보여준다.
+  // 회사 메일과 개인 메일을 같이 넣으면 섞여 보이는 게 불편할 수 있어 고를 수 있게 둔다.
+  mailPerAccount: false,
+
   // 방해 금지 — 전체화면/발표/집중지원 중이면 알림을 미룬다
   dndEnabled: true,
   dndPresets: [],      // 목록에서 켠 앱 id (dnd.PRESETS 참고)
