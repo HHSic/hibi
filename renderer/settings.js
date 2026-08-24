@@ -620,6 +620,15 @@ function renderMailPresets() {
     b.onclick = () => window.nunsseom.openUrl(mailPreset.help);
     host.append(b);
   }
+  // IMAP을 켜러 가는 링크 — 비밀번호를 제대로 넣어도 이걸 안 켜면 안 된다.
+  // 두 곳을 다녀와야 하는 곳(네이버)에서 한 곳만 알려주면 나머지 반을 혼자 찾아야 한다.
+  if (mailPreset && mailPreset.setup) {
+    const b = document.createElement('button');
+    b.className = 'mini ghost';
+    b.textContent = '메일 환경설정 열기';
+    b.onclick = () => window.nunsseom.openUrl(mailPreset.setup);
+    host.append(b);
+  }
 }
 
 function renderMailModes() {

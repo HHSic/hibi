@@ -27,10 +27,16 @@ const PRESETS = [
     // 보내는 서버는 wsmtp.ecount.com:587로 늘 같다.
     smtpHost: 'wsmtp.ecount.com', smtpPort: 587, help: '',
     note: '받는 서버는 이카운트 웹메일 → 외부연동가이드 → 서버 정보설정에서 확인하세요 (보내는 서버는 wsmtp.ecount.com:587)' },
+  // 네이버는 준비 단계가 둘이고, 하나만 빠져도 «비밀번호가 틀렸다»처럼 보인다.
+  // 2025년 6월부터 일반 비밀번호로는 아예 안 되고 애플리케이션 비밀번호가 필수다
+  // (그해 11월 유예 종료). 그걸 모르면 맞는 비밀번호를 넣고도 계속 거절당한다.
   { id: 'naver', name: '네이버', host: 'imap.naver.com', port: 993,
     smtpHost: 'smtp.naver.com', smtpPort: 587,
     help: 'https://nid.naver.com/user2/help/myInfo',
-    note: '2단계 인증을 켜고 애플리케이션 비밀번호를 발급해 넣으세요' },
+    setup: 'https://mail.naver.com',
+    note: '① 메일 환경설정 → POP3/IMAP 설정에서 «IMAP/SMTP 사용»을 «사용함»으로 바꾸세요. '
+      + '② 2단계 인증을 켜고 애플리케이션 비밀번호를 발급해 아래 비밀번호 칸에 넣으세요 — '
+      + '2025년부터 일반 비밀번호로는 안 됩니다. 아이디는 전체 주소(id@naver.com)를 권합니다.' },
   { id: 'gmail', name: 'Gmail', host: 'imap.gmail.com', port: 993,
     smtpHost: 'smtp.gmail.com', smtpPort: 465,
     help: 'https://myaccount.google.com/apppasswords',
@@ -593,7 +599,11 @@ async function test(account) {
 function friendly(e) {
   const raw = String((e && e.message) || e);
   if (/AUTHENTICATIONFAILED|Invalid credentials|LOGIN failed/i.test(raw)) {
-    return '아이디 또는 비밀번호가 맞지 않습니다 (앱 비밀번호가 필요할 수 있어요)';
+    // 실제로 비밀번호를 틀린 경우보다, «앱 비밀번호가 아니라 평소 비밀번호를 넣은» 경우가
+    // 훨씬 많다. 네이버·구글은 이제 앱 비밀번호가 아니면 아예 거절한다 —
+    // 그걸 «비밀번호가 틀렸다»로만 말하면 맞는 걸 몇 번이고 다시 넣게 된다.
+    return '로그인이 거절됐습니다 — 평소 비밀번호 말고 «앱(애플리케이션) 비밀번호»가 필요합니다'
+      + ' (2단계 인증을 켜야 발급됩니다)';
   }
   if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(raw)) return '서버 주소를 찾을 수 없습니다';
   if (/ECONNREFUSED/i.test(raw)) return '연결이 거부되었습니다 (포트를 확인하세요)';
