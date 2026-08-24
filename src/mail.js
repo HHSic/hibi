@@ -23,8 +23,10 @@ const PREVIEW_HARD_MAX = 500;
 /** 제공자별 서버 — 사용자가 서버 주소를 몰라도 되게 */
 const PRESETS = [
   { id: 'ecount', name: '이카운트', host: '', port: 993,
-    smtpHost: '', smtpPort: 465, help: '',
-    note: '서버 주소는 이카운트 웹메일 → 환경설정 → IMAP 동기화에서 확인하세요' },
+    // 받는 서버(wmbox1~4.ecount.com)는 회사마다 번호가 달라 사용자가 넣지만,
+    // 보내는 서버는 wsmtp.ecount.com:587로 늘 같다.
+    smtpHost: 'wsmtp.ecount.com', smtpPort: 587, help: '',
+    note: '받는 서버는 이카운트 웹메일 → 외부연동가이드 → 서버 정보설정에서 확인하세요 (보내는 서버는 wsmtp.ecount.com:587)' },
   { id: 'naver', name: '네이버', host: 'imap.naver.com', port: 993,
     smtpHost: 'smtp.naver.com', smtpPort: 587,
     help: 'https://nid.naver.com/user2/help/myInfo',
@@ -50,14 +52,25 @@ const PRESETS = [
 ];
 
 /**
- * 보내는 서버가 비어 있으면 받는 서버에서 유추한다.
- * imap.회사.com → smtp.회사.com 이 업계 관행이고, 아니면 같은 호스트를 쓴다.
+ * 받는 서버(호스트) → 보내는 서버(호스트, 포트)를 유추한다.
  * 유추는 어디까지나 첫 시도일 뿐이라 설정에서 직접 고칠 수 있어야 한다.
+ *
+ * 대개는 imap.회사.com → smtp.회사.com 관행을 따르고, 아니면 같은 호스트를 쓴다.
+ * 이카운트는 예외다 — 받는 서버는 wmbox1~4.ecount.com인데 보내는 서버는
+ * 전혀 다른 wsmtp.ecount.com(587)이라, imap.→smtp. 규칙으로는 못 맞춘다.
+ * 그대로 두면 보내기가 없는 주소(wmboxN:465)로 붙으려다 60초를 기다린 뒤 실패한다.
  */
+function guessSmtp(imapHost) {
+  const h = String(imapHost || '');
+  if (/(^|\.)ecount\.com$/i.test(h)) return { host: 'wsmtp.ecount.com', port: 587 };
+  return { host: h.replace(/^imaps?\./i, 'smtp.'), port: 465 };
+}
+
 function smtpOf(account) {
-  const host = String(account.smtpHost || '').trim()
-    || String(account.host || '').replace(/^imaps?\./i, 'smtp.');
-  const port = Number(account.smtpPort) || 465;
+  const guess = guessSmtp(account.host);
+  // 사용자가 설정에서 직접 넣은 값이 언제나 이긴다. 비워 두면 유추한 값을 쓴다.
+  const host = String(account.smtpHost || '').trim() || guess.host;
+  const port = Number(account.smtpPort) || guess.port;
   return {
     host,
     port,

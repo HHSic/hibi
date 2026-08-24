@@ -160,6 +160,7 @@ async function sendMail(account, msg) {
     return { ok: false, message: `메일을 만들지 못했습니다 — ${e.message}` };
   }
 
+  const smtp = mail.smtpOf(account);
   const tx = transportFor(account);
   let info;
   try {
@@ -168,7 +169,12 @@ async function sendMail(account, msg) {
       raw
     });
   } catch (e) {
-    return { ok: false, message: mail.friendly(e) };
+    // 연결이 안 되거나 응답이 없을 때는 «어느 서버로 붙으려다» 그랬는지 같이 보여준다.
+    // 이게 없으면 «서버가 응답하지 않습니다»만 떠서, 보내는 서버 주소가 틀린 건지
+    // 서버가 느린 건지 알 길이 없다 (이카운트 보내는 서버 오설정이 정확히 그랬다).
+    const raw2 = String((e && (e.code || e.message)) || e);
+    const conn = /ETIMEDOUT|timeout|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ECONNECTION|ESOCKET|EDNS/i.test(raw2);
+    return { ok: false, message: mail.friendly(e) + (conn ? ` (보내는 서버 ${smtp.host}:${smtp.port})` : '') };
   } finally {
     tx.close();
   }
