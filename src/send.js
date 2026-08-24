@@ -143,7 +143,11 @@ async function sendMail(account, msg) {
       html: msg.html ? String(msg.html) : undefined,
       attachments: [
         ...inline,
-        ...(msg.attachments || []).map((a) => ({ path: a.path, filename: a.filename }))
+        // 대개는 사용자가 «파일 첨부»로 고른 디스크 파일(path)이다.
+        // 보낸메일함을 복사해 다시 쓸 때는 원문 첨부의 바이트를 그대로 실어 보낸다(content).
+        ...(msg.attachments || []).map((a) => (a.content
+          ? { filename: a.filename, content: a.content }
+          : { path: a.path, filename: a.filename }))
       ],
       // 답장이면 원문에 이어 붙는다 — 이게 있어야 메일 클라이언트가 대화로 묶는다
       inReplyTo: msg.inReplyTo || undefined,
@@ -292,4 +296,27 @@ function draftFrom(kind, src) {
   };
 }
 
-module.exports = { sendMail, verify, appendToSent, draftFrom, addresses, looksLikeAddress, problemWith, tidyText, quoteHtmlOf };
+/**
+ * 보낸 메일을 그대로 복사해 새 메일로 — «다시 보내기».
+ *
+ * 전달과 다르다. 전달은 «남에게 넘기는» 것이라 Fwd:와 인용 블록으로 감싼다.
+ * 복사는 «내가 보냈던 것을 다시 보내는» 것이라, 받는사람·제목·본문을 그대로 두고
+ * 곧바로 고쳐 쓸 수 있게 연다. 제목 접두사도, 인용 블록도, 답장 머리글도 없다.
+ *
+ * 서명은 이미 본문 안에 있다(내가 쓴 메일이므로) — 새로 붙이지 않는다. reuse 표시를
+ * 보고 쓰기 창이 본문을 통째로 올리고 서명을 따로 달지 않는다.
+ */
+function copyFrom(src) {
+  if (!src) return { to: '', subject: '', reuse: true };
+  const bodyHtml = quoteHtmlOf(src.html);
+  return {
+    to: src.to || '',
+    cc: src.cc || '',
+    subject: src.subject || '',
+    reuse: true,
+    // 서식이 있으면 그대로, 없으면 글로. 둘 다 없으면 빈 본문으로 연다.
+    ...(bodyHtml ? { bodyHtml } : { bodyText: String(src.text || '') })
+  };
+}
+
+module.exports = { sendMail, verify, appendToSent, draftFrom, copyFrom, addresses, looksLikeAddress, problemWith, tidyText, quoteHtmlOf };

@@ -361,8 +361,10 @@ async function viewFromSource(source, {
     uid,
     subject: parsed.subject || '(제목 없음)',
     from: (parsed.from && parsed.from.text) || '',
-    // 전달할 때 «받는사람» 줄에 쓴다 — 누구에게 온 메일인지가 전달의 절반이다
+    // 전달할 때 «받는사람» 줄에 쓴다 — 누구에게 온 메일인지가 전달의 절반이다.
+    // 보낸메일함을 복사해 다시 쓸 때는 이 둘이 곧 새 메일의 받는사람·참조가 된다.
     to: (parsed.to && parsed.to.text) || '',
+    cc: (parsed.cc && parsed.cc.text) || '',
     fromAddress: (parsed.from && parsed.from.value && parsed.from.value[0]
       && parsed.from.value[0].address) || '',
     replyTo: (parsed.replyTo && parsed.replyTo.value && parsed.replyTo.value[0]

@@ -512,11 +512,14 @@ function saveDraftNow() {
 /** 쓰던 글이 있나 — 있으면 함부로 버리지 않는다 */
 function dirty() {
   const base = context || {};
+  // 처음 채워진 값과 비교한다. 복사(다시 보내기)는 참조·첨부가 처음부터 차 있으므로,
+  // 빈 문자열과 비교하면 아무것도 안 고쳤는데도 «쓰던 글이 있다»가 되어 닫을 때마다 묻는다.
+  const startAtts = (base.reuse && Array.isArray(base.attachments)) ? base.attachments.length : 0;
   return $('to').value !== (base.to || '')
-    || $('cc').value !== '' || $('bcc').value !== ''
+    || $('cc').value !== (base.cc || '') || $('bcc').value !== (base.bcc || '')
     || $('subject').value !== (base.subject || '')
     || body.innerHTML.trim() !== (base.bodyHtml || '')
-    || attachments.length > 0;
+    || attachments.length !== startAtts;
 }
 
 let asking = false;
@@ -810,8 +813,20 @@ function fill(d) {
     if (d.cc) { $('row-cc').classList.remove('hide'); $('btn-cc').style.display = 'none'; }
     if (d.bcc) $('row-bcc').classList.remove('hide');
   }
+  // 복사(다시 보내기)면 원문을 통째로 편집 가능한 본문으로 올린다.
+  // 방금 붙인 빈 줄·서명은 버린다 — 서명은 원문 안에 이미 있다.
+  // 인용 블록이 아니라 «내 글»이므로, 남이 준 HTML을 다룰 때와 같은 허용목록으로
+  // 새로 지어 넣는다(quoteInto). 글만 있으면 글자 노드로.
+  if (d.reuse) {
+    body.textContent = '';
+    if (d.bodyHtml) quoteInto(body, d.bodyHtml);
+    else linesInto(body, d.bodyText);
+    $('cc').value = d.cc || '';
+    if (d.cc) { $('row-cc').classList.remove('hide'); $('btn-cc').style.display = 'none'; }
+  }
   d.bodyHtml = body.innerHTML.trim();
-  attachments = [];
+  // 복사면 원문 첨부가 딸려 온다(메인이 실어 보낸다). 나머지는 빈 채로 시작한다.
+  attachments = d.reuse && Array.isArray(d.attachments) ? d.attachments.slice() : [];
   renderFiles();
   say('', '');
   context = d;
@@ -826,12 +841,16 @@ function fill(d) {
     body.focus();
     const sel = window.getSelection();
     const r = document.createRange();
-    r.setStart(first, 0);
+    // 복사(다시 보내기)면 빈 첫 줄을 지우고 원문을 올렸으므로 first가 없다 —
+    // 그때는 본문 맨 앞에 선다. 답장·새 메일이면 여전히 그 빈 줄이 첫 자리다.
+    if (first.isConnected) r.setStart(first, 0);
+    else r.setStart(body, 0);
     r.collapse(true);
     sel.removeAllRanges();
     sel.addRange(r);
   };
-  if (d.to) putCaret(); else $('to').focus();
+  // 복사면 받는사람·제목이 이미 차 있고 대개 본문을 고친다 — 본문 맨 앞에 선다.
+  if (d.to || d.reuse) putCaret(); else $('to').focus();
   body.onfocus = putCaretOnce;
   function putCaretOnce() {
     body.onfocus = null;

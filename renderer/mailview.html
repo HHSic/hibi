@@ -194,6 +194,7 @@
       <div class="meta" id="meta"></div>
     </div>
     <button class="seen" id="reply" style="display:none" title="답장 쓰기">답장</button>
+    <button class="seen" id="copy" style="display:none" title="이 메일을 그대로 복사해 다시 씁니다">복사</button>
     <button class="seen" id="forward" style="display:none" title="전달하기">전달</button>
     <button class="seen" id="seen" style="display:none"></button>
     <button class="close" id="close" title="닫기"></button>
@@ -476,6 +477,31 @@
           tell('쓰기 창을 여는 중 오류 — ' + (err && err.message ? err.message : String(err)));
         } finally {
           b.disabled = false;
+        }
+      };
+    }
+
+    // 복사(다시 보내기) — 내가 보낸 메일에서만. 답장이 나에게 가는 자리에 대신 둔다.
+    // 원문 첨부의 바이트는 메인(slot.files)에 있으므로 메인이 창을 만든다.
+    if (m.fromSelf) {
+      const cb = $('copy');
+      cb.style.display = '';
+      cb.onclick = async () => {
+        cb.disabled = true;
+        const tell = (why) => {
+          cb.title = why;
+          $('blocked').style.display = 'block';
+          $('blocked').textContent = why;
+        };
+        try {
+          const r = await window.nunsseom.mailCopy();
+          if (!r) tell('쓰기 창이 응답하지 않았습니다');
+          else if (r.ok === false) tell(r.message || '복사해 열지 못했습니다');
+          else if (r.reused) tell(r.message || '쓰기 창이 이미 열려 있습니다');
+        } catch (err) {
+          tell('복사하는 중 오류 — ' + (err && err.message ? err.message : String(err)));
+        } finally {
+          cb.disabled = false;
         }
       };
     }

@@ -1496,11 +1496,20 @@ ipcMain.handle('mail:mark-read', (_e, opts) => doMarkRead(opts || {}));
 let composeWin = null;
 let composePayload = null;
 let composeSize = null;
+// 복사(다시 보내기)로 실어둔 원문 첨부. 바이트는 여기 메인에만 둔다 —
+// 화면에는 «무엇이 붙어 있나»만(이름·크기·id) 넘기고, 보낼 때 id로 다시 맞춘다.
+// composePayload와 짝이다(창이 하나뿐이다). 그래서 반드시 같이 확정해야 한다 —
+// 짝이 어긋나면 화면에 붙어 보이는 첨부를 못 보내게 된다.
+let composeCarried = [];
+// 창이 이미 열려 있어 갈아끼기를 «물어보는 중»인 첨부. 화면이 수락할 때 비로소 확정한다.
+// 먼저 확정하면, 사용자가 «현재 초안 유지»를 고른 순간 그 초안의 첨부가 사라진다.
+let pendingCarried = [];
+let copySeq = 0;
 // 보내는 중인가. 두 번 나가는 것을 막고, 그 사이에 들어오는 새 초안도 거절한다.
 // openCompose가 이걸 보므로 그보다 위에 선언한다 (선언 전 사용으로 화면이 죽은 적이 여러 번 있다).
 let sendingNow = false;
 
-function openCompose(payload) {
+function openCompose(payload, carried = []) {
   if (composeWin && !composeWin.isDestroyed()) {
     // 보내는 중이면 화면이 갈아끼우기를 그냥 버린다. 그걸 성공이라고 돌려주면
     // 답장을 눌렀는데 아무 일도 안 일어나고 이유도 안 나온다 — 여기서 거절한다.
@@ -1517,11 +1526,15 @@ function openCompose(payload) {
     composeWin.focus();
     // 쓰던 글이 있는데 새 초안으로 갈아끼우면 그 글은 그대로 사라진다.
     // 화면에 물어보고, 아니라고 하면 쓰던 것을 그대로 둔다.
+    // 첨부도 여기서 확정하지 않는다 — 화면이 수락해야(compose:accept-replace) composeCarried와
+    // composePayload를 함께 바꾼다. 먼저 바꾸면 «유지»를 골랐을 때 그 초안의 첨부가 사라진다.
+    pendingCarried = carried;
     composeWin.webContents.send('compose:replace', payload);
     evlog.log('메일', '쓰기 창이 이미 열려 있어 갈아끼기를 물어봅니다');
     return { ok: true, message: '쓰기 창이 이미 열려 있습니다 — 그쪽에서 물어봅니다', reused: true };
   }
   composePayload = payload;
+  composeCarried = carried;   // 새 창은 곧바로 확정한다 — composeData로 그대로 채운다
   const saved = store.settings.composeSize;
   const cap = mailViewMax();
   composeWin = new BrowserWindow({
@@ -1538,7 +1551,9 @@ function openCompose(payload) {
   composeSize = { width: composeWin.getSize()[0], height: composeWin.getSize()[1] };
   lockToOurPage(composeWin);
   composeWin.loadFile(page('compose.html'), { query: glassQuery({ radius: '20' }) });
-  composeWin.on('closed', () => { composeWin = null; composePayload = null; });
+  composeWin.on('closed', () => {
+    composeWin = null; composePayload = null; composeCarried = []; pendingCarried = [];
+  });
   return { ok: true, message: '' };
 }
 
@@ -1596,6 +1611,70 @@ function startCompose({ kind = 'new', accountId, source } = {}) {
 
 ipcMain.handle('compose:open', (_e, opts) => startCompose(opts || {}));
 
+// 본문에 박힌 그림은 «첨부»가 아니다 — 이미 본문(cid/data:)에 들어 있다.
+// 그것까지 다시 실으면 그림이 두 번(본문 한 번, 첨부 한 번) 나간다.
+// mailparser는 본문이 참조하는 조각에 related=true를 단다.
+function realAttachments(files) {
+  return (files || []).filter((a) => a && a.content && a.filename
+    && !a.related && a.contentDisposition !== 'inline');
+}
+
+/**
+ * 보낸 메일을 복사해 새 메일로 연다 — «다시 보내기».
+ * 원문 첨부의 바이트는 메인에만 두고(composeCarried), 화면에는 이름·크기·id만 넘긴다.
+ * 보낼 때 그 id로 바이트를 다시 맞춘다 — 큰 파일이 화면을 오가지 않게, 그리고
+ * 화면이 뚫려도 아무 파일이나 실어 보내지 못하게.
+ */
+function startCopy({ accountId, view, files } = {}) {
+  const accounts = mailAccountsForUse();
+  if (!accounts.length) return { ok: false, message: '쓸 수 있는 계정이 없습니다' };
+  // 보낸 메일은 그 계정으로 다시 보내는 게 자연스럽다. 못 찾으면 첫 계정으로 둔다
+  // (내 보낸메일함이니 어느 계정이든 내 것이다).
+  const acc = accounts.find((a) => a.id === accountId) || accounts[0];
+  const draft = send.copyFrom(view || {});
+
+  const carry = realAttachments(files).slice(0, 20).map((a) => ({
+    id: `copy${++copySeq}`, filename: a.filename, size: a.content.length, content: a.content
+  }));
+
+  const stored = store.mailAccounts.find((a) => a.id === acc.id) || {};
+  evlog.log('메일', `복사 열기 · 계정 ${acc.name || acc.user}`
+    + (carry.length ? ` · 첨부 ${carry.length}개` : ''));
+  const opened = openCompose({
+    accountId: acc.id,
+    signature: stored.signature || '',
+    signatures: Object.fromEntries(store.mailAccounts.map((a) => [a.id, a.signature || ''])),
+    title: '복사본',
+    pickable: false,
+    accounts: accounts.map((a) => {
+      const f = mail.fromOf(a);
+      return { id: a.id, name: a.name || a.user, from: f.address, label: f.name };
+    }),
+    ...draft,
+    // 바이트는 빼고 이름·크기·id만. 화면은 이걸로 칩을 그리고, 보낼 때 도로 넘긴다.
+    attachments: carry.map(({ content, ...d }) => ({ ...d, carried: true }))
+  }, carry);
+  if (!opened.ok) evlog.log('메일', `복사 못 열음 · ${opened.message}`);
+  return opened;
+}
+
+// 메일 보기 창의 «복사» — 원문 버퍼가 여기(slot.files)에 있으므로 메인이 만든다
+ipcMain.handle('mail:copy', (e) => {
+  const slot = slotOf(e);
+  if (!slot || !slot.payload || slot.payload.error) {
+    return { ok: false, message: '메일을 아직 다 읽지 못했습니다' };
+  }
+  const v = slot.payload;
+  // 단추·메뉴는 내가 보낸 메일에서만 «복사»를 보여준다. IPC도 같은 문을 지켜야 한다 —
+  // 안 그러면 뚫린 화면이 받은 메일의 첨부 바이트(메인에만 두는 것)를 실어 보낼 수 있다.
+  if (!v.fromSelf) return { ok: false, message: '복사는 내가 보낸 메일에서만 됩니다' };
+  return startCopy({
+    accountId: v.accountId,
+    view: { subject: v.subject, to: v.to, cc: v.cc, text: v.text, html: v.html },
+    files: slot.files
+  });
+});
+
 // 쓰다 말은 것을 계속 적어둔다. 화면이 손이 멈출 때마다 보낸다 —
 // 창을 닫았거나 앱이 죽어도 다음에 새 메일을 열면 그대로 나온다.
 ipcMain.on('compose:draft-save', (_e, d) => {
@@ -1651,8 +1730,16 @@ ipcMain.handle('compose:ask', async (_e, kind) => {
 
 ipcMain.handle('compose:data', () => composePayload);
 ipcMain.on('compose:close', () => composeWin && !composeWin.isDestroyed() && composeWin.close());
-/** 화면이 «갈아끼워도 좋다»고 하면 그때 초안을 바꾼다 */
-ipcMain.on('compose:accept-replace', (_e, payload) => { composePayload = payload; });
+/**
+ * 화면이 «갈아끼워도 좋다»고 하면 그때 초안을 바꾼다.
+ * 실어둔 첨부도 바로 이 순간에 확정한다 — payload와 짝을 맞춰야, «유지»를 골랐을 때
+ * 옛 초안이 제 첨부를 그대로 들고 있게 된다.
+ */
+ipcMain.on('compose:accept-replace', (_e, payload) => {
+  composePayload = payload;
+  composeCarried = pendingCarried;
+  pendingCarried = [];
+});
 /** 새 메일에서 보낼 계정을 바꾼다 */
 ipcMain.on('compose:set-account', (_e, id) => {
   if (composePayload && mailAccountsForUse().some((a) => a.id === id)) composePayload.accountId = id;
@@ -1684,11 +1771,26 @@ ipcMain.handle('compose:send', async (_e, msg) => {
   if (!acc) return { ok: false, message: '계정을 찾을 수 없습니다' };
 
   const picked = (msg && msg.attachments) || [];
-  const sneaky = picked.find((a) => !attachOk.has(a && a.path));
-  if (sneaky) return { ok: false, message: '첨부는 «파일 첨부»로 고른 것만 보낼 수 있습니다' };
+  // 복사(다시 보내기)로 실어둔 것은 id로 안다 — 바이트는 메인에만 있다.
+  const carriedById = new Map((composeCarried || []).map((f) => [f.id, f]));
+  const outAtts = [];
   let bytes = 0;
   for (const a of picked) {
-    try { bytes += fs.statSync(a.path).size; } catch { /* 없으면 보낼 때 걸린다 */ }
+    if (a && a.carried) {
+      // 화면이 준 것은 «이 id를 보내달라»는 표시뿐이다. 실물은 메인에서 꺼낸다 —
+      // 화면이 뚫려도 우리가 실어둔 것만 나간다.
+      const f = carriedById.get(a.id);
+      if (!f) return { ok: false, message: '복사한 첨부를 찾지 못했습니다 (다시 열어주세요)' };
+      outAtts.push({ filename: f.filename, content: f.content });
+      bytes += f.size || (f.content ? f.content.length : 0);
+    } else {
+      // 대화상자로 사용자가 직접 고른 것만. 화면이 준 경로를 그대로 믿지 않는다.
+      if (!attachOk.has(a && a.path)) {
+        return { ok: false, message: '첨부는 «파일 첨부»로 고른 것만 보낼 수 있습니다' };
+      }
+      outAtts.push({ path: a.path, filename: a.filename });
+      try { bytes += fs.statSync(a.path).size; } catch { /* 없으면 보낼 때 걸린다 */ }
+    }
   }
   if (bytes > ATTACH_MAX) {
     return { ok: false, message: `첨부가 너무 큽니다 (${Math.round(bytes / 1048576)}MB · 최대 25MB)` };
@@ -1697,7 +1799,7 @@ ipcMain.handle('compose:send', async (_e, msg) => {
   sendingNow = true;
   let r;
   try {
-    r = await send.sendMail(acc, msg || {});
+    r = await send.sendMail(acc, { ...msg, attachments: outAtts });
   } finally {
     sendingNow = false;
   }
@@ -1796,9 +1898,31 @@ ipcMain.handle('mail:row-menu', async (e, msg) => {
     }
   };
 
-  // 보낸메일함의 메일은 내가 쓴 것이다 — 답장하면 나에게 간다. 전달만 뜻이 있다.
+  // 보낸메일함의 메일은 내가 쓴 것이다. 답장하면 나에게 가니 그 자리에 «복사»를 둔다 —
+  // 받는사람·제목·본문을 그대로 둔 새 메일로 열어 다시 보낼 수 있게.
+  const copy = () => async () => {
+    const acc = mailAccountsForUse().find((a) => a.id === msg.accountId);
+    if (!acc) { notice('bad', '이 메일의 계정을 쓸 수 없습니다'); return; }
+    notice('wait', '복사 준비 중…');
+    try {
+      const m = await mail.fetchBody(acc, msg.uid, {
+        markSeen: false, allowRemote: false, mailbox: msg.mailbox || ''
+      });
+      const r = startCopy({
+        accountId: acc.id,
+        view: { subject: m.subject, to: m.to, cc: m.cc, text: m.text, html: m.html },
+        files: m.attachments || []
+      });
+      notice(r.ok ? '' : 'bad', r.ok ? '' : r.message);
+    } catch (e) {
+      notice('bad', mail.friendly(e));
+    }
+  };
+
   items.push(
-    ...(msg.fromSelf ? [] : [{ label: '답장', click: draft('reply') }]),
+    ...(msg.fromSelf
+      ? [{ label: '복사 (다시 쓰기)', click: copy() }]
+      : [{ label: '답장', click: draft('reply') }]),
     { label: '전달', click: draft('forward') },
     { type: 'separator' }
   );
