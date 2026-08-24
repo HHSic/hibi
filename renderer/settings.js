@@ -346,7 +346,12 @@ function renderDndApps() {
   };
 
   for (const p of data.dndPresets || []) {
-    row(p.name, p.procs.join(', '), on.has(p.id), () => {
+    // 실행 파일로 아는 것과 창 제목으로 아는 것을 구별해 보여준다 —
+    // 무엇을 보고 판단하는지 알아야 안 걸릴 때 이유를 짐작할 수 있다.
+    const sub = (p.procs || []).length
+      ? p.procs.join(', ')
+      : `창 제목: ${(p.titles || []).join(', ')}`;
+    row(p.name, sub, on.has(p.id), () => {
       const next = new Set(data.settings.dndPresets || []);
       if (next.has(p.id)) next.delete(p.id); else next.add(p.id);
       data.settings.dndPresets = [...next];

@@ -40,29 +40,61 @@ const PRESETS = [
   { id: 'powerpoint', name: 'PowerPoint', procs: ['powerpnt.exe'] },
   { id: 'obs', name: 'OBS Studio', procs: ['obs64.exe', 'obs32.exe'] },
   { id: 'teamviewer', name: 'TeamViewer', procs: ['teamviewer.exe'] },
-  { id: 'anydesk', name: 'AnyDesk', procs: ['anydesk.exe'] }
+  { id: 'anydesk', name: 'AnyDesk', procs: ['anydesk.exe'] },
+  // 영상은 실행 파일로 가릴 수 없다 — 브라우저로 보면 전부 chrome.exe다.
+  // 그걸 막으면 업무 중에도 다 막힌다. 그래서 창 제목으로 가른다.
+  // (전체화면으로 보면 Windows가 이미 «전체화면»이라고 알려주므로 그때는 이게 없어도 된다)
+  { id: 'youtube', name: 'YouTube', procs: [], titles: ['youtube'] },
+  { id: 'netflix', name: 'Netflix', procs: [], titles: ['netflix'] },
+  { id: 'tving', name: '티빙 · 웨이브 · 쿠팡플레이', procs: [],
+    titles: ['tving', '티빙', 'wavve', '웨이브', '쿠팡플레이', 'coupang play'] },
+  { id: 'twitch', name: 'Twitch · 치지직', procs: [], titles: ['twitch', '치지직', 'chzzk'] }
 ];
+
+/** 짧은 말로 부분 일치를 허용하면 오탐이 나므로 최소 길이를 둔다 */
+const MIN_FUZZY = 3;
 
 const PRESET_BY_ID = new Map(PRESETS.map((p) => [p.id, p]));
 /** 실행 파일 이름 → 프리셋 id (구버전 설정 이전용) */
 const PRESET_BY_PROC = new Map();
 for (const p of PRESETS) {
-  for (const proc of p.procs) {
+  for (const proc of p.procs || []) {
     PRESET_BY_PROC.set(proc, p.id);
     PRESET_BY_PROC.set(proc.replace(/\.exe$/, ''), p.id);
   }
 }
 
-/** 프리셋 id와 직접 입력한 이름을 하나의 실행 파일 이름 목록으로 합친다 */
+/**
+ * 프리셋 id와 직접 입력한 것을 실행 파일 이름 목록으로 합친다.
+ *
+ * 직접 입력한 것 중 «.exe»로 끝나지 않는 말은 창 제목으로 본다(resolveTitles).
+ * 실행 파일과 제목은 성격이 달라서다 — 실행 파일은 이름이 맞아떨어져야 하고,
+ * 제목은 그 말이 들어 있기만 하면 된다.
+ */
 function resolveApps({ presets = [], apps = [] } = {}) {
   const out = new Set();
   for (const id of presets) {
     const p = PRESET_BY_ID.get(id);
-    if (p) for (const proc of p.procs) out.add(proc.toLowerCase());
+    if (p) for (const proc of p.procs || []) out.add(proc.toLowerCase());
   }
   for (const a of apps) {
     const s = String(a || '').trim().toLowerCase();
-    if (s) out.add(s);
+    if (s && s.endsWith('.exe')) out.add(s);
+  }
+  return [...out];
+}
+
+/** 창 제목에서 찾을 말들 */
+function resolveTitles({ presets = [], apps = [] } = {}) {
+  const out = new Set();
+  for (const id of presets) {
+    const p = PRESET_BY_ID.get(id);
+    if (p) for (const t of p.titles || []) out.add(t.toLowerCase());
+  }
+  for (const a of apps) {
+    const s = String(a || '').trim().toLowerCase();
+    // «.exe»가 아니면 제목에서 찾는다. 너무 짧은 말은 아무 데나 걸려서 뺀다.
+    if (s && !s.endsWith('.exe') && s.length >= MIN_FUZZY) out.add(s);
   }
   return [...out];
 }
@@ -85,6 +117,10 @@ function load() {
       getForegroundWindow: user32.func('size_t __stdcall GetForegroundWindow()'),
       getWindowThreadProcessId: user32.func(
         'uint32 __stdcall GetWindowThreadProcessId(size_t hWnd, _Out_ uint32 *lpdwProcessId)'),
+      // 창 제목 — 브라우저로 보는 것은 실행 파일이 다 chrome.exe라 이름으론 못 가른다.
+      // «유튜브 보는 중»과 «업무 중»을 나누는 단서는 제목에만 있다.
+      getWindowTextW: user32.func(
+        'int __stdcall GetWindowTextW(size_t hWnd, _Out_ char16_t *buf, int max)'),
       openProcess: kernel32.func('size_t __stdcall OpenProcess(uint32 access, bool inherit, uint32 pid)'),
       closeHandle: kernel32.func('bool __stdcall CloseHandle(size_t h)'),
       queryImageName: kernel32.func(
@@ -139,8 +175,21 @@ function foregroundProcessName() {
   }
 }
 
-/** 짧은 이름으로 부분 일치를 허용하면 오탐이 나므로 최소 길이를 둔다 */
-const MIN_FUZZY = 3;
+/** 맨 앞 창의 제목 (소문자). 못 읽으면 빈 글자 */
+function foregroundTitle() {
+  const a = load();
+  if (!a) return '';
+  try {
+    const hwnd = a.getForegroundWindow();
+    if (!hwnd) return '';
+    const buf = Buffer.alloc(512 * 2);   // UTF-16, 제목은 이보다 길 일이 없다
+    const n = a.getWindowTextW(hwnd, buf, 512);
+    if (!n || n <= 0) return '';
+    return buf.toString('utf16le', 0, n * 2).toLowerCase();
+  } catch {
+    return '';
+  }
+}
 
 function matchesApp(fg, name) {
   if (!fg || !name) return false;
@@ -166,7 +215,7 @@ function check(cfg) {
       // 어떤 앱 때문인지 이름으로 알려준다
       for (const p of PRESETS) {
         if (!(cfg.presets || []).includes(p.id)) continue;
-        if (p.procs.some((proc) => matchesApp(fg, proc.toLowerCase()))) {
+        if ((p.procs || []).some((proc) => matchesApp(fg, proc.toLowerCase()))) {
           return { blocked: true, reason: p.name };
         }
       }
@@ -175,10 +224,27 @@ function check(cfg) {
       }
     }
   }
+
+  // 창 제목으로 가르는 것들 — 브라우저로 보는 영상이 여기 걸린다.
+  // 실행 파일을 다 읽은 뒤에 본다: 앱 이름으로 아는 편이 사유가 더 분명하기 때문이다.
+  const titles = resolveTitles(cfg);
+  if (titles.length) {
+    const title = foregroundTitle();
+    if (title) {
+      for (const p of PRESETS) {
+        if (!(cfg.presets || []).includes(p.id)) continue;
+        if ((p.titles || []).some((t) => title.includes(t.toLowerCase()))) {
+          return { blocked: true, reason: p.name };
+        }
+      }
+      const hit = titles.find((t) => title.includes(t));
+      if (hit) return { blocked: true, reason: hit };
+    }
+  }
   return { blocked: false, reason: null };
 }
 
 module.exports = {
-  check, notificationState, foregroundProcessName,
-  PRESETS, PRESET_BY_PROC, resolveApps
+  check, notificationState, foregroundProcessName, foregroundTitle,
+  PRESETS, PRESET_BY_PROC, resolveApps, resolveTitles
 };
