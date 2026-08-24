@@ -20,8 +20,12 @@
   body {
     font-family: 'Pretendard Variable', Pretendard, -apple-system, 'Segoe UI Variable Display', system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
-    display: grid;
-    place-items: center;
+    /* 세로로 쌓는다 — 단추는 내용 «위에 떠 있는» 것이 아니라 «아래에 놓이는» 것이다.
+       예전엔 .actions가 position:fixed라, 체크할 항목이 많으면 목록 마지막 줄이
+       단추 뒤로 깔려 읽을 수도 누를 수도 없었다. */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
     animation: fadein 0.55s ease both;
     cursor: default;
   }
@@ -39,7 +43,19 @@
   .backdrop.ready { opacity: 1; }
   .scrim { position: fixed; inset: 0; z-index: -1; background: rgba(16, 16, 20, 0.56); }
 
-  .stage { text-align: center; animation: rise 0.75s cubic-bezier(0.2, 0.8, 0.2, 1) both 0.1s; }
+  .stage {
+    text-align: center; animation: rise 0.75s cubic-bezier(0.2, 0.8, 0.2, 1) both 0.1s;
+    /* 남는 높이를 다 쓰되, 넘치면 이 안에서 굴린다 (창 전체는 여전히 안 굴러간다).
+       min-height:0이 없으면 flex 항목이 내용 높이 아래로 안 줄어들어 넘침이 밖으로 샌다. */
+    flex: 1 1 auto; min-height: 0; width: 100%;
+    overflow-y: auto; overscroll-behavior: contain;
+    display: flex; flex-direction: column; align-items: center;
+    /* 짧으면 가운데, 넘치면 위에서부터. safe가 없으면 넘칠 때 윗부분이 잘려 못 본다. */
+    justify-content: safe center;
+    padding: 24px 24px 6px;
+  }
+  /* 휴식 화면에서 스크롤 막대는 군더더기다 — 굴러가되 보이지는 않게 */
+  .stage::-webkit-scrollbar { width: 0; height: 0; }
   /* to를 명시해야 한다 — 생략하면 요소 자신의 opacity(0)가 종료 상태가 되어 끝까지 안 보인다 */
   @keyframes rise {
     from { opacity: 0; transform: translateY(18px) scale(0.99); }
@@ -86,6 +102,29 @@
   }
   .count small { font-size: 27px; font-weight: 420; letter-spacing: 0; color: var(--secondary); margin-left: 6px; }
 
+  /* 체크리스트가 길면 숨쉬는 원이 자리를 다 차지한다. 그때는 원을 줄여 목록에 자리를 준다 —
+     이 화면의 주인공이 «남은 시간»에서 «해야 할 것»으로 바뀌는 순간이기 때문이다. */
+  body.dense .kicker { margin-bottom: 18px; }
+  body.dense .breath { width: 148px; height: 148px; margin: 0 auto 18px; }
+  body.dense .breath .halo { inset: -14px; }
+  body.dense .count { font-size: 46px; }
+  body.dense .count small { font-size: 15px; margin-left: 4px; }
+  body.dense .headline { font-size: 19px; }
+  body.dense .list { margin-top: 16px; }
+
+  /* 그래도 안 들어가면 한 단 더 조인다. 12px 넘쳤다고 굴리게 만들면
+     «다 보이는데 왜 굴려야 하지»가 된다 — 줄이 몇이든 한눈에 들어오는 편이 낫다. */
+  body.denser .kicker { margin-bottom: 10px; }
+  body.denser .breath { width: 92px; height: 92px; margin: 0 auto 10px; }
+  body.denser .breath .halo { inset: -8px; }
+  body.denser .count { font-size: 30px; }
+  body.denser .count small { font-size: 12px; margin-left: 3px; }
+  body.denser .headline { font-size: 17px; }
+  body.denser .subline { display: none; }   /* «하나씩 눌러 체크해보세요» — 줄 모양만 봐도 안다 */
+  body.denser .list { margin-top: 10px; gap: 6px; }
+  body.denser .list .item { padding: 8px 16px 8px 10px; font-size: 14.5px; }
+  body.denser .list .item .box { width: 20px; height: 20px; }
+
   .headline { font-size: 21px; font-weight: 620; letter-spacing: -0.02em; color: var(--label); }
   .subline { font-size: 13.5px; color: var(--secondary); margin-top: 8px; }
 
@@ -117,7 +156,9 @@
   .list .item.done .box svg { opacity: 1; }
 
   .actions {
-    position: fixed; bottom: 46px; left: 0; right: 0;
+    /* 흐름 안에 둔다 — 목록이 길어도 그 아래에 놓이지, 위를 덮지 않는다 */
+    flex: none; width: 100%;
+    padding: 14px 24px 46px;
     display: flex; justify-content: center; gap: 10px;
     animation: fadein 0.7s ease both 1.3s;
   }
@@ -257,6 +298,30 @@
       host.append(el);
     });
     refreshFinish();
+    fitStage();
+  }
+
+  /**
+   * 화면에 안 들어가면 좁은 배치로 바꾼다.
+   *
+   * 항목 수로 어림잡지 않는다 — 같은 일곱 줄도 화면 높이와 배율에 따라 들어가기도,
+   * 안 들어가기도 한다. 실제로 재서 넘칠 때만 줄인다.
+   * 그래도 넘치면 .stage 안에서 굴러간다(단추는 늘 그 아래에 있다).
+   */
+  function fitStage() {
+    const stage = document.querySelector('.stage');
+    if (!stage) return;
+    // 넉넉한 배치부터 시작해, 넘칠 때만 한 단씩 조인다.
+    // 항목 수로 어림잡지 않는 이유: 같은 일곱 줄도 화면 높이와 배율에 따라
+    // 들어가기도 하고 안 들어가기도 한다.
+    const body = document.body;
+    body.classList.remove('dense', 'denser');
+    const over = () => stage.scrollHeight > stage.clientHeight + 1;
+    if (!over()) return;
+    body.classList.add('dense');
+    if (!over()) return;
+    body.classList.add('denser');
+    // 여기서도 넘치면 그때는 굴린다 — 더 조이면 읽기가 힘들어진다
   }
 
   /** 체크 진행도에 따라 완료 버튼 상태를 갱신 */
