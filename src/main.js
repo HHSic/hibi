@@ -1665,6 +1665,22 @@ function startCopy({ accountId, view, files } = {}) {
   return opened;
 }
 
+// 메일 보기 창의 «휴지통» — 옮기고 나면 그 창은 없는 메일을 보고 있으므로 닫는다
+ipcMain.handle('mail:trash', async (e) => {
+  const slot = slotOf(e);
+  if (!slot || !slot.payload || slot.payload.error) {
+    return { ok: false, message: '메일을 아직 다 읽지 못했습니다' };
+  }
+  const v = slot.payload;
+  const r = await doTrash(
+    { accountId: v.accountId, uid: v.uid, mailbox: v.mailbox, subject: v.subject }, slot.win);
+  // 물어보고 그만뒀거나 실패했으면 창을 그대로 둔다 — 옮겨졌을 때만 닫는다.
+  // (목록이 줄었는지로 판단하면 안 된다. refreshMail을 기다리지 않기 때문이다.)
+  if (r.moved && !slot.win.isDestroyed()) slot.win.close();
+  // 그만두기를 고른 것은 실패가 아니다 — 화면이 «옮기지 못했습니다»라고 하면 안 된다
+  return { ok: r.moved, cancelled: !!r.cancelled, closed: !!r.moved, message: r.message || '' };
+});
+
 // 메일 보기 창의 «복사» — 원문 버퍼가 여기(slot.files)에 있으므로 메인이 만든다
 ipcMain.handle('mail:copy', (e) => {
   const slot = slotOf(e);
@@ -1944,6 +1960,9 @@ ipcMain.handle('mail:row-menu', async (e, msg) => {
       read: !msg.seen,
       mailbox: msg.mailbox || ''
     })
+  }, {
+    label: '휴지통으로',
+    click: () => doTrash(msg, win)
   }, { type: 'separator' });
 
   // 이 메일이 규칙에 걸려서 여기 있는 것이라면, 그 규칙을 되돌리는 길이 제일 위에 와야 한다.
@@ -2323,6 +2342,54 @@ function wouldHit(rule) {
  * 조건이 얼마나 넓은지도 여기서 같이 보여준다. «제목에 안내»처럼 무심코 적은 한 마디가
  * 사내 공지까지 쓸어가는데, 숫자를 보기 전에는 그걸 알 방법이 없다.
  */
+/**
+ * 휴지통으로 옮긴다.
+ *
+ * 물어보고 옮긴다 — 목록에서 오른쪽 클릭 한 번으로 메일이 사라지면, 잘못 눌렀을 때
+ * «방금 뭐가 없어졌지»가 된다. 다만 겁주지는 않는다: 휴지통에 남으므로 되찾을 수 있다.
+ * 그 사실을 대화상자에 적어 둔다.
+ */
+async function doTrash(msg, parent) {
+  const acc = mailAccountsForUse().find((a) => a.id === msg.accountId);
+  if (!acc) {
+    notice('bad', '이 메일의 계정을 쓸 수 없습니다');
+    return { moved: false, message: '이 메일의 계정을 쓸 수 없습니다' };
+  }
+
+  const { response } = await dialog.showMessageBox(parent || undefined, {
+    type: 'question',
+    buttons: ['휴지통으로', '그만두기'],
+    defaultId: 1,
+    cancelId: 1,
+    title: '휴지통으로 옮기기',
+    message: String(msg.subject || '(제목 없음)').slice(0, 60),
+    detail: '서버의 휴지통으로 옮깁니다 — 웹메일에서도 받은편지함에서 사라집니다.\n'
+      + '완전히 지우는 것이 아니라, 휴지통에서 되찾을 수 있습니다.'
+  });
+  if (response !== 0) return { moved: false, cancelled: true };
+
+  notice('wait', '휴지통으로 옮기는 중…');
+  try {
+    const r = await mail.moveToTrash(acc, [msg.uid], { mailbox: msg.mailbox || '' });
+    if (r.already) {
+      notice('', '이미 휴지통에 있습니다');
+      return { moved: false, already: true, message: '이미 휴지통에 있습니다' };
+    }
+    evlog.log('메일', `휴지통으로 · ${r.moved}통 · ${r.mailbox}`);
+    notice('good', `휴지통으로 옮겼습니다 (${r.mailbox})`);
+    // 목록 갱신은 기다리지 않는다 — 느린 서버에서 몇십 초다.
+    // 옮겼다는 사실은 여기서 이미 확정이므로 부르는 쪽은 이 반환값을 믿으면 된다.
+    refreshMail({ force: true });
+    return { moved: true, mailbox: r.mailbox };
+  } catch (e) {
+    // 휴지통을 못 찾았거나 서버가 거부한 경우 — 지운 척하지 않는다
+    evlog.log('메일', `휴지통 실패 · ${e.message}`);
+    const message = mail.friendly(e);
+    notice('bad', message);
+    return { moved: false, message };
+  }
+}
+
 async function okToSpam(rule, parent) {
   if (!rule || rule.action !== 'spam' || rule.on === false) return true;
   const caught = wouldHit(rule);

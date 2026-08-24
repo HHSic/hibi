@@ -196,6 +196,7 @@
     <button class="seen" id="reply" style="display:none" title="답장 쓰기">답장</button>
     <button class="seen" id="copy" style="display:none" title="이 메일을 그대로 복사해 다시 씁니다">복사</button>
     <button class="seen" id="forward" style="display:none" title="전달하기">전달</button>
+    <button class="seen" id="trash" style="display:none" title="휴지통으로 옮기기 (되찾을 수 있습니다)">휴지통</button>
     <button class="seen" id="seen" style="display:none"></button>
     <button class="close" id="close" title="닫기"></button>
   </div>
@@ -505,6 +506,33 @@
         }
       };
     }
+
+    // 휴지통 — 물어보는 것도, 옮기고 창을 닫는 것도 메인이 한다.
+    // 여기서는 결과만 받아 실패했을 때 이유를 남긴다.
+    const tb = $('trash');
+    tb.style.display = '';
+    tb.onclick = async () => {
+      tb.disabled = true;
+      try {
+        const r = await window.nunsseom.mailTrash();
+        // 그만두기를 고른 것은 실패가 아니다 — 아무 말도 하지 않는다
+        if (r && r.cancelled) return;
+        if (!r) {
+          $('blocked').style.display = 'block';
+          $('blocked').textContent = '응답이 없습니다';
+        } else if (r.ok === false) {
+          $('blocked').style.display = 'block';
+          $('blocked').textContent = r.message || '옮기지 못했습니다';
+        }
+        // 옮겨졌으면 메인이 이 창을 닫는다 — 여기서 할 일이 없다
+      } catch (err) {
+        $('blocked').style.display = 'block';
+        $('blocked').textContent = '휴지통으로 옮기는 중 오류 — '
+          + (err && err.message ? err.message : String(err));
+      } finally {
+        tb.disabled = false;
+      }
+    };
   }
 
   window.nunsseom.mailViewData().then((m) => {
