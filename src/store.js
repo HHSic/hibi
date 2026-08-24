@@ -47,6 +47,12 @@ const DEFAULT_SETTINGS = {
   // 끄면 비용이 0이고, 켜져 있어도 파일 크기는 evlog가 상한을 지킨다.
   eventLog: true,
 
+  // 휴식 화면에서 «건너뛰기»와 «다 했어요»를 숨긴다.
+  // 두 단추가 있으면 알림이 뜰 때마다 반사적으로 눌러 넘기게 되고, 그러면 휴식이
+  // 이름만 남는다. 숨기면 시간이 끝날 때까지 기다린다 — 갇히지는 않는다.
+  // 타이머가 끝나면 메인이 알아서 닫는다(main.js의 tick).
+  breakNoEscape: false,
+
   // 방해 금지 — 전체화면/발표/집중지원 중이면 알림을 미룬다
   dndEnabled: true,
   dndPresets: [],      // 목록에서 켠 앱 id (dnd.PRESETS 참고)

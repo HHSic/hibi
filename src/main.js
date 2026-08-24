@@ -648,6 +648,8 @@ function buildBreakPayload(ids) {
   return {
     items, grouped,
     mode: grouped || anyLong ? 'checklist' : 'single',
+    // 켜면 «건너뛰기»·«다 했어요»를 숨긴다. 시간이 끝나면 tick()이 알아서 닫는다.
+    noEscape: !!s.breakNoEscape,
     sound: { enabled: s.soundEnabled, name: s.soundName, volume: s.soundVolume }
   };
 }

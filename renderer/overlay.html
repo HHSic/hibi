@@ -176,6 +176,8 @@
   const qs = new URLSearchParams(location.search);
   const endsAt = Number(qs.get('endsAt')) || (Date.now() + 20_000);
   const isMain = qs.get('main') === 'true';
+  // 설정이 도착하기 전까지는 «막지 않음»이 안전한 쪽이다 — 잘못 막아 갇히는 것보다 낫다
+  let noEscape = false;
   const displayId = qs.get('display');
 
   // 캡처된 바탕화면 배경
@@ -195,6 +197,16 @@
   function render(p) {
     const first = p.items[0];
     document.documentElement.style.setProperty('--tint', first.color);
+
+    // «건너뛰기»·«다 했어요»를 숨기는 설정. 두 단추가 있으면 알림이 뜰 때마다
+    // 반사적으로 눌러 넘기게 되어 휴식이 이름만 남는다.
+    // 갇히지는 않는다 — 시간이 끝나면 메인이 알아서 닫는다.
+    // «5분 뒤에»는 남긴다. 지금 당장 못 쉬는 때가 있고, 그건 넘기는 게 아니라 미루는 것이다.
+    if (p.noEscape) {
+      $('btn-finish').style.display = 'none';
+      $('btn-skip').style.display = 'none';
+      noEscape = true;
+    }
 
     // 상단 킥커 — 묶음이면 개수 표기
     const kicker = $('kicker');
@@ -281,7 +293,10 @@
   $('btn-skip').onclick = () => window.nunsseom.skip();
 
   // 키보드: Enter/Space = 완료, Esc = 건너뛰기
+  // 단추를 숨겼으면 이 지름길도 같이 막는다 — 안 그러면 Esc 한 번으로 그대로 넘어가서
+  // 숨긴 것이 아무 뜻이 없다 (단추만 감추고 길은 열어두는 셈이 된다).
   window.addEventListener('keydown', (e) => {
+    if (noEscape) return;
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); window.nunsseom.finish(); }
     else if (e.key === 'Escape') window.nunsseom.skip();
   });

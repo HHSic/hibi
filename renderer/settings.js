@@ -1276,7 +1276,7 @@ window.nunsseom.getSettings().then((d) => {
   loadBackup();
 
   for (const key of ['dndEnabled', 'autoUpdate', 'calendarBusy', 'calendarAllDay',
-                     'calendarLead', 'calendarShow', 'soundEnabled',
+                     'calendarLead', 'calendarShow', 'soundEnabled', 'breakNoEscape',
                      'mailEnabled', 'mailShow', 'mailRemoteImages', 'mailAutoBackup']) {
     bindSwitch(key);
   }
