@@ -1,7 +1,7 @@
 {
   "name": "hibi",
   "productName": "Hibi",
-  "version": "0.9.41",
+  "version": "0.9.42",
   "description": "하루의 쉼과 일정을 챙기는 데스크톱 위젯",
   "main": "src/main.js",
   "author": "hyong",
