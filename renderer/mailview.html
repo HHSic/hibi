@@ -343,6 +343,12 @@
       $('saved').textContent = '';
       return;
     }
+    if (r.kind === 'image') {
+      // 본문에 박힌 그림·큰 그림은 목록에 dataUrl이 없다. 누른 뒤에야 받아서 키운다.
+      zoom(r.dataUrl, a.filename);
+      $('saved').textContent = '';
+      return;
+    }
     if (r.kind === 'pdf') { $('saved').textContent = '새 창에서 열었습니다'; return; }
     $('saved').textContent = r.message || '미리보기를 못 합니다';
   }
@@ -353,9 +359,14 @@
     // 본문에 박힌 그림은 이미 본문에서 보이므로 여기서 또 크게 깔지 않는다
     const images = list.filter((a) => a.dataUrl && !a.inline);
     const inlineCount = list.filter((a) => a.inline).length;
-    $('atts-cap').textContent = `첨부 ${list.length}개`
-      + (inlineCount ? ` · 본문 그림 ${inlineCount}` : '')
-      + (images.length ? ` · 그림 ${images.length}` : '');
+    // 본문에 박힌 그림을 «첨부»에 넣어 세면 안 된다 — 서명에 그림이 둘 든 메일이
+    // «첨부 2개»가 되어, 붙어 온 파일이 없는데 있다고 말하는 꼴이 된다.
+    const fileCount = list.length - inlineCount;
+    $('atts-cap').textContent = [
+      fileCount ? `첨부 ${fileCount}개` : '',
+      inlineCount ? `본문 그림 ${inlineCount}` : '',
+      images.length ? `그림 ${images.length}` : ''
+    ].filter(Boolean).join(' · ') || '첨부 없음';
 
     for (const a of images) {
       const img = document.createElement('img');

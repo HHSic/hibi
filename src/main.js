@@ -3076,6 +3076,25 @@ ipcMain.handle('mail:preview-attachment', async (e, index) => {
     return { kind: 'text', text, encoding, filename: a.filename };
   }
 
+  if (kind === 'image') {
+    // 목록에는 그림을 다 실어 보내지 않는다 — 본문에 박힌 것과 아주 큰 것은 dataUrl이 없다
+    // (본문이 밀리고 틱마다 무거워진다). 그래서 눌렀을 때 여기서 만들어 준다.
+    //
+    // 이 갈래가 없어서 그림이 아래 PDF 길로 흘러들어갔다. PNG를 .pdf로 써서 열었으니
+    // 크로미움이 «PDF 문서를 로드하지 못했습니다»라고 할 수밖에 없었다.
+    return {
+      kind: 'image',
+      dataUrl: `data:${a.contentType || 'image/png'};base64,${a.content.toString('base64')}`,
+      filename: a.filename
+    };
+  }
+
+  // 여기까지 왔는데 PDF가 아니면 아래로 흘려보내지 않는다 — 아는 것만 연다.
+  // (새 형식이 kindOf에 늘어도 조용히 PDF로 열리는 일이 없게)
+  if (kind !== 'pdf') {
+    return { kind: 'none', message: '이 형식은 미리보기를 못 합니다 — 저장한 뒤 열어주세요' };
+  }
+
   // PDF — 임시 파일로 떨구고 크로미움 뷰어로 연다
   const dir = PREVIEW_DIR();
   const file = preview.tempPathFor(dir, a, '.pdf');
