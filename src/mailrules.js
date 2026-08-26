@@ -166,23 +166,37 @@ function folders(result, cap = 50, { accounts = null } = {}) {
     unread: items.filter((m) => !m.seen).length
   });
 
-  const out = [];
-  if (accounts && accounts.length) {
-    const bins = new Map(accounts.map((a) => [a.id, { name: a.name || '메일', items: [] }]));
-    const orphans = [];
-    for (const m of result.visible) {
-      const bin = bins.get(m.accountId);
-      if (bin) bin.items.push(m);
-      else orphans.push(m);   // 계정이 지워졌는데 목록에 남은 것
+  // 한 계정 몫의 칸들 — 받은 / 묶음 / 숨김.
+  // acct를 달아 둔다. 화면은 계정을 먼저 고르고 그 안에서 폴더를 고르므로,
+  // id는 «어떤 종류의 칸인가»만 뜻하고(받은·숨김·묶음) 계정은 acct로 가른다.
+  const setFor = (visible, groups, hidden, acct) => {
+    const o = [{ ...box('in', acct ? '받은' : '메일', visible), acct }];
+    for (const g of groups) {
+      if (g.items.length) o.push({ ...box('g:' + g.name, g.name, g.items), acct });
     }
-    for (const [id, bin] of bins) out.push(box('acc:' + id, bin.name, bin.items));
-    if (orphans.length) out.push(box('in', '그 밖', orphans));
-  } else {
-    out.push(box('in', '메일', result.visible));
+    // 숨길 것이 없으면 빈 폴더를 만들지 않는다 — 좁은 자리에 쓸모없는 칸이 는다
+    if (hidden.length) o.push({ ...box('hidden', '숨김', hidden), acct });
+    return o;
+  };
+
+  if (!accounts || !accounts.length) {
+    return setFor(result.visible, result.groups, result.hidden, '');
   }
-  for (const g of result.groups) out.push(box('g:' + g.name, g.name, g.items));
-  // 숨길 것이 없으면 빈 폴더를 만들지 않는다 — 좁은 자리에 쓸모없는 칸이 는다
-  if (result.hidden.length) out.push(box('hidden', '숨김', result.hidden));
+
+  const out = [];
+  const mine = (list, id) => list.filter((m) => m.accountId === id);
+  for (const a of accounts) {
+    out.push(...setFor(
+      mine(result.visible, a.id),
+      result.groups.map((g) => ({ name: g.name, items: mine(g.items, a.id) })),
+      mine(result.hidden, a.id),
+      a.id
+    ));
+  }
+  // 계정을 지웠는데 목록에 남은 메일 — 조용히 사라지면 안 된다
+  const known = new Set(accounts.map((a) => a.id));
+  const orphans = result.visible.filter((m) => !known.has(m.accountId));
+  if (orphans.length) out.push({ ...box('in', '받은', orphans), acct: '(그 밖)' });
   return out;
 }
 

@@ -162,7 +162,8 @@ const mailState = {
   known: null,          // Set<'계정:uid'> — 지난 폴링에서 본 것들
   filtered: 0,          // 이번에 화면에서 걷어낸 통수 (설정 화면에 보여준다)
   groups: [],           // 묶인 것들 [{ name, items }]
-  folders: [],          // 화면에 보일 폴더 [{ id, name, items, count, unread }]
+  folders: [],          // 화면에 보일 폴더 [{ id, acct, name, items, count, unread }]
+  accountTabs: [],      // 계정별로 나눠 볼 때의 계정 줄 [{ id, name }] — 안 나누면 빈 배열
   toRead: [],           // 규칙이 «자동 읽음»으로 지목한 것
   toSpam: [],           // 규칙이 «스팸으로»로 지목한 것
   // 보낸메일함은 폴링 때 같이 가져오지 않는다. 이 서버는 받은편지함 한 번 읽는 데도
@@ -319,11 +320,8 @@ async function refreshMail({ force = false } = {}) {
     // 폴더는 «메일 / 묶음들 / 숨김». 숨김은 want에 매이지 않는다 —
     // 무엇이 걸러졌는지 확인하러 여는 곳이라 잘려 있으면 확인이 안 된다.
     // 보낸메일함은 규칙과 무관하므로(내가 쓴 메일을 걸러낼 일은 없다) 여기서 따로 붙인다.
-    // 계정이 둘 이상이고 설정을 켰을 때만 계정별로 나눈다 —
-    // 계정이 하나인데 그 이름으로 칸을 만들면 «메일»이 사라진 것처럼 보인다.
-    const split = store.settings.mailPerAccount && accounts.length > 1
-      ? accounts.map((a) => ({ id: a.id, name: a.name || a.user }))
-      : null;
+    const split = splitAccounts(accounts);
+    mailState.accountTabs = split || [];
     mailState.folders = mailrules.folders(cut, Math.max(want, 30), { accounts: split });
     mailState.messages = cut.visible.slice(0, want);
     mailState.toRead = cut.read;
@@ -806,8 +804,11 @@ function pushTick() {
       // 받은편지함을 아직 한 번도 못 읽었으면 보낸메일함 탭도 내보내지 않는다 —
       // 그것 하나만 남으면 화면이 «보낸메일함»에서 시작하고 돌아갈 곳이 없다.
       folders: mailState.folders.length
-        ? [...mailState.folders, draftFolder(), sentFolder()].filter(Boolean)
+        ? [...mailState.folders, ...draftFolders(), ...sentFolders()]
         : [],
+      // 계정을 먼저 고르고 그 안에서 폴더를 고른다. 안 나눌 때는 빈 배열이라
+      // 화면이 계정 줄을 아예 안 그린다.
+      accounts: mailState.accountTabs || [],
       filtered: mailState.filtered
     }
     : null;
@@ -2042,6 +2043,18 @@ function rulesPayload() {
  * 서버의 Drafts가 아니라 이 PC에 적어둔 것이다 — 이 서버는 느려서
  * 손이 멈출 때마다 서버에 올리면 그게 오히려 방해가 된다.
  */
+/**
+ * 계정별로 나눠 볼 계정 목록. 안 나눌 때는 null.
+ *
+ * 계정이 하나면 나누지 않는다 — 그 이름으로 칸 하나를 만들면 «메일»이 사라진 것처럼
+ * 보이고, 고를 것이 없는 계정 줄만 자리를 차지한다.
+ */
+function splitAccounts(accounts) {
+  const list = accounts || mailAccountsForUse();
+  if (!store.settings.mailPerAccount || list.length < 2) return null;
+  return list.map((a) => ({ id: a.id, name: a.name || a.user }));
+}
+
 function draftFolder() {
   const d = store.mailDraft;
   if (!d) return null;
@@ -2068,18 +2081,38 @@ function draftFolder() {
  * 아직 안 불러왔어도 «탭»은 있어야 한다 — 없으면 누를 것이 없어서 영영 안 불러온다.
  * lazy 표시를 보고 화면이 처음 누를 때 mail:sent를 부른다.
  */
-function sentFolder() {
+function sentFolder(acct, items) {
   const s = mailState.sent;
+  const list = items || s.messages;
   return {
     id: 'sent',
-    name: '보낸메일함',
-    items: s.messages,
-    count: s.messages.length,
+    acct: acct || '',
+    name: acct ? '보낸' : '보낸메일함',
+    items: list,
+    count: list.length,
     unread: 0,                 // 내가 쓴 메일에 «안 읽음»은 뜻이 없다
     lazy: !s.at,               // 한 번도 안 불러왔다
     loading: s.loading,
     error: s.error
   };
+}
+
+/** 계정별로 볼 때는 보낸메일함도 계정마다 하나씩 — 내 회사 메일과 개인 메일은 다르다 */
+function sentFolders() {
+  const split = splitAccounts();
+  if (!split) return [sentFolder()];
+  return split.map((a) =>
+    sentFolder(a.id, mailState.sent.messages.filter((m) => m.accountId === a.id)));
+}
+
+/** 임시보관함은 한 통뿐이다 — 계정별로 볼 때는 그 초안을 쓴 계정 밑에만 둔다 */
+function draftFolders() {
+  const d = draftFolder();
+  if (!d) return [];
+  const split = splitAccounts();
+  if (!split) return [d];
+  const owner = split.find((a) => a.id === (store.mailDraft || {}).accountId) || split[0];
+  return [{ ...d, acct: owner.id }];
 }
 
 /**

@@ -546,6 +546,8 @@ function attachMailRow(row, m) {
 // 너무 넓게 잡았을 때 알아챌 방법이 없다 — 조용히 사라지는 메일이 제일 위험하다.
 // 그래서 폴더로 나눈다. 숨긴 것도 폴더 하나일 뿐이고, 언제든 열어볼 수 있다.
 let mailFolder = 'in';
+// 계정별로 나눠 볼 때 지금 고른 계정. 빈 값이면 첫 계정을 쓴다.
+let mailAccount = '';
 // 보낸메일함을 불러와 달라고 했고 아직 결과가 안 왔다.
 // 이걸 안 들고 있으면 «비어 있음»과 «아직 안 왔음»을 구별할 수 없어서,
 // 누르자마자 «보낸 메일이 없습니다»가 떴다 (실제로 그랬다).
@@ -645,12 +647,72 @@ function emptyWord(f, box) {
  * 규칙을 지워 폴더가 사라졌으면 «메일»로 돌아오고, 그 사실을 기억한다 —
  * 안 그러면 나중에 규칙을 다시 만들었을 때 엉뚱하게 숨김 폴더에서 시작한다.
  */
-function currentFolder(box) {
+/** 계정별로 나눠 보는 중인가 */
+function splitOn(box) {
+  return !!(box && box.accounts && box.accounts.length);
+}
+
+/** 지금 고른 계정 (안 나눌 때는 null) */
+function currentAccount(box) {
+  if (!splitOn(box)) return null;
+  const list = box.accounts;
+  return list.find((a) => a.id === mailAccount) || list[0];
+}
+
+/** 지금 고른 계정에 속한 폴더들 */
+function foldersOf(box) {
   const list = (box && box.folders) || [];
+  if (!splitOn(box)) return list;
+  const acc = currentAccount(box);
+  const mine = list.filter((f) => f.acct === (acc && acc.id));
+  // 그 계정 몫이 하나도 없으면(있을 수 없지만) 빈 화면 대신 전체를 보여준다
+  return mine.length ? mine : list;
+}
+
+function currentFolder(box) {
+  const list = foldersOf(box);
   const found = list.find((f) => f.id === mailFolder);
   if (found) return found;
   mailFolder = list.length ? list[0].id : 'in';
   return list[0] || null;
+}
+
+/**
+ * 계정 줄 — 계정별로 나눠 볼 때만 폴더 줄 위에 얹는다.
+ * 계정을 먼저 고르고, 그 안에서 받은·숨김·보낸을 고른다.
+ * (한 줄에 다 펼치면 계정 둘에 일곱 칸이 되어 좁은 위젯에서 읽을 수가 없다)
+ */
+function accountStrip(box, redraw) {
+  if (!splitOn(box)) return null;
+  const cur = currentAccount(box);
+  const strip = document.createElement('div');
+  strip.className = 'macts';
+  for (const a of box.accounts) {
+    // 그 계정 몫의 안 읽은 수를 계정 칩에 모아 보여준다 —
+    // 폴더를 열어보지 않고도 어느 계정에 새 메일이 있는지 알아야 한다.
+    const mine = (box.folders || []).filter((f) => f.acct === a.id);
+    const unread = mine.reduce((s, f) => s + (f.unread || 0), 0);
+    const b = document.createElement('button');
+    b.className = 'mact' + (cur && a.id === cur.id ? ' on' : '');
+    b.append(a.name);
+    if (unread) {
+      const dot = document.createElement('i');
+      dot.className = 'mdot';
+      b.append(dot);
+    }
+    b.title = `${a.name}${unread ? ` · 안 읽음 ${unread}` : ''}`;
+    b.onclick = (e) => {
+      e.stopPropagation();
+      if (mailAccount === a.id) return;
+      mailAccount = a.id;
+      // 계정을 옮기면 폴더는 그 계정의 첫 칸(받은)으로 — 앞 계정에서 «숨김»을 보고 있었다고
+      // 새 계정도 숨김으로 열면 «메일이 하나도 없다»처럼 보인다.
+      mailFolder = 'in';
+      redraw();
+    };
+    strip.append(b);
+  }
+  return strip.children.length ? strip : null;
 }
 
 /**
@@ -664,7 +726,7 @@ function folderStrip(box, redraw) {
   wrap.className = 'mailtabs';
   const strip = document.createElement('div');
   strip.className = 'mtabs';
-  for (const f of (box && box.folders) || []) {
+  for (const f of foldersOf(box)) {
     const on = f.id === (currentFolder(box) || {}).id;
     const b = document.createElement('button');
     b.className = 'mtab' + (on ? ' on' : '') + (f.id === 'hidden' ? ' dim' : '');
@@ -768,8 +830,11 @@ function renderMail(box) {
   $('mail-allread').style.display = box.unread ? '' : 'none';
   const host = $('mail-rows');
   host.textContent = '';
+  // 계정 줄이 먼저, 폴더 줄이 그 아래
+  const acts = accountStrip(box, () => renderMail(lastMailBox));
+  if (acts) host.append(acts);
   // 폴더가 «메일» 하나뿐이면 줄을 안 그린다 — 규칙을 안 쓰는 사람에게는 없던 것과 같아야 한다
-  if (folders.length > 1) {
+  if (foldersOf(box).length > 1) {
     const strip = folderStrip(box, () => renderMail(lastMailBox));
     if (strip) host.append(strip);
   }
@@ -869,8 +934,11 @@ function paintMailPanel() {
     hookMore(host, null);
     return;
   }
+  // 계정 줄이 먼저, 폴더 줄이 그 아래
+  const acts = accountStrip(box, () => { paintMailPanel(); resizeForMail(); });
+  if (acts) host.append(acts);
   // 폴더가 «메일» 하나뿐이면 줄을 안 그린다 — 규칙을 안 쓰면 없던 것과 같아야 한다
-  if (folders.length > 1) {
+  if (foldersOf(box).length > 1) {
     const strip = folderStrip(box, () => { paintMailPanel(); resizeForMail(); });
     if (strip) host.append(strip);
   }
