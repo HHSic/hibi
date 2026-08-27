@@ -571,6 +571,8 @@ const SLACK = 40;
 const moreDone = new Set();    // 서버가 «마지막»이라고 한 폴더
 const moreArmed = new Map();   // 폴더 → 바닥에서 다시 부를 준비가 됐나
 let paintedFolder = null;      // 지금 목록에 그려져 있는 폴더 (바뀌면 맨 위로 돌린다)
+let paintedSig = '';           // 지금 그려져 있는 목록의 모양 — 같으면 다시 안 그린다
+let sheetSig = '';             // 시트 목록 몫
 
 /** 새로 읽었으니 «더 없음»도 «이미 불렀음»도 푼다 */
 function rearmMore() {
@@ -829,6 +831,10 @@ function renderMail(box) {
   $('mail-ttl').textContent = box.unread ? `메일 · 안 읽음 ${box.unread}` : '메일';
   $('mail-allread').style.display = box.unread ? '' : 'none';
   const host = $('mail-rows');
+  // 시트 목록도 틱마다 다시 지으면 마우스를 올려둔 줄이 깜빡인다 — 패널과 같은 규칙
+  const sig = mailSig(box);
+  if (sig === sheetSig && host.childElementCount) return;
+  sheetSig = sig;
   host.textContent = '';
   // 계정 줄이 먼저, 폴더 줄이 그 아래
   const acts = accountStrip(box, () => renderMail(lastMailBox));
@@ -915,13 +921,42 @@ $('btn-cal').onclick = () => toggleCal();
 
 // ── 메일 패널 ──────────────────────────────────────
 // 시트를 열어야만 보이면 "안 뜬다"가 된다. 달력과 같은 방식으로 겉면에 펼친다.
+/**
+ * 지금 목록이 «무엇을 그리고 있나»를 한 줄로. 이것이 같으면 다시 그릴 이유가 없다.
+ *
+ * 틱은 1초마다 온다. 그때마다 목록을 통째로 헐고 다시 지으면
+ *  - 마우스를 올려둔 줄이 사라졌다 생겨서 깜빡인다
+ *  - 글을 끌어 고르던 것이 풀린다
+ * 그래서 바뀐 것이 있을 때만 짓는다.
+ */
+function mailSig(box) {
+  if (!box) return 'none';
+  const cur = currentFolder(box);
+  const tabs = foldersOf(box)
+    .map((f) => `${f.id}${f.name}${f.count}/${f.unread}${f.loading ? 'L' : ''}${f.lazy ? 'Z' : ''}`)
+    .join('|');
+  const accs = (box.accounts || []).map((a) => `${a.id}${a.name}`).join('|');
+  // 줄 하나하나가 그대로인지까지 본다 — 읽음이 바뀌면 색이 달라져야 한다
+  const rows = ((cur && cur.items) || [])
+    .map((m) => `${m.accountId}:${m.uid}:${m.seen ? 1 : 0}${m.byRule ? 'r' : ''}`)
+    .join(',');
+  return [mailAccount, mailFolder, box.unread, accs, tabs, rows].join('~');
+}
+
 function paintMailPanel() {
   const box = lastMailBox;
   const host = $('mp-list');
-  host.textContent = '';
+  // 머리글과 안내 줄은 언제나 새로 쓴다 — 글자만 바뀌므로 깜빡이지 않는다
   $('mp-ttl').textContent = box && box.unread ? `메일 · 안 읽음 ${box.unread}` : '메일';
   paintNote(box);
   $('mp-allread').style.display = box && box.unread ? '' : 'none';
+
+  // 목록이 그대로면 손대지 않는다. 손대는 순간 마우스가 올라간 줄이 깜빡인다.
+  const sig = mailSig(box);
+  if (sig === paintedSig && host.childElementCount) return;
+  paintedSig = sig;
+
+  host.textContent = '';
   const folders = (box && box.folders) || [];
   const cur = currentFolder(box);
   if (!folders.length) {
