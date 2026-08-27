@@ -126,6 +126,17 @@ async function refreshCalendars() {
   cal.loading = true;
   try {
     const r = await calendar.loadOccurrences(list);
+    // 한 곳도 못 받아왔는데 전에 받아둔 것이 있으면 그것을 지킨다.
+    //
+    // loadOccurrences는 그물망이 끊겨도 던지지 않는다 — 실패를 errors에 담아 돌려준다.
+    // 그래서 아래 catch가 안 걸리고, 빈 목록이 그대로 덮어써졌다. 캐시는 «켤 때»만
+    // 쓰이므로, 오프라인에서는 처음엔 보이다가 다음 폴링에 달력이 텅 비었다.
+    if (!r.sources.length && cal.sources.length) {
+      cal.errors = r.errors;
+      cal.stale = true;           // 지금 보이는 것은 마지막으로 받아둔 것이다
+      console.warn('[calendar] 못 받아왔습니다 — 저장해둔 일정을 그대로 씁니다');
+      return;
+    }
     cal.occurrences = r.occurrences;
     cal.errors = r.errors;
     cal.sources = r.sources;      // 달력에서 다른 달을 펼칠 때 쓴다
@@ -1298,6 +1309,9 @@ function calendarStatus() {
   return {
     count: cal.occurrences.length,
     fetchedAt: cal.fetchedAt,
+    // 지금 보이는 것이 «마지막으로 받아둔 것»인지. 인터넷이 끊겨도 달력은 그대로
+    // 보이므로, 그것이 최신인지 아닌지는 말해줘야 한다.
+    stale: !!cal.stale,
     errors: cal.errors.map((e) => ({ name: e.name, message: e.message })),
     current: cur ? { summary: cur.summary, end: cur.end } : null,
     next: next ? { summary: next.summary, start: next.start } : null

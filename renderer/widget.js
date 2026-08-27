@@ -569,7 +569,7 @@ let moreBusy = false;
 // 소수점 때문에 영영 안 닿는다.
 const SLACK = 40;
 const moreDone = new Set();    // 서버가 «마지막»이라고 한 폴더
-const moreArmed = new Map();   // 폴더 → 바닥에서 다시 부를 준비가 됐나
+const pulled = new Map();      // 폴더 → 바닥에서 지금까지 더 굴린 양
 let paintedFolder = null;      // 지금 목록에 그려져 있는 폴더 (바뀌면 맨 위로 돌린다)
 let paintedSig = '';           // 지금 그려져 있는 목록의 모양 — 같으면 다시 안 그린다
 let sheetSig = '';             // 시트 목록 몫
@@ -577,34 +577,48 @@ let sheetSig = '';             // 시트 목록 몫
 /** 새로 읽었으니 «더 없음»도 «이미 불렀음»도 푼다 */
 function rearmMore() {
   moreDone.clear();
-  moreArmed.clear();
+  pulled.clear();
 }
 
 /**
- * 목록 끝에 닿았으면 이전 메일을 더 불러온다.
+ * 바닥에 닿은 뒤 «한 번 더» 굴려야 이전 메일을 부른다.
  * 받은편지함과 보낸메일함에서만 한다 — 나머지는 서버에 더 부를 것이 없다.
+ *
+ * 예전엔 바닥에 닿는 순간 곧바로 불렀다. 그런데 바닥은 그냥 읽다 보면 닿는 자리라,
+ * 마지막 줄을 읽으려던 것뿐인데 느린 서버를 부르는 일이 잦았다.
+ * 이제 바닥에서 더 굴린 양을 모아 PULL_NEED를 넘을 때 부른다 — «더 볼래»라는 뜻이
+ * 분명한 손짓일 때만.
+ *
+ * 스크롤 사건이 아니라 휠을 듣는 이유: 바닥에서는 더 굴려도 scrollTop이 안 변해서
+ * 스크롤 사건으로는 «더 굴렸다»를 알 수 없다. 덤으로, 목록을 다시 그릴 때 나는
+ * 가짜 스크롤 사건에 휘말리지도 않는다.
  */
+const PULL_NEED = 120;          // 바닥에서 이만큼 더 굴려야 부른다 (휠 두어 칸)
+
 function hookMore(host, folderId) {
   // 더 부를 수 없는 폴더로 옮기면 반드시 떼준다 — 그냥 두면 숨김 폴더를 보는
   // 중에도 이전 메일을 불러온다 (실제로 그랬다).
-  if (!canMore(folderId)) { host.onscroll = null; return; }
-  host.onscroll = async () => {
+  host.onscroll = null;
+  if (!canMore(folderId)) { host.onwheel = null; return; }
+
+  host.onwheel = async (e) => {
     if (moreBusy || moreDone.has(folderId)) return;
+    // 위로 굴리면 «더 볼래»가 아니다 — 모아둔 것을 버린다
+    if (e.deltaY <= 0) { pulled.set(folderId, 0); return; }
+
     const room = host.scrollHeight - host.clientHeight;
-    // «바닥»은 끝에서 SLACK 안쪽이라는 뜻이다. 그런데 굴릴 자리 자체가 그보다 좁으면
-    // 맨 위가 곧 바닥이라 이 재기가 성립하지 않는다 — 짧은 폴더로 옮기기만 해도
-    // 손도 안 댄 채 이전 메일을 불러온다 (목록을 다시 그릴 때 스크롤이 0으로 잘리면서
-    // 사건이 하나 나기 때문이다. 폴더 탭 줄만 남아도 자리가 십몇 픽셀은 된다).
+    // 굴릴 자리가 없으면 «바닥까지 내려갔다»는 말 자체가 성립하지 않는다
     if (room <= SLACK) return;
-    const atEnd = host.scrollTop >= room - SLACK;
-    // 한 번 불러온 뒤에는 위로 올라갔다 다시 내려와야 또 부른다.
-    // 안 그러면 목록이 늘어도 여전히 바닥이라 20→40→60…으로 사슬처럼 불러온다.
-    if (moreArmed.get(folderId) === false) {
-      if (host.scrollTop < room - 120) moreArmed.set(folderId, true);
-      return;
-    }
-    if (!atEnd) return;
-    moreArmed.set(folderId, false);
+    // 진짜 바닥일 때만 센다. 여기서는 넉넉히 잡을 이유가 없다 —
+    // 사용자가 실제로 끝까지 내린 뒤라야 한다.
+    if (host.scrollTop < room - 2) { pulled.set(folderId, 0); return; }
+
+    // 휠은 기기에 따라 줄/쪽 단위로 오기도 한다 — 픽셀로 맞춘다
+    const step = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? host.clientHeight : 1;
+    const sum = (pulled.get(folderId) || 0) + e.deltaY * step;
+    if (sum < PULL_NEED) { pulled.set(folderId, sum); return; }
+    pulled.set(folderId, 0);
+
     moreBusy = true;
     try {
       const r = await window.nunsseom.mailMore(moreKind(folderId));
@@ -1005,7 +1019,7 @@ function paintMailPanel() {
   if (cur && cur.id !== paintedFolder) {
     paintedFolder = cur.id;
     host.scrollTop = 0;
-    moreArmed.set(cur.id, true);
+    pulled.set(cur.id, 0);
   }
   // 끝까지 내려가면 이전 메일을 더 불러온다
   hookMore(host, cur && cur.id);
