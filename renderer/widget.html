@@ -384,7 +384,8 @@
   .cev.mailrow.read .nm { color: var(--secondary); font-weight: 400; }
   /* 메일 폴더 줄 — 아웃룩의 폴더 창을 좁은 위젯에 맞게 한 줄로 눕힌 것.
      칸이 모자라면 접히지 않고 옆으로 굴러간다 — 접히면 위젯 높이가 들쭉날쭉해진다. */
-  .mailtabs { display: flex; align-items: center; gap: 0.125rem; margin-bottom: 0.1875rem; }
+  /* 폴더 줄도 같은 이유로 눌리면 안 된다 (목록이 길수록 더 눌린다) */
+  .mailtabs { flex: none; display: flex; align-items: center; gap: 0.125rem; margin-bottom: 0.1875rem; }
   /* 탭만 옆으로 굴러가고 ⚙는 끝에 박혀 있는다 — 폴더가 늘면 톱니가 화면 밖으로
      밀려나 필터 관리로 갈 길이 사라졌다 (넓은 폭에서는 안 보이던 문제다) */
   .mailtabs .mtabs {
@@ -417,6 +418,9 @@
   /* 계정 줄 — 폴더 줄 위에 얹는다. 계정을 먼저 고르고 그 안에서 폴더를 고른다.
      폴더 칩보다 한 단 굵게 해서 «위 단계»임이 보이게 한다. */
   .macts {
+    /* 목록(.callist)은 세로 flex다 — flex: none이 없으면 줄이 눌린다.
+       메일이 많을수록 더 눌려서, 18px짜리 칩이 6px 칸에 갇혀 아래 폴더 줄과 겹쳐 보였다. */
+    flex: none;
     display: flex; gap: 0.25rem; align-items: center;
     overflow-x: auto; scrollbar-width: none;
     padding: 0.125rem 0 0.1875rem;
