@@ -1899,7 +1899,6 @@ ipcMain.handle('mail:row-menu', async (e, msg) => {
   if (!msg || !msg.uid) return null;
   const base = mailrules.ruleFor(msg, 'hide');
   const who = base.match || '(보낸사람 모름)';
-  const short = who.length > 34 ? who.slice(0, 33) + '…' : who;
 
   const add = (action, extra) => {
     store.addMailRule({ ...base, action, ...extra });
@@ -2015,15 +2014,25 @@ ipcMain.handle('mail:row-menu', async (e, msg) => {
   // 그러면 받은편지함의 내게쓴메일·반송·사내 배포메일이 대신 숨겨지거나 스팸으로 간다.
   // (받는 사람 기준으로 규칙을 만들려면 목록이 To를 들고 있어야 하는데 지금은 From만 든다)
   if (!msg.fromSelf) {
+    // 주소를 줄마다 되풀이하지 않는다 — 다섯 줄이 다 «— ecount@ecount.com»으로 끝나면
+    // 정작 다른 부분(무엇을 하는가)이 눈에 안 들어온다. 어느 메일에서 연 메뉴인지는
+    // 방금 오른쪽 클릭한 그 줄이 말해준다. 주소는 마우스를 올리면 나온다.
     items.push(
-      { label: `숨기기 — ${short}`, click: () => add('hide') },
-      ...(base.domain ? [{ label: `숨기기 — ${base.domain} 전부`, click: () => add('hide', { match: base.domain }) }] : []),
-      { label: `알림 안 함 — ${short}`, click: () => add('mute') },
-      { label: `자동 읽음 — ${short}`, click: () => add('read') },
+      { label: '숨기기', title: `${who} 에서 오는 메일을 숨깁니다`, click: () => add('hide') },
+      ...(base.domain
+        ? [{
+          label: '전부 숨기기',
+          title: `${base.domain} — 같은 곳에서 오는 메일을 모두 숨깁니다`,
+          click: () => add('hide', { match: base.domain })
+        }]
+        : []),
+      { label: '알림 안 함', title: `${who} — 목록에는 두되 알리지 않습니다`, click: () => add('mute') },
+      { label: '자동 읽음', title: `${who} — 오는 대로 읽음으로 표시합니다`, click: () => add('read') },
       { type: 'separator' },
       {
         // 물어보는 일은 okToSpam 한 곳에서만 한다 — 입구마다 따로 두면 하나씩 빠진다
-        label: `스팸으로 보내기 — ${short}`,
+        label: '스팸으로 보내기',
+        title: `${who} — 서버의 스팸 폴더로 옮깁니다`,
         danger: true,
         click: async () => {
           const rule = { ...base, action: 'spam' };
@@ -2042,7 +2051,7 @@ ipcMain.handle('mail:row-menu', async (e, msg) => {
   // 이렇게 하면 위에서 만들어 둔 동작들을 그대로 두고 그리는 쪽만 갈아끼울 수 있다.
   const list = items.map((it, i) => (it.type === 'separator'
     ? { type: 'separator' }
-    : { id: String(i), label: it.label, danger: !!it.danger }));
+    : { id: String(i), label: it.label, title: it.title || '', danger: !!it.danger }));
   const pick = await pickFromMenu(win, list, screen.getCursorScreenPoint());
   const chosen = pick == null ? null : items[Number(pick)];
   if (chosen && typeof chosen.click === 'function') await chosen.click();

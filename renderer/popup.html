@@ -57,7 +57,8 @@
   }
 
   /* ── 물어보는 창 ── */
-  .dlg { padding: 16px 18px 14px; display: flex; flex-direction: column; gap: 0; }
+  /* 카드가 세로 flex다 — flex: none이 없으면 안엣것이 눌린다 */
+  .dlg { flex: none; padding: 16px 18px 14px; display: flex; flex-direction: column; gap: 0; }
   .dlg .ttl { font-size: 11px; font-weight: 700; color: var(--tertiary); letter-spacing: 0.02em; }
   .dlg .msg {
     margin-top: 7px; font-size: 14px; font-weight: 640; line-height: 1.45;
@@ -87,13 +88,17 @@
   .btn.bad:hover { filter: brightness(1.08); }
 
   /* ── 오른쪽 클릭 메뉴 ── */
-  .menu { padding: 5px; display: flex; flex-direction: column; overflow-y: auto; }
+  .menu { flex: 1 1 auto; min-height: 0; padding: 5px; display: flex; flex-direction: column; overflow-y: auto; }
   .menu::-webkit-scrollbar { width: 3px; }
   .menu::-webkit-scrollbar-thumb { background: var(--fill-hi); border-radius: 2px; }
   .item {
     all: unset; cursor: default;
+    /* 눌리면 글자가 위아래로 잘린다 — 목록이 길수록 더 잘린다.
+       (여기서 실제로 그랬다: 열 줄이 164px에 갇혀 한 줄이 16px이 됐다) */
+    flex: none;
     padding: 6px 10px; border-radius: 7px;
-    font-family: inherit; font-size: 12px; font-weight: 560; color: var(--label);
+    font-family: inherit; font-size: 12px; font-weight: 560; line-height: 1.5;
+    color: var(--label);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .item:hover { background: var(--fill-hi); }
