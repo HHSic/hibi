@@ -1008,8 +1008,10 @@ function setEventLog(on) {
 
 function openEventLog() {
   if (!evlog.file || !fs.existsSync(evlog.file)) {
-    dialog.showMessageBox({
-      type: 'info', title: '이벤트 기록',
+    // 트레이에서 부르므로 부모 창이 없다 — 위젯이 있으면 그 위에, 없으면 화면 한가운데
+    askUser(widgetWin && !widgetWin.isDestroyed() ? widgetWin : null, {
+      buttons: ['확인'],
+      title: '이벤트 기록',
       message: '아직 기록이 없습니다.',
       detail: '트레이 메뉴에서 «이벤트 기록»을 켜고 문제를 재현한 뒤 다시 열어보세요.'
     });
@@ -1730,40 +1732,37 @@ ipcMain.handle('compose:ask', async (_e, kind) => {
   if (kind === 'replace') {
     // «임시 저장하고 열기»는 여기서 넣지 않는다 — 칸이 하나라 새 답장을
     // 치는 순간 그게 덮인다. 할 수 없는 걸 리스트에 두면 그게 거짓말이 된다.
-    const { response } = await dialog.showMessageBox(win, {
-      type: 'question',
+    const r = await askUser(win, {
       buttons: ['버리고 열기', '그만두기'],
       defaultId: 1,
-      cancelId: 1,
+      danger: false,
       title: '메일 쓰기',
       message: '쓰던 글을 버리고 새로 여시겠습니까?',
       detail: '임시 저장은 한 통뿐이라 새 글을 쓰기 시작하면 지금 글은 사라집니다.\n'
         + '지금 글을 지키려면 «그만두기»를 누르고 먼저 보내거나 닫으세요.'
     });
-    return response === 0 ? 'discard' : 'cancel';
+    return r === 0 ? 'discard' : 'cancel';
   }
   if (kind === 'discard') {
-    const { response } = await dialog.showMessageBox(win, {
-      type: 'question',
+    const r = await askUser(win, {
       buttons: ['버리기', '그만두기'],
       defaultId: 1,
-      cancelId: 1,
       title: '새로 쓰기',
       message: '이어쓰던 글을 버릴까요?',
       detail: '빈 메일로 시작합니다. 버린 글은 되돌릴 수 없습니다.'
     });
-    return response === 0 ? 'discard' : 'cancel';
+    return r === 0 ? 'discard' : 'cancel';
   }
-  const { response } = await dialog.showMessageBox(win, {
-    type: 'question',
+  const r = await askUser(win, {
     buttons: ['임시 저장', '저장 안 함', '계속 쓰기'],
     defaultId: 0,
-    cancelId: 2,
     title: '메일 쓰기',
     message: '쓰다 만 메일을 임시 저장할까요?',
     detail: '저장하면 다음에 «쓰기»를 누를 때 이어서 씁니다.'
   });
-  return response === 0 ? 'save' : response === 1 ? 'discard' : 'cancel';
+  // 창 밖을 눌렀거나 Esc — 아무것도 안 고른 것은 «계속 쓰기»다.
+  // 글이 날아가는 쪽으로 기울면 안 된다.
+  return r === 0 ? 'save' : r === 1 ? 'discard' : 'cancel';
 });
 
 ipcMain.handle('compose:data', () => composePayload);
@@ -1874,27 +1873,26 @@ ipcMain.handle('mail:row-menu', async (e, msg) => {
 
   // 임시보관함의 줄은 메일이 아니다 — 읽음도 규칙도 뜻이 없다.
   if (msg && msg.draft) {
-    Menu.buildFromTemplate([
-      { label: '이어서 쓰기', click: () => startCompose({ kind: 'new' }) },
+    const pick = await pickFromMenu(win, [
+      { id: 'edit', label: '이어서 쓰기' },
       { type: 'separator' },
-      {
-        label: '임시 저장 버리기',
-        click: async () => {
-          const { response } = await dialog.showMessageBox(win || undefined, {
-            type: 'question',
-            buttons: ['버리기', '그만두기'],
-            defaultId: 1,
-            cancelId: 1,
-            title: '임시보관함',
-            message: '쓰다 만 글을 버릴까요?',
-            detail: '되돌릴 수 없습니다.'
-          });
-          if (response !== 0) return;
-          store.clearMailDraft();
-          notice('good', '임시 저장을 버렸습니다');
-        }
+      { id: 'drop', label: '임시 저장 버리기', danger: true }
+    ], screen.getCursorScreenPoint());
+    if (pick === 'edit') startCompose({ kind: 'new' });
+    if (pick === 'drop') {
+      const r = await askUser(win, {
+        buttons: ['버리기', '그만두기'],
+        defaultId: 0,
+        danger: true,
+        title: '임시보관함',
+        message: '쓰다 만 글을 버릴까요?',
+        detail: '되돌릴 수 없습니다.'
+      });
+      if (r === 0) {
+        store.clearMailDraft();
+        notice('good', '임시 저장을 버렸습니다');
       }
-    ]).popup({ window: win || undefined });
+    }
     return null;
   }
 
@@ -1977,6 +1975,7 @@ ipcMain.handle('mail:row-menu', async (e, msg) => {
     })
   }, {
     label: '휴지통으로',
+    danger: true,
     click: () => doTrash(msg, win)
   }, { type: 'separator' });
 
@@ -1999,6 +1998,7 @@ ipcMain.handle('mail:row-menu', async (e, msg) => {
       },
       {
         label: '이 규칙 지우기',
+        danger: true,
         click: () => {
           store.removeMailRule(mark.id);
           forgetRuleWork();
@@ -2024,6 +2024,7 @@ ipcMain.handle('mail:row-menu', async (e, msg) => {
       {
         // 물어보는 일은 okToSpam 한 곳에서만 한다 — 입구마다 따로 두면 하나씩 빠진다
         label: `스팸으로 보내기 — ${short}`,
+        danger: true,
         click: async () => {
           const rule = { ...base, action: 'spam' };
           if (await okToSpam(rule, win)) add('spam');
@@ -2036,7 +2037,15 @@ ipcMain.handle('mail:row-menu', async (e, msg) => {
   items.push(
     { label: '필터 관리…', click: openSettings }
   );
-  Menu.buildFromTemplate(items).popup({ window: win || undefined });
+
+  // 항목마다 자리 번호를 붙여 화면에 넘기고, 골라 온 번호의 click을 여기서 부른다.
+  // 이렇게 하면 위에서 만들어 둔 동작들을 그대로 두고 그리는 쪽만 갈아끼울 수 있다.
+  const list = items.map((it, i) => (it.type === 'separator'
+    ? { type: 'separator' }
+    : { id: String(i), label: it.label, danger: !!it.danger }));
+  const pick = await pickFromMenu(win, list, screen.getCursorScreenPoint());
+  const chosen = pick == null ? null : items[Number(pick)];
+  if (chosen && typeof chosen.click === 'function') await chosen.click();
   return null;
 });
 
@@ -2403,17 +2412,16 @@ async function doTrash(msg, parent) {
     return { moved: false, message: '이 메일의 계정을 쓸 수 없습니다' };
   }
 
-  const { response } = await dialog.showMessageBox(parent || undefined, {
-    type: 'question',
+  const r0 = await askUser(parent, {
     buttons: ['휴지통으로', '그만두기'],
-    defaultId: 1,
-    cancelId: 1,
+    defaultId: 0,
+    danger: true,          // 되돌릴 수 있지만 «치우는» 일이라 색으로 알린다
     title: '휴지통으로 옮기기',
     message: String(msg.subject || '(제목 없음)').slice(0, 60),
     detail: '서버의 휴지통으로 옮깁니다 — 웹메일에서도 받은편지함에서 사라집니다.\n'
       + '완전히 지우는 것이 아니라, 휴지통에서 되찾을 수 있습니다.'
   });
-  if (response !== 0) return { moved: false, cancelled: true };
+  if (r0 !== 0) return { moved: false, cancelled: true };
 
   notice('wait', '휴지통으로 옮기는 중…');
   try {
@@ -2441,11 +2449,10 @@ async function okToSpam(rule, parent) {
   if (!rule || rule.action !== 'spam' || rule.on === false) return true;
   const caught = wouldHit(rule);
   const sample = caught.slice(0, 3).map((m) => ' · ' + String(m.subject || '(제목 없음)').slice(0, 46));
-  const { response } = await dialog.showMessageBox(parent || undefined, {
-    type: 'warning',
+  const r = await askUser(parent, {
     buttons: ['스팸으로', '그만두기'],
-    defaultId: 1,
-    cancelId: 1,
+    defaultId: 0,
+    danger: true,
     title: '스팸으로 보내기',
     message: caught.length
       ? `지금 받아둔 메일 중 ${caught.length}통이 이 조건에 걸립니다.`
@@ -2455,7 +2462,7 @@ async function okToSpam(rule, parent) {
       + '화면에서만 숨기는 것이 아니라 서버의 스팸 폴더로 옮깁니다.\n'
       + '지금 있는 것과 앞으로 오는 것 모두 옮겨지고, 웹메일에서도 사라집니다.'
   });
-  return response === 0;
+  return r === 0;
 }
 
 ipcMain.handle('mail:rules', () => rulesPayload());
@@ -2933,6 +2940,109 @@ function lockToOurPage(win) {
   });
   win.webContents.on('will-attach-webview', (e) => e.preventDefault());
 }
+
+// ── 물어보는 창 · 오른쪽 클릭 메뉴 ──────────────────────
+// 앱이 온통 유리 마감인데 여기서만 윈도우 기본 상자가 튀어나오면 남의 앱처럼 보인다.
+// 파일 고르기는 그대로 둔다 — 그건 OS 것이고, 흉내 내면 오히려 낯설고 위험하다.
+const popups = new Map();   // webContents.id → { win, data, done }
+
+/**
+ * 팝업 창 하나를 띄우고 사용자가 고를 때까지 기다린다.
+ *
+ * 창을 따로 띄우는 이유: 위젯은 270px밖에 안 된다. 그 안에 겹쳐 그리면 긴 메뉴도
+ * 두 줄짜리 물음도 들어가지 않는다. 창이면 부모 밖으로 나갈 수 있다.
+ *
+ * @param at 화면 좌표 {x,y}. 주면 그 자리(메뉴), 없으면 부모 한가운데(물음).
+ */
+function openPopup(parent, data, at) {
+  return new Promise((resolve) => {
+    const win = new BrowserWindow({
+      width: 320, height: 160,
+      show: false,
+      frame: false, resizable: false, movable: false, minimizable: false, maximizable: false,
+      skipTaskbar: true,
+      // 부모 위에 뜨고, 부모를 따라 다닌다. 모달로 두지 않는 이유는
+      // 투명 창에서 모달이 그림자·둥근 모서리를 망가뜨리기 때문이다.
+      parent: parent && !parent.isDestroyed() ? parent : undefined,
+      alwaysOnTop: true,
+      ...glass.windowOptions(),
+      webPreferences: { preload: PRELOAD }
+    });
+    const id = win.webContents.id;
+    let settled = false;
+    const done = (value) => {
+      if (settled) return;
+      settled = true;
+      popups.delete(id);
+      resolve(value);
+      if (!win.isDestroyed()) win.close();
+    };
+    popups.set(id, { win, data, done, at });
+
+    // 창 밖을 누르면 그만둔 것으로 — 메뉴는 이게 없으면 빠져나갈 길이 없다
+    win.on('blur', () => done(null));
+    win.on('closed', () => done(null));
+
+    lockToOurPage(win);
+    win.loadFile(page('popup.html'), { query: glassQuery({}) });
+  });
+}
+
+/** 앱 마감의 «물어보기» — 고른 단추 번호를 준다 (그만두면 null) */
+async function askUser(parent, { title, message, detail, buttons, defaultId = 0, danger = false }) {
+  const r = await openPopup(parent, {
+    kind: 'dialog', title, message, detail, buttons, defaultId, danger
+  });
+  return typeof r === 'number' ? r : null;
+}
+
+/** 앱 마감의 오른쪽 클릭 메뉴 — 고른 항목의 id를 준다 (그만두면 null) */
+function pickFromMenu(parent, items, at) {
+  return openPopup(parent, { kind: 'menu', items }, at);
+}
+
+ipcMain.handle('popup:data', (e) => {
+  const p = popups.get(e.sender.id);
+  return p ? p.data : null;
+});
+
+// 화면이 «이만큼 필요하다»고 하면 그때 크기를 잡고 보여준다.
+// 먼저 보여주고 크기를 고치면 창이 한 번 튀어 보인다.
+ipcMain.on('popup:size', (e, { width, height }) => {
+  const p = popups.get(e.sender.id);
+  if (!p || p.win.isDestroyed()) return;
+  const cap = mailViewMax(p.win);
+  const w = Math.round(clamp(width || 320, 200, Math.min(560, cap.width)));
+  const h = Math.round(clamp(height || 160, 90, cap.height));
+
+  // 화면 밖으로 나가지 않게 — 커서 옆에 띄우는 메뉴가 특히 그렇다
+  const area = screen.getDisplayNearestPoint(
+    p.at || screen.getCursorScreenPoint()).workArea;
+  let x;
+  let y;
+  if (p.at) {
+    x = p.at.x;
+    y = p.at.y;
+  } else if (p.win.getParentWindow() && !p.win.getParentWindow().isDestroyed()) {
+    const b = p.win.getParentWindow().getBounds();
+    x = b.x + Math.round((b.width - w) / 2);
+    y = b.y + Math.round((b.height - h) / 2);
+  } else {
+    x = area.x + Math.round((area.width - w) / 2);
+    y = area.y + Math.round((area.height - h) / 2);
+  }
+  x = Math.round(clamp(x, area.x, area.x + area.width - w));
+  y = Math.round(clamp(y, area.y, area.y + area.height - h));
+
+  p.win.setBounds({ x, y, width: w, height: h });
+  p.win.show();
+  p.win.focus();
+});
+
+ipcMain.on('popup:pick', (e, value) => {
+  const p = popups.get(e.sender.id);
+  if (p) p.done(value === undefined ? null : value);
+});
 
 let mailViewSeq = 0;   // 늦게 도착한 예전 요청이 지금 보고 있는 메일을 덤어쓰지 못하게
 

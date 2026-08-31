@@ -108,6 +108,11 @@ contextBridge.exposeInMainWorld('nunsseom', {
   mailOpen: (msg) => ipcRenderer.invoke('mail:open', msg),
   mailViewData: () => ipcRenderer.invoke('mail:view-data'),
   mailViewClose: () => ipcRenderer.send('mail:view-close'),
+  // 물어보는 창 · 오른쪽 클릭 메뉴 (앱 마감으로 그린다)
+  popupData: () => ipcRenderer.invoke('popup:data'),
+  popupSize: (s) => ipcRenderer.send('popup:size', s),
+  popupPick: (v) => ipcRenderer.send('popup:pick', v),
+
   mailCopy: () => ipcRenderer.invoke('mail:copy'),
   mailTrash: () => ipcRenderer.invoke('mail:trash'),
   mailSaveAttachment: (i) => ipcRenderer.invoke('mail:save-attachment', i),

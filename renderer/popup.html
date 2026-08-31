@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none';
+               script-src file: 'unsafe-inline';
+               style-src file: 'unsafe-inline';
+               font-src file:;">
+<title>Hibi</title>
+<link rel="stylesheet" href="../assets/font/pretendard.css">
+<style>
+  /* 앱과 같은 유리 마감 — 물어보는 창만 윈도우 기본 모양이면 그 순간 남의 앱처럼 보인다 */
+  :root {
+    --accent: #4fc3a8;
+    --scrim-a: 0.92;
+    --scrim: rgba(26, 26, 30, var(--scrim-a));
+    --label: rgba(255, 255, 255, 0.96);
+    --secondary: rgba(235, 235, 245, 0.62);
+    --tertiary: rgba(235, 235, 245, 0.34);
+    --fill: rgba(255, 255, 255, 0.07);
+    --fill-hi: rgba(255, 255, 255, 0.16);
+    --hairline: rgba(255, 255, 255, 0.16);
+    --separator: rgba(255, 255, 255, 0.10);
+    --danger: #ff6b6b;
+  }
+  :root[data-theme="light"] {
+    --accent: #23a58a;
+    --scrim: rgba(250, 250, 252, var(--scrim-a));
+    --label: rgba(0, 0, 0, 0.90);
+    --secondary: rgba(60, 60, 67, 0.62);
+    --tertiary: rgba(60, 60, 67, 0.40);
+    --fill: rgba(0, 0, 0, 0.05);
+    --fill-hi: rgba(0, 0, 0, 0.10);
+    --hairline: rgba(0, 0, 0, 0.14);
+    --separator: rgba(60, 60, 67, 0.13);
+    --danger: #d93636;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: transparent; }
+  body {
+    font-family: 'Pretendard Variable', Pretendard, -apple-system, 'Segoe UI Variable Display', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    color: var(--label);
+    /* 창 바깥으로 그림자를 드리우려면 안쪽에 투명 여백이 있어야 한다 (다른 창과 같은 규칙) */
+    padding: var(--inset, 12px);
+    user-select: none;
+    cursor: default;
+  }
+  .card {
+    width: 100%; height: 100%;
+    background: var(--scrim);
+    border-radius: var(--r, 16px);
+    overflow: hidden;
+    box-shadow: inset 0 0 0 0.5px var(--hairline), 0 10px 30px rgba(0, 0, 0, 0.45);
+    display: flex; flex-direction: column;
+  }
+
+  /* ── 물어보는 창 ── */
+  .dlg { padding: 16px 18px 14px; display: flex; flex-direction: column; gap: 0; }
+  .dlg .ttl { font-size: 11px; font-weight: 700; color: var(--tertiary); letter-spacing: 0.02em; }
+  .dlg .msg {
+    margin-top: 7px; font-size: 14px; font-weight: 640; line-height: 1.45;
+    word-break: keep-all; overflow-wrap: anywhere;
+  }
+  .dlg .sub {
+    margin-top: 8px; font-size: 12px; line-height: 1.6; color: var(--secondary);
+    white-space: pre-wrap; word-break: keep-all; overflow-wrap: anywhere;
+  }
+  .dlg .row {
+    margin-top: 16px; display: flex; gap: 7px; justify-content: flex-end; flex-wrap: wrap;
+  }
+  .btn {
+    all: unset; cursor: default; flex: none;
+    padding: 7px 14px; border-radius: 9px;
+    font-family: inherit; font-size: 12.5px; font-weight: 640;
+    color: var(--label); background: var(--fill);
+    box-shadow: inset 0 0 0 0.5px var(--hairline);
+  }
+  .btn:hover { background: var(--fill-hi); }
+  .btn:focus-visible { box-shadow: inset 0 0 0 1.5px var(--accent); }
+  /* 기본 단추 — 그냥 엔터를 눌렀을 때 무엇이 일어나는지 눈으로 보여야 한다 */
+  .btn.go { background: var(--accent); color: #fff; box-shadow: none; }
+  .btn.go:hover { filter: brightness(1.08); }
+  /* 되돌릴 수 없는 것은 색으로도 말해준다 */
+  .btn.bad { background: var(--danger); color: #fff; box-shadow: none; }
+  .btn.bad:hover { filter: brightness(1.08); }
+
+  /* ── 오른쪽 클릭 메뉴 ── */
+  .menu { padding: 5px; display: flex; flex-direction: column; overflow-y: auto; }
+  .menu::-webkit-scrollbar { width: 3px; }
+  .menu::-webkit-scrollbar-thumb { background: var(--fill-hi); border-radius: 2px; }
+  .item {
+    all: unset; cursor: default;
+    padding: 6px 10px; border-radius: 7px;
+    font-family: inherit; font-size: 12px; font-weight: 560; color: var(--label);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .item:hover { background: var(--fill-hi); }
+  .item.bad { color: var(--danger); }
+  .item.off { color: var(--tertiary); }
+  .sep { height: 0.5px; background: var(--separator); margin: 4px 8px; flex: none; }
+</style>
+</head>
+<body>
+<div class="card" id="card"></div>
+<script src="popup.js"></script>
+</body>
+</html>
