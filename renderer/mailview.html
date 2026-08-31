@@ -248,7 +248,11 @@
   const head = document.querySelector('.head');
   let press = null;
   head.addEventListener('pointerdown', async (e) => {
-    if (e.button !== 0 || e.target.closest('#close')) return;
+    // 머리글의 단추는 전부 «누르는 것»이지 «끄는 곳»이 아니다.
+    // 예전엔 닫기만 빼놨는데, 그러면 답장·전달·휴지통·읽음을 누르는 순간
+    // 아래 setPointerCapture가 포인터를 머리글로 낚아채서 그 단추는 pointerup을
+    // 못 받는다 — 클릭이 아예 안 생겨 «눌러도 아무 일이 없는» 상태가 된다.
+    if (e.button !== 0 || e.target.closest('button')) return;
     const b = await window.nunsseom.mailViewBounds();
     press = { sx: e.screenX, sy: e.screenY, x: b.x, y: b.y };
     try { head.setPointerCapture(e.pointerId); } catch {}
