@@ -51,7 +51,15 @@ function run(file) {
     p.stdout.on('data', (d) => { out += d; });
     p.stderr.on('data', (d) => { out += d; });
     let timedOut = false;
-    const kill = setTimeout(() => { timedOut = true; p.kill('SIGKILL'); }, LIMIT_MS);
+    // 윈도우에서 shell:true 로 띄우면 p 는 cmd 껍데기다. 그것만 죽이면 electron 은
+    // 그대로 남아 시간 제한이 무의미해진다 (실제로 한 시험이 27분을 붙잡았다).
+    // 자식까지 통째로 죽인다.
+    const killTree = () => {
+      if (process.platform !== 'win32') { p.kill('SIGKILL'); return; }
+      try { require('child_process').execSync(`taskkill /T /F /PID ${p.pid}`, { stdio: 'ignore' }); }
+      catch { p.kill('SIGKILL'); }
+    };
+    const kill = setTimeout(() => { timedOut = true; killTree(); }, LIMIT_MS);
     p.on('close', (code) => {
       clearTimeout(kill);
       // Electron 이 스스로 끝나기 전에 GPU 프로세스가 먼저 죽는 일이 있어,
