@@ -93,6 +93,7 @@ process.on('unhandledRejection', (e) => {
 const ICON = path.join(__dirname, '..', 'assets', 'tray.png');
 // 카드 기준 176x84 ~ 640x520. 상한이 낮으면 크게 쓰던 사람이 리사이즈에서 벽에 막힌다.
 const WIDGET_MIN = { width: 176 + PAD, height: 84 + PAD_H };
+// 세로 상한은 화면에 맞춰 잡는다 — widgetMax() 참고. 여기 값은 그 아래 한계다.
 const WIDGET_MAX = { width: 640 + PAD, height: 520 + PAD_H };
 const WIDGET_DEFAULT = { width: 244 + PAD, height: 110 + PAD_H };
 const SNOOZE_MS = 5 * 60_000;
@@ -562,8 +563,37 @@ function holdReason(needMs = 0) {
   return reason;
 }
 
+/**
+ * 위젯이 커질 수 있는 한계.
+ *
+ * 세로는 화면에 맞춰 늘린다. 예전엔 520px로 박아 두었는데, 작업 영역이 1392px인
+ * 화면에서도 520이라 타이머·메일·달력을 다 켜면 달력 아래가 잘렸다.
+ * 화면이 크면 그만큼 크게 쓸 수 있어야 한다.
+ *
+ * 위젯이 놓인 화면을 기준으로 본다 — 노트북 화면과 외부 모니터는 크기가 다르고,
+ * 위젯은 그 사이를 옮겨 다닌다.
+ */
+function widgetMax() {
+  let d = null;
+  try {
+    d = widgetWin && !widgetWin.isDestroyed()
+      ? screen.getDisplayMatching(widgetWin.getBounds())
+      : screen.getPrimaryDisplay();
+  } catch {
+    d = screen.getPrimaryDisplay();
+  }
+  const wa = d.workAreaSize;
+  return {
+    width: Math.max(WIDGET_MIN.width, Math.min(WIDGET_MAX.width, wa.width - 40)),
+    // 화면을 다 덮는 것은 위젯이 아니다. 작업 영역의 85%까지, 그리고 예전 상한보다
+    // 작아지지는 않게 (작은 화면에서 오히려 줄어들면 쓰던 사람이 손해다).
+    height: Math.max(WIDGET_MAX.height, Math.min(Math.round(wa.height * 0.85), wa.height - 40))
+  };
+}
+
 // ── 위젯 ──────────────────────────────────────────────────
 function createWidget() {
+  const { width: MAXW, height: MAXH } = widgetMax();
   const pos = store.widgetPos;
   const size = store.widgetSize || WIDGET_DEFAULT;
   const { width: sw } = screen.getPrimaryDisplay().workAreaSize;
@@ -572,19 +602,19 @@ function createWidget() {
   // 실제 크기(getSize)를 되읽어 쓰면 안 된다 — 배율이 100%가 아닐 때
   // 창을 옮길 때마다 실제 크기가 1px씩 부풀어, 그 값을 다시 쓰면 끝없이 자란다.
   widgetSize = {
-    width: Math.round(clamp(size.width, WIDGET_MIN.width, WIDGET_MAX.width)),
-    height: Math.round(clamp(size.height, WIDGET_MIN.height, WIDGET_MAX.height))
+    width: Math.round(clamp(size.width, WIDGET_MIN.width, MAXW)),
+    height: Math.round(clamp(size.height, WIDGET_MIN.height, MAXH))
   };
 
   widgetWin = new BrowserWindow({
-    width: clamp(size.width, WIDGET_MIN.width, WIDGET_MAX.width),
-    height: clamp(size.height, WIDGET_MIN.height, WIDGET_MAX.height),
+    width: clamp(size.width, WIDGET_MIN.width, MAXW),
+    height: clamp(size.height, WIDGET_MIN.height, MAXH),
     x: pos ? pos.x : sw - size.width - 20,
     y: pos ? pos.y : 20,
     minWidth: WIDGET_MIN.width,
     minHeight: WIDGET_MIN.height,
-    maxWidth: WIDGET_MAX.width,
-    maxHeight: WIDGET_MAX.height,
+    maxWidth: MAXW,
+    maxHeight: MAXH,
     frame: false,
     // OS 네이티브 리사이즈는 쓰지 않는다.
     // 투명·프레임 없는 창을 배율 150%에서 네이티브로 리사이즈하면, 버튼을 누르고
@@ -602,7 +632,9 @@ function createWidget() {
       radius: String(store.settings.radius),
       calpanel: store.settings.calendarPanel ? '1' : '',
       calmode: store.settings.calendarMode || 'month',
-      mailpanel: store.settings.mailPanel ? '1' : ''
+      mailpanel: store.settings.mailPanel ? '1' : '',
+      innerh: store.settings.panelInnerH ? String(store.settings.panelInnerH) : '',
+      mailh: store.settings.panelMailH ? String(store.settings.panelMailH) : ''
     })
   });
   // 창은 기록을 켠 뒤에 만들어질 수 있다 — 로드가 끝나면 현재 상태를 알린다
@@ -627,9 +659,11 @@ function createWidget() {
   // 네이티브 드래그 중에는 min/max가 늘 지켜지지는 않는다 (특히 배율이 100%가 아닐 때).
   // 드래그가 끝난 뒤에 한 번만 바로잡는다 — 드래그 중에 고치면 OS와 싸워 창이 튄다.
   widgetWin.on('resized', () => {
+    const { height: MAXH } = widgetMax();
+
     const [width, height] = widgetWin.getSize();
-    const w = Math.round(clamp(width, WIDGET_MIN.width, WIDGET_MAX.width));
-    const h = Math.round(clamp(height, WIDGET_MIN.height, WIDGET_MAX.height));
+    const w = Math.round(clamp(width, WIDGET_MIN.width, MAXW));
+    const h = Math.round(clamp(height, WIDGET_MIN.height, MAXH));
     evlog.log('창', `resized(끝) ${width}x${height}`
       + (w !== width || h !== height ? ` → 범위로 되돌림 ${w}x${h}` : ''));
     if (w !== width || h !== height) widgetWin.setSize(w, h);
@@ -1371,15 +1405,28 @@ ipcMain.handle('cal:new-event', (_e, { start, end }) => {
  * 폭에 따라 달라져서 여기서 계산하면 어긋난다.
  */
 let widgetBaseHeight = null;
-const panelHeights = { cal: 0, mail: 0 };   // 패널이 둘이라 각자 얼마나 쓰는지 따로 센다
-ipcMain.on('cal:panel', (_e, { on, needed, which }) => {
+const panelHeights = { cal: 0, mail: 0, fix: 0, calNeeded: -1 };   // 패널이 둘이라 각자 얼마나 쓰는지 따로 센다
+ipcMain.on('cal:panel', (_e, { on, needed, short, which, pinned }) => {
   if (!widgetWin || widgetWin.isDestroyed() || !widgetSize) return;
+  const { height: MAXH } = widgetMax();
+
   panelHeights[which === 'mail' ? 'mail' : 'cal'] = on ? (needed || 0) : 0;
-  const extra = panelHeights.cal + panelHeights.mail;
+  // 사람이 칸 사이를 끌어 높이를 정해 두었으면 창 높이는 건드리지 않는다.
+  // 달력을 다시 그릴 때마다 «내용에 맞춘 높이»로 되돌리면, 방금 넓혀 둔 메일 칸이
+  // 도로 좁아진다. 창 크기는 그때부터 가장자리를 끌어 정한다.
+  if (pinned) return;
+
+  // 그려본 뒤 «모자란 만큼»을 채운다. 합만으로는 몇 px씩 어긋나 달력 아래가 잘렸다.
+  // 달력 내용이 달라지면(달을 넘기거나 주↔월) 다시 재야 하므로 보정값을 버린다.
+  if (which !== 'mail') {
+    if (needed !== panelHeights.calNeeded) { panelHeights.calNeeded = needed; panelHeights.fix = 0; }
+    if (short > 0) panelHeights.fix += short;
+  }
+  const extra = panelHeights.cal + panelHeights.mail + (panelHeights.cal ? panelHeights.fix : 0);
   if (extra > 0) {
     if (widgetBaseHeight == null) widgetBaseHeight = widgetSize.height;
     const h = Math.round(clamp(widgetBaseHeight + extra + 8,
-      WIDGET_MIN.height, WIDGET_MAX.height));
+      WIDGET_MIN.height, MAXH));
     widgetSize = { ...widgetSize, height: h };
   } else {
     if (widgetBaseHeight == null) return;
@@ -1399,9 +1446,11 @@ ipcMain.on('widget:hide', () => widgetWin && widgetWin.hide());
 
 ipcMain.on('widget:resize', (_e, { width, height }) => {
   if (!widgetWin || widgetWin.isDestroyed()) return;
+  const { width: MAXW, height: MAXH } = widgetMax();
+
   widgetWin.setSize(
-    Math.round(clamp(width, WIDGET_MIN.width, WIDGET_MAX.width)),
-    Math.round(clamp(height, WIDGET_MIN.height, WIDGET_MAX.height))
+    Math.round(clamp(width, WIDGET_MIN.width, MAXW)),
+    Math.round(clamp(height, WIDGET_MIN.height, MAXH))
   );
 });
 ipcMain.handle('widget:get-size', () => {
@@ -1417,8 +1466,10 @@ ipcMain.handle('widget:get-bounds', () => {
 // 모서리가 제자리에 있어야 하므로, 크기가 한계에 걸린 만큼 좌표를 되돌린다.
 ipcMain.on('widget:set-bounds', (_e, { x, y, width, height, dir }) => {
   if (!widgetWin || widgetWin.isDestroyed()) return;
-  const w = Math.round(clamp(width, WIDGET_MIN.width, WIDGET_MAX.width));
-  const h = Math.round(clamp(height, WIDGET_MIN.height, WIDGET_MAX.height));
+  const { width: MAXW, height: MAXH } = widgetMax();
+
+  const w = Math.round(clamp(width, WIDGET_MIN.width, MAXW));
+  const h = Math.round(clamp(height, WIDGET_MIN.height, MAXH));
   const nx = Math.round(String(dir).includes('w') ? x + (width - w) : x);
   const ny = Math.round(String(dir).includes('n') ? y + (height - h) : y);
   widgetSize = { width: w, height: h };   // 이후 이동은 이 크기를 못박는다

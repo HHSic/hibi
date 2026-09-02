@@ -288,10 +288,10 @@
   }
   .card.calon .cal:not(.mailpanel) { display: flex; }
   .card.mailon .mailpanel { display: flex; }
-  .card.mailon:not(.calon) { grid-template-rows: min-content 1fr; }
+  .card.mailon:not(.calon) { grid-template-rows: var(--inner-h, min-content) 1fr; }
   /* 카드는 grid다 — 위쪽(타이머)은 제 높이만, 남는 높이는 달력이 갖는다.
      flex 속성을 써 봐야 grid 자식에겐 아무 효력이 없다. */
-  .card.calon { grid-template-rows: min-content 1fr; }
+  .card.calon { grid-template-rows: var(--inner-h, min-content) 1fr; }
   /* 둘 다 켜면 세로가 모자란다.
      행을 안 정해두면 달력이 제 높이를 통째로 가져가고 메일은 «1fr = 남은 것 = 0»이 되어
      머리글만 남은 채 달력 위에 겹쳐 그려진다.
@@ -302,11 +302,28 @@
      main은 창 높이를 «각 패널이 실제로 보고한 높이»의 합으로 잡으므로, 여기서도 같은
      숫자를 써야 둘이 맞는다. 메일의 상한도 main의 MAIL_PANEL_MAX(300px)와 같게 둔다. */
   .card.mailon.calon {
-    grid-template-rows: min-content auto minmax(0, 1fr);
+    grid-template-rows: var(--inner-h, min-content) var(--mail-h, auto) minmax(0, 1fr);
   }
   .card.mailon.calon .mailpanel { max-height: 300px; }
   .card.mailon.calon .mailpanel,
   .card.mailon.calon .cal:not(.mailpanel) { min-height: 0; }
+
+  /* 칸 사이를 끌어 세로 길이를 바꾼다.
+     칸을 grid 줄로 하나 더 두는 대신, 아래 칸의 위 경계에 얇게 얹었다 —
+     줄을 늘리면 켜고 끄는 조합마다 grid-template-rows 를 다 고쳐야 한다.
+     평소엔 안 보이고, 가져다 대면 선이 뜬다. */
+  .split {
+    position: absolute; top: -4px; left: 0; right: 0; height: 9px;
+    cursor: ns-resize; z-index: 3;
+  }
+  .split::after {
+    content: ""; position: absolute; left: 12px; right: 12px; top: 4px; height: 1px;
+    background: var(--fill-hi); opacity: 0; transition: opacity 0.12s;
+  }
+  .split:hover::after, .split.on::after { opacity: 1; }
+  .card.mailon .mailpanel, .card.calon .cal { position: relative; }
+  /* 첫 칸(쉬는 칸) 위에는 손잡이가 없다 — 위는 창 가장자리다 */
+  .card:not(.mailon):not(.calon) .split { display: none; }
 
   /* 달력은 칸이 정사각형이라 높이를 줄일 수 없다 — 대신 세로로 굴려 아래 주도 볼 수 있게 */
   .card.mailon.calon .cal:not(.mailpanel) { overflow-y: auto; }
@@ -693,6 +710,7 @@
 
     <!-- 메일 — 시트를 열지 않아도 보이도록 카드 안에서 아래로 늘어난다 -->
     <div class="cal mailpanel" id="mailpanel">
+      <div class="split" id="grip-inner" title="끌어서 위 칸 높이 조절 · 두 번 누르면 되돌리기"></div>
       <div class="calnav">
         <span class="cttl" id="mp-ttl">메일</span>
         <span class="note" id="mp-note"></span>
@@ -705,6 +723,7 @@
 
     <!-- 달력 — 별도 창이 아니라 카드 안에서 아래로 늘어난다 -->
     <div class="cal" id="cal">
+      <div class="split" id="grip-mail" title="끌어서 위 칸 높이 조절 · 두 번 누르면 되돌리기"></div>
       <div class="calnav">
         <button id="cal-prev" title="이전">‹</button>
         <span class="cttl" id="cal-ttl"></span>

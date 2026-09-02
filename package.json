@@ -13,7 +13,8 @@
     "pack": "electron-builder --win --dir",
     "ship": "node scripts/ship.js",
     "icon": "electron scripts/make-icon.js",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "node scripts/test.js"
   },
   "devDependencies": {
     "electron": "^33.0.0",

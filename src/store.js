@@ -100,6 +100,11 @@ const DEFAULT_SETTINGS = {
   stocksIndexes: true,     // 코스피·코스닥·나스닥·S&P 500도 같이
   stocksSize: null,        // 창을 마지막으로 조절한 크기
 
+  // 위젯 칸 세로 길이. null 이면 «알아서» — 쉬는 칸은 내용만큼, 메일은 내용만큼(300px까지),
+  // 달력은 남는 만큼. 사람이 칸 사이를 끌면 그 칸의 픽셀 값이 여기 박힌다.
+  panelInnerH: null,
+  panelMailH: null,
+
   // 휴식 화면 등장 연출. 기본 연출은 renderer/enter.js 의 LIST,
   // 직접 넣은 것은 'my:<id>' 꼴로 enterCustom 을 가리킨다.
   overlayEnter: 'fade',

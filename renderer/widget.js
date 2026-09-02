@@ -921,7 +921,11 @@ function resizeForCal() {
   const on = calCard.classList.contains('calon');
   requestAnimationFrame(() => {
     const needed = on ? Math.ceil(calEl.scrollHeight) : 0;
-    window.nunsseom.calPanel({ on, needed });
+    // 각 칸이 «얼마나 필요한지»를 더해 창 높이를 잡는데, 그 합이 실제 배치와 늘 맞지는
+    // 않는다 — 메일 칸은 scrollHeight 가 제 여백을 덜 세어 27px이라 말하고 실제로는
+    // 48px을 쓴다. 그래서 그려본 뒤 «모자란 만큼»을 같이 보내 그것만큼 더 받는다.
+    const short = on ? Math.max(0, calEl.scrollHeight - calEl.clientHeight) : 0;
+    window.nunsseom.calPanel({ on, needed, short, pinned: pinnedAny() });
   });
 }
 
@@ -1048,9 +1052,98 @@ function resizeForMail() {
   const on = mailCard.classList.contains('mailon');
   requestAnimationFrame(() => {
     const needed = on ? Math.min(MAIL_PANEL_MAX, Math.ceil($('mailpanel').scrollHeight)) : 0;
-    window.nunsseom.calPanel({ on, needed, which: 'mail' });
+    window.nunsseom.calPanel({ on, needed, which: 'mail', pinned: pinnedAny() });
   });
 }
+
+/**
+ * 칸 사이를 끌어 세로 길이를 바꾼다.
+ *
+ * 창 높이는 그대로 두고 «나누는 비율»만 바꾼다 — 끌 때마다 창까지 자라면
+ * 화면을 잡아먹는다. 늘어난 만큼은 달력이 내주고, 달력이 최소에 닿으면 거기서 멈춘다.
+ *
+ * 한 번이라도 직접 조절하면 자동 맞춤은 멈춘다. 안 그러면 달력을 다시 그릴 때마다
+ * «내용에 맞춘 높이»로 창이 되돌아가, 방금 넓혀 둔 메일 칸이 도로 좁아진다.
+ * 두 번 누르면 그 칸만 다시 «알아서»로 돌아간다.
+ */
+const SPLIT = {
+  inner: { css: '--inner-h', key: 'panelInnerH', el: () => document.querySelector('.inner'), min: 64 },
+  mail: { css: '--mail-h', key: 'panelMailH', el: () => $('mailpanel'), min: 40 }
+};
+const CAL_MIN = 90;   // 달력이 이보다 좁아지면 주 이름만 남아 쓸모가 없다
+
+/**
+ * 이 손잡이가 잡는 «위 칸».
+ * 메일 칸 위는 늘 쉬는 칸이지만, 달력 칸 위는 메일이 꺼져 있으면 쉬는 칸이다.
+ * 고정으로 두면 메일을 껐을 때 달력 손잡이가 아무것도 안 움직인다.
+ */
+function splitAbove(gripId) {
+  if (gripId === 'grip-inner') return 'inner';
+  return calCard.classList.contains('mailon') ? 'mail' : 'inner';
+}
+
+/**
+ * 남는 높이를 내주는 칸 — 맨 아래 켜진 칸이 늘 «1fr»이라 그것이 준다.
+ * 위 칸을 늘리는 만큼 이 칸이 줄고, 최소에 닿으면 거기서 멈춘다.
+ */
+function splitElastic() {
+  if (calCard.classList.contains('calon')) return { el: $('cal'), min: CAL_MIN };
+  if (calCard.classList.contains('mailon')) return { el: $('mailpanel'), min: SPLIT.mail.min };
+  return null;
+}
+
+function pinnedAny() {
+  return !!(calCard.style.getPropertyValue('--inner-h') || calCard.style.getPropertyValue('--mail-h'));
+}
+
+function setSplit(which, px) {
+  const s = SPLIT[which];
+  if (px == null) calCard.style.removeProperty(s.css);
+  else calCard.style.setProperty(s.css, `${Math.round(px)}px`);
+  window.nunsseom.setApp({ [s.key]: px == null ? null : Math.round(px) });
+}
+
+function bindSplit(id) {
+  const grip = $(id);
+  if (!grip) return;
+  grip.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();       // 안 막으면 창이 통째로 끌려간다
+    const which = splitAbove(id);
+    const s = SPLIT[which];
+    const el = s.el();
+    const flex = splitElastic();
+    if (!el || !flex || flex.el === el) return;
+    const y0 = e.clientY;
+    const h0 = el.getBoundingClientRect().height;
+    const room = Math.max(0, flex.el.getBoundingClientRect().height - flex.min);
+    grip.classList.add('on');
+    // 손잡이는 9px밖에 안 된다 — 조금만 빨리 끌어도 포인터가 밖으로 나간다.
+    // 그래서 창 전체에서 듣는다 (setPointerCapture 는 창을 벗어나면 놓친다).
+    const move = (ev) => {
+      const want = h0 + (ev.clientY - y0);
+      calCard.style.setProperty(s.css, `${Math.round(Math.max(s.min, Math.min(h0 + room, want)))}px`);
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      grip.classList.remove('on');
+      const now = calCard.style.getPropertyValue(s.css);
+      if (now) window.nunsseom.setApp({ [s.key]: parseInt(now, 10) });
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  });
+  // 두 번 누르면 «알아서»로
+  grip.addEventListener('dblclick', (e) => { e.stopPropagation(); setSplit(splitAbove(id), null); });
+}
+
+bindSplit('grip-inner');
+bindSplit('grip-mail');
+
+// 지난번에 끌어 둔 높이를 이어간다
+if (params.get('innerh')) calCard.style.setProperty('--inner-h', `${parseInt(params.get('innerh'), 10)}px`);
+if (params.get('mailh')) calCard.style.setProperty('--mail-h', `${parseInt(params.get('mailh'), 10)}px`);
 
 function toggleMail(force) {
   const on = force !== undefined ? force : !mailCard.classList.contains('mailon');
