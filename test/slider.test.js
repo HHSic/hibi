@@ -42,10 +42,6 @@ app.whenReady().then(async () => {
         appearance: cs.appearance || cs.webkitAppearance,
         pct: el.style.getPropertyValue('--fill-pct').trim(),
         value: el.value, min: el.min, max: el.max,
-        // 정말 «칠해지는지»를 본다 — 없는 변수를 하나 쓰면 background 선언 전체가
-        // 무효가 되어 막대가 통째로 사라진다. 값만 보고 넘어가면 못 잡는다.
-        track: getComputedStyle(el, '::-webkit-slider-runnable-track').backgroundImage,
-        thumb: getComputedStyle(el, '::-webkit-slider-thumb').backgroundColor,
         h: Math.round(el.getBoundingClientRect().height),
         w: Math.round(el.getBoundingClientRect().width)
       });
@@ -57,10 +53,10 @@ app.whenReady().then(async () => {
   ok(r.length >= 7, `슬라이더 ${r.length}개 (알림마다 주기·길이가 더 있다)`, r.length);
   ok(r.every((x) => x.appearance === 'none'), '윈도우 기본 막대를 안 쓴다', r.map((x) => x.appearance));
   ok(r.every((x) => /%$/.test(x.pct)), '채운 길이가 전부 정해져 있다', r.map((x) => x.pct));
-  ok(r.every((x) => /linear-gradient/.test(x.track || '')),
-    '막대가 실제로 칠해진다 (사라지지 않았다)', [...new Set(r.map((x) => x.track))]);
-  ok(r.every((x) => !/rgba\(0, 0, 0, 0\)|^none$/.test(x.thumb || 'none')),
-    '손잡이도 칠해진다', [...new Set(r.map((x) => x.thumb))]);
+  // 막대·손잡이가 «정말 칠해지는지»는 여기서 못 본다.
+  // 요즘 Chromium 은 ::-webkit-slider-runnable-track 같은 폼 내부 가짜요소의
+  // 계산된 스타일을 안 알려준다 (backgroundImage 가 늘 'none'으로 온다).
+  // 그건 pixel.test.js 가 화면을 찍어 «찬 쪽과 빈 쪽 색이 다른가»로 확인한다.
   ok(r.every((x) => {
     const want = (Number(x.value) - Number(x.min)) / (Number(x.max) - Number(x.min)) * 100;
     return Math.abs(parseFloat(x.pct) - want) < 0.01;

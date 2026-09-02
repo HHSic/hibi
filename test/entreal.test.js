@@ -1,7 +1,7 @@
 const ROOT = require('path').join(__dirname, '..').split(require('path').sep).join('/');
 // 진짜 휴식에서 연출이 돌고, 걷힌 뒤 휴식 내용이 제대로 뜨는가.
 const path = require('path'); const fs = require('fs'); const os = require('os');
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, screen } = require('electron');
 process.on('uncaughtException', (e) => { console.error('LAB 터짐:', (e && e.stack) || e); process.exit(1); });
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'entreal-'));
 app.setPath('appData', tmp);
@@ -13,6 +13,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let bad = 0;
 const ok = (c, m, x) => { console.log((c ? '  OK   ' : '  실패 ') + m + (x === undefined ? '' : `  → ${JSON.stringify(x)}`)); if (!c) bad++; };
 const winBy = (p) => BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes(p)) || null;
+// 연출은 마우스가 있는 화면에서만 그린다 — 아무 휴식 창이나 보면 안 된다
+const cursorWin = () => {
+  const id = String(screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).id);
+  return BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes('overlay')
+    && w.webContents.getURL().includes(`display=${id}`)) || null;
+};
 
 app.whenReady().then(async () => {
   await sleep(2500);
@@ -25,7 +31,7 @@ app.whenReady().then(async () => {
     await sleep(400);
     ipcMain.emit('widget:break-now', {}, 'eye');
     let ov = null;
-    for (let i = 0; i < 60 && !ov; i++) { await sleep(50); ov = winBy('overlay'); }
+    for (let i = 0; i < 60 && !ov; i++) { await sleep(50); ov = cursorWin(); }
     if (!ov) { ok(false, `${kind}: 휴식 창이 안 뜸`); continue; }
     const owc = ov.webContents;
 

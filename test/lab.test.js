@@ -32,6 +32,11 @@ app.whenReady().then(async () => {
   await sleep(2500);
   const wc = widgetWc();
   if (!wc) { console.error('위젯 창을 못 찾음'); app.exit(1); return; }
+  // 자리 비움을 꺼 둔다. 시험을 도는 동안 아무도 마우스를 안 움직이므로,
+  // 켜 두면 «자리 비움»이 먼저 시계를 멈춰 «일시정지»의 효과를 못 가른다
+  // — 대조군까지 멈춰서 «줄어들지 않음»이 양쪽 다 나온다.
+  await wc.executeJavaScript(`window.nunsseom.setApp({ idlePauseSec: 36000, dndEnabled: false })`);
+  await sleep(400);
 
   const orig = wc.send.bind(wc);
   wc.send = (ch, ...a) => {

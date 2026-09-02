@@ -97,8 +97,11 @@ app.whenReady().then(async () => {
   if (results.length) {
     const worstLate = Math.max(...results.map((r) => Math.abs(r.late)));
     // tick이 1초마다 도니 예정 시각과 최대 1초까지 어긋난다 (이건 예전부터 그랬다).
-    // 여기서 보는 건 «그 위에 로딩이 더 얹히지 않는가»다.
-    ok(worstLate < 1.2, '예정 시각에서 1.2초 안 (처음엔 로딩만 3.0초가 더 붙었다)', worstLate.toFixed(2));
+    // 여기서 보는 건 «그 위에 로딩이 더 얹히지 않는가»다 — 고치기 전엔 3.0초가 더 붙었다.
+    // 상한을 1.2초로 두었더니 tick 오차 1초 위에 여유가 0.2초뿐이라, 기계가 조금만
+    // 바빠도 실패했다 (1.13 / 1.18 / 1.38초로 오갔다). 재는 것이 «로딩이 얹혔나»이므로
+    // 오차 위로 넉넉히, 막으려는 3초보다는 한참 아래인 1.8초로 둔다.
+    ok(worstLate < 1.8, '예정 시각에서 1.8초 안 (고치기 전엔 로딩만 3.0초가 더 붙었다)', worstLate.toFixed(2));
   } else {
     ok(false, '한 번도 못 쟀다');
   }
@@ -115,7 +118,9 @@ app.whenReady().then(async () => {
       `(() => { const b = document.getElementById('backdrop');
         return { 그림: !!b.style.backgroundImage && b.style.backgroundImage !== 'none',
                  보임: b.classList.contains('ready'), 그려짐: !!document.querySelector('.card, .wrap, h1') }; })()`);
-    if (bg && bg.그림) { console.log(`   배경이 ${((i + 1) * 0.5).toFixed(1)}초 만에 깔림`); break; }
+    // 사진이 «붙은» 순간과 «보이는» 순간은 한 프레임 차이다 (ready 는 다음 rAF에 붙는다).
+    // 붙자마자 재면 늘 보임=false 로 잡힌다.
+    if (bg && bg.그림 && bg.보임) { console.log(`   배경이 ${((i + 1) * 0.5).toFixed(1)}초 만에 깔림`); break; }
   }
   ok(bg && bg.그림 && bg.보임, '배경 사진도 제대로 깔린다 (수동 휴식은 그 자리에서 찍는다)', bg);
   ipcMain.emit('overlay:done');

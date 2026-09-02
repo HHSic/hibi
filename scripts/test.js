@@ -21,12 +21,15 @@ const { spawn } = require('child_process');
 const ROOT = path.join(__dirname, '..');
 const DIR = path.join(ROOT, 'test');
 const ELECTRON = path.join(ROOT, 'node_modules', '.bin', process.platform === 'win32' ? 'electron.cmd' : 'electron');
-const LIMIT_MS = Number(process.env.HIBI_TEST_TIMEOUT || 240000);
+// fast2 는 2분짜리 알림이 두 번 오기를 기다린다 — 4분으로는 아슬아슬하다
+const LIMIT_MS = Number(process.env.HIBI_TEST_TIMEOUT || 420000);
 
 const argv = process.argv.slice(2);
 const jobsAt = argv.indexOf('--jobs');
 const JOBS = jobsAt >= 0 ? Math.max(1, Number(argv[jobsAt + 1]) || 1) : 1;
-const filters = argv.filter((a, i) => !a.startsWith('--') && i !== jobsAt + 1);
+// --jobs 가 없으면 jobsAt 이 -1 이라 jobsAt+1 이 0 이 된다 — 그냥 두면 첫 이름을
+// 개수 인자로 오해해 버린다 (실제로 «npm test slider entreal»에서 slider 가 빠졌다).
+const filters = argv.filter((a, i) => !a.startsWith('--') && !(jobsAt >= 0 && i === jobsAt + 1));
 
 const all = fs.readdirSync(DIR).filter((f) => f.endsWith('.test.js')).sort();
 const picked = filters.length

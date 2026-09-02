@@ -726,9 +726,16 @@ async function captureScreens() {
       thumbnailSize: { width: Math.round(max.width / 6), height: Math.round(max.height / 6) }
     });
     if (seq !== shotSeq) return;   // 그 사이 휴식이 끝났거나 새로 시작했다
-    for (const src of sources) {
-      if (!src.thumbnail.isEmpty()) overlayShots.set(String(src.display_id), src.thumbnail.toDataURL());
-    }
+    // 윈도우에서는 display_id 가 빈 문자열로 온다 (Electron 33에서 실측:
+    // name="전체 화면" display_id="" id="screen:1:0"). 그걸 그대로 열쇠로 쓰면
+    // 휴식 창이 제 화면 사진을 못 찾아 배경이 통째로 안 깔린다 — 오래 그랬다.
+    // 짝을 못 지으면 순서로 맞춘다. 두 목록 모두 OS가 같은 순서로 준다.
+    const usable = sources.filter((src) => !src.thumbnail.isEmpty());
+    usable.forEach((src, i) => {
+      const byId = displays.find((d) => String(d.id) === String(src.display_id || ''));
+      const d = byId || displays[i];
+      if (d) overlayShots.set(String(d.id), src.thumbnail.toDataURL());
+    });
     shotsAt = Date.now();
   } catch (e) {
     console.warn('[overlay] capture failed:', e.message);
