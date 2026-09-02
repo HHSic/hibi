@@ -13,6 +13,9 @@ const FILE = () => path.join(app.getPath('userData'), 'nunsseom.json');
  * 주소록은 «다시 연락할 사람»의 목록이다. 답장이 되돌아오는 곳이 없는 주소는
  * 아무리 자주 와도 그 목록에 낄 이유가 없다 — 자동완성만 어지럽힌다.
  */
+/** 시세를 받을 수 있는 시장 (야후에서 확인된 곳) */
+const MARKETS = ['KR', 'US', 'JP', 'HK'];
+
 const NO_REPLY = /^(no[-_.]?reply|do[-_.]?not[-_.]?reply|noreply|mailer-daemon|postmaster|bounce|auto(mated)?[-_.]?(reply|mail)|notification[s]?)@|@(bounce|mailer)\./i;
 
 // 앱 이름(눈쉼 → Hibi)이 바뀌면 userData 폴더도 바뀐다.
@@ -91,6 +94,12 @@ const DEFAULT_SETTINGS = {
   mailTimes: [10, 14, 17], // 모아서 알릴 시각 (시)
   mailPollMin: 10,         // 서버를 몇 분마다 확인할지
 
+  // 주식 — 시세 보기 창. 관심 종목은 이 앱이 직접 들고 있다.
+  stocksEnabled: false,    // 꺼두면 위젯에 단추도 안 나온다
+  stocksMarket: 'all',     // 'all' | 'KR' | 'US'
+  stocksIndexes: true,     // 코스피·코스닥·나스닥·S&P 500도 같이
+  stocksSize: null,        // 창을 마지막으로 조절한 크기
+
   // 알림음 — 화면만으로는 다른 창을 보고 있을 때 놓친다
   soundEnabled: true,
   soundName: 'chime',      // renderer/sound.js의 LIST 참고
@@ -118,6 +127,7 @@ function blank() {
     contacts: [],        // [{ address, name, at, used }]
     mailRules: [],       // [{ id, on, field, match, action, label }]
     mailDraft: null,     // 쓰다 말은 메일 한 통
+    stocksWatch: [],     // 관심 종목 [{ ticker, name, market }] — 이 앱이 직접 들고 있다
     stats: {},           // { 'YYYY-MM-DD': { done, skipped } }
     widgetPos: null,
     widgetSize: null,
@@ -143,6 +153,7 @@ function load() {
       contacts: Array.isArray(raw.contacts) ? raw.contacts : [],
       mailRules: Array.isArray(raw.mailRules) ? raw.mailRules : [],
       mailDraft: raw.mailDraft || null,
+      stocksWatch: Array.isArray(raw.stocksWatch) ? raw.stocksWatch : [],
       stats: raw.stats || {},
       widgetPos: raw.widgetPos || null,
       widgetSize: raw.widgetSize || null,
@@ -280,13 +291,54 @@ module.exports = {
       emoji: def.emoji || null,
       color: def.color || '#e3c08a',
       kind: def.kind === 'long' ? 'long' : 'short',
+      // 주기는 «정해진 시각»으로 바꿔 써도 그대로 남겨둔다 — 다시 주기로 되돌릴 때
+      // 고르던 값이 사라지면 처음부터 다시 맞춰야 한다.
       intervalMin: Math.max(1, Math.round(def.intervalMin || 60)),
       durationSec: Math.max(5, Math.round(def.durationSec || 30)),
+      when: def.when === 'at' ? 'at' : 'every',
+      times: Array.isArray(def.times) ? def.times.slice(0, 12) : [],
+      days: Array.isArray(def.days) ? def.days.slice(0, 7) : [],
       headline: def.headline || def.name || '잠깐 쉬어요',
       enabled: true
     };
     save();
     return { id, custom: s.custom };
+  },
+
+  // ── 관심 종목 ──
+  get stocksWatch() { return load().stocksWatch; },
+  /** 이미 있으면 아무것도 안 한다 — 같은 종목이 두 줄로 늘어나지 않게 */
+  addStock(item) {
+    const s2 = load();
+    const t = String(item.ticker || '').trim();
+    if (!t) return s2.stocksWatch;
+    if (s2.stocksWatch.some((x) => x.ticker === t)) return s2.stocksWatch;
+    s2.stocksWatch.push({
+      ticker: t,
+      name: String(item.name || t).trim(),
+      market: MARKETS.includes(item.market) ? item.market : 'KR'
+    });
+    save();
+    return s2.stocksWatch;
+  },
+  removeStock(ticker) {
+    const s2 = load();
+    s2.stocksWatch = s2.stocksWatch.filter((x) => x.ticker !== ticker);
+    save();
+    return s2.stocksWatch;
+  },
+  /** 목록 순서 바꾸기 — 끌어 옮길 때 통째로 받는다 */
+  setStocks(list) {
+    const s2 = load();
+    s2.stocksWatch = (Array.isArray(list) ? list : [])
+      .filter((x) => x && x.ticker)
+      .map((x) => ({
+        ticker: String(x.ticker),
+        name: String(x.name || x.ticker),
+        market: MARKETS.includes(x.market) ? x.market : 'KR'
+      }));
+    save();
+    return s2.stocksWatch;
   },
 
   get calendars() { return load().calendars; },

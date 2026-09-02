@@ -33,6 +33,8 @@ contextBridge.exposeInMainWorld('nunsseom', {
   // 오버레이
   getOverlayBg: (displayId) => ipcRenderer.invoke('overlay:get-bg', displayId),
   getBreakPayload: () => ipcRenderer.invoke('overlay:get-payload'),
+  // 휴식 창은 미리 만들어 두고 숨겨 놓는다 — 시작 신호를 받으면 그때 그린다
+  onBreakBegin: (cb) => ipcRenderer.on('overlay:begin', (_e, p) => cb(p)),
   snooze: () => ipcRenderer.send('overlay:snooze'),
   skip: () => ipcRenderer.send('overlay:skip'),
   finish: () => ipcRenderer.send('overlay:done'),
@@ -60,6 +62,20 @@ contextBridge.exposeInMainWorld('nunsseom', {
   calNewEvent: (range) => ipcRenderer.invoke('cal:new-event', range),
   onCalShow: (cb) => ipcRenderer.on('cal:show', () => cb()),
   onMailShow: (cb) => ipcRenderer.on('mail:show', () => cb()),
+
+  // 주식 — 별도 창. 관심 종목은 이 앱이 직접 들고 있다.
+  stocksOpen: () => ipcRenderer.send('stocks:open'),
+  stocksClose: () => ipcRenderer.send('stocks:close'),
+  stocksRefresh: () => ipcRenderer.invoke('stocks:refresh'),
+  stocksSearch: (q) => ipcRenderer.invoke('stocks:search', q),
+  stocksAdd: (input) => ipcRenderer.invoke('stocks:add', input),
+  stocksRemove: (ticker) => ipcRenderer.invoke('stocks:remove', ticker),
+  stocksSetApp: (patch) => ipcRenderer.invoke('stocks:set-app', patch),
+  stocksImport: (root) => ipcRenderer.invoke('stocks:import', root),
+  onStocksData: (cb) => ipcRenderer.on('stocks:data', (_e, b) => cb(b)),
+  stocksBounds: () => ipcRenderer.invoke('stocks:bounds'),
+  stocksSetBounds: (b) => ipcRenderer.send('stocks:set-bounds', b),
+  stocksMove: (p) => ipcRenderer.send('stocks:move', p),
   onCalChanged: (cb) => ipcRenderer.on('cal:changed', () => cb()),
   calOpenHelp: (which) => ipcRenderer.invoke('cal:open-help', which),
   calPickFile: () => ipcRenderer.invoke('cal:pick-file'),
@@ -109,6 +125,7 @@ contextBridge.exposeInMainWorld('nunsseom', {
   mailViewData: () => ipcRenderer.invoke('mail:view-data'),
   mailViewClose: () => ipcRenderer.send('mail:view-close'),
   // 물어보는 창 · 오른쪽 클릭 메뉴 (앱 마감으로 그린다)
+  pickMenu: (items) => ipcRenderer.invoke('ui:menu', items),
   popupData: () => ipcRenderer.invoke('popup:data'),
   popupSize: (s) => ipcRenderer.send('popup:size', s),
   popupPick: (v) => ipcRenderer.send('popup:pick', v),

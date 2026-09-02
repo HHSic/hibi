@@ -104,6 +104,10 @@
   .item:hover { background: var(--fill-hi); }
   .item.bad { color: var(--danger); }
   .item.off { color: var(--tertiary); }
+  /* 고르기 목록 — 지금 골라져 있는 줄 */
+  .menu.ticks .item { position: relative; padding-left: 26px; }
+  .item .tick { position: absolute; left: 9px; color: var(--accent); font-size: 10.5px; }
+  .item.on { font-weight: 700; }
   .sep { height: 0.5px; background: var(--separator); margin: 4px 8px; flex: none; }
 </style>
 </head>

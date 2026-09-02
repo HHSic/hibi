@@ -45,7 +45,17 @@ function reportSize(kind) {
   if (want) document.body.style.width = want + 'px';
   requestAnimationFrame(() => {
     const inner = card.firstElementChild;
-    const w = want || Math.ceil(inner.scrollWidth);
+    // 줄마다 따로 재서 가장 넓은 것에 맞춘다. 줄에 overflow:hidden이 걸려 있어서
+    // 바깥 상자만 재면 «안 넘친다»는 답이 나온다 — 글자는 잘려 있는데도.
+    let w = want;
+    if (!w) {
+      w = inner.scrollWidth;
+      for (const c of inner.children) {
+        const pad = parseFloat(getComputedStyle(c).paddingRight) || 0;
+        w = Math.max(w, c.scrollWidth + pad);
+      }
+    }
+    w = Math.ceil(w);
     const h = Math.ceil(inner.scrollHeight);
     document.body.style.width = '';
     window.nunsseom.popupSize({ width: w + (want ? 0 : inset * 2), height: h + inset * 2 });
@@ -110,13 +120,24 @@ function drawMenu(d) {
       continue;
     }
     const b = document.createElement('button');
-    b.className = 'item' + (it.danger ? ' bad' : '') + (it.enabled === false ? ' off' : '');
-    b.textContent = it.label;
+    b.className = 'item' + (it.danger ? ' bad' : '') + (it.enabled === false ? ' off' : '')
+      + (it.checked ? ' on' : '');
+    // 고르기 목록(<select> 대신)에서는 «지금 이것»이 눈에 보여야 한다.
+    // 체크는 글자 앞이 아니라 왼쪽 여백에 둔다 — 안 그러면 줄마다 글자가 어긋난다.
+    if (it.checked) {
+      const k = document.createElement('span');
+      k.className = 'tick';
+      k.textContent = '✓';
+      b.append(k);
+    }
+    b.append(document.createTextNode(it.label));
     if (it.title) b.title = it.title;
     if (it.enabled === false) b.disabled = true;
     else b.onclick = () => answer(it.id);
     box.append(b);
   }
+  // 체크가 하나라도 있으면 줄 전부에 그만큼 왼쪽을 비운다 — 한 줄만 밀리면 글자가 어긋난다
+  if ((d.items || []).some((it) => it.checked)) box.classList.add('ticks');
   card.append(box);
   reportSize('menu');
 }

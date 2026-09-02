@@ -86,6 +86,8 @@ window.addEventListener('resize', layout);
 
 // 발동 30초 전부터는 그 알림도 라벨바에 올린다
 const IMMINENT_SEC = 30;
+// 이보다 멀면 초 단위 카운트다운이 의미가 없다 — 정해진 시각 알림은 시계처럼 보여준다
+const CLOCK_SEC = 3600;
 const MAX_TAGS = 3;
 
 // ── 아이콘 주입 ────────────────────────────────────
@@ -325,9 +327,16 @@ window.nunsseom.onTick((d) => {
     return;
   }
 
-  const m = Math.floor(d.remaining / 60);
-  const s = d.remaining % 60;
-  $('time').textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  // 정해진 시각 알림이 한참 남았으면 «09:00»을 그대로 보여준다.
+  // 카운트다운으로 두면 «1200:00»이 되는데, 그건 아무에게도 도움이 안 된다.
+  // 한 시간 안으로 들어오면 다시 초까지 세는 카운트다운으로 바뀐다.
+  if (d.fixedAt && d.remaining > CLOCK_SEC) {
+    $('time').textContent = d.fixedAt;
+  } else {
+    const m = Math.floor(d.remaining / 60);
+    const s = d.remaining % 60;
+    $('time').textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
 
   const pct = Math.max(0, Math.min(100, (1 - d.remaining / d.total) * 100));
   root.style.setProperty('--p', pct.toFixed(2) + '%');
@@ -357,6 +366,7 @@ window.nunsseom.onTick((d) => {
   }
   renderSchedule(d.schedule);
   renderMail(d.mail);
+  $('btn-stock').style.display = d.stocksOn ? '' : 'none';
   showUpdate(d.update);
   if (d.week) renderWeek(d.week);
 });
@@ -1078,6 +1088,13 @@ if (params.get('mailpanel') === '1') {
   mailCard.classList.add('mailon');
   setTimeout(resizeForMail, 300);
 }
+// ── 주식 — 별도 창으로 연다 ──────────────────────────────
+// 위젯 안에 패널로 두면 늘 눈앞에 값이 떠 있게 된다. 이 앱은 «끊고 쉬게 하는» 앱이라
+// 그건 취지와 반대다. 볼 때만 열어 보게 창으로 뺐다.
+$('btn-stock').append(window.nunsIcon('chart'));
+$('btn-stock').onclick = () => window.nunsseom.stocksOpen();
+$('btn-stock').style.display = 'none';   // 설정에서 켜야 나온다
+
 $('cal-prev').onclick = (e) => { e.stopPropagation(); shift(-1); };
 $('cal-next').onclick = (e) => { e.stopPropagation(); shift(1); };
 $('cal-week').onclick = (e) => { e.stopPropagation(); setMode('week'); };

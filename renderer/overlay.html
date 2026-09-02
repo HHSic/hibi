@@ -215,25 +215,43 @@
 <script>
   const $ = (id) => document.getElementById(id);
   const qs = new URLSearchParams(location.search);
-  const endsAt = Number(qs.get('endsAt')) || (Date.now() + 20_000);
   const isMain = qs.get('main') === 'true';
   // 설정이 도착하기 전까지는 «막지 않음»이 안전한 쪽이다 — 잘못 막아 갇히는 것보다 낫다
   let noEscape = false;
   const displayId = qs.get('display');
 
-  // 캡처된 바탕화면 배경
-  window.nunsseom.getOverlayBg(displayId).then((url) => {
-    if (!url) return;
-    const bd = $('backdrop');
-    bd.style.backgroundImage = `url("${url}")`;
-    requestAnimationFrame(() => bd.classList.add('ready'));
-  }).catch(() => {});
+  // 이 창은 휴식이 오기 전에 미리 만들어져 숨어 있다가, 그때가 되면 보여진다.
+  // 창을 만들고 이 파일을 읽는 데 0.4초가 걸리는데, 그걸 «그 순간»에 하면
+  // 알림이 그만큼 늦게 뜬다 — 정해진 시각 알람은 특히 티가 난다.
+  // 그래서 내용도 «언제 끝나는지»도 시작 신호와 함께 받는다.
+  let endsAt = Date.now() + 20_000;
+  let started = false;
 
-  // 알림 내용
-  window.nunsseom.getBreakPayload().then((p) => {
-    if (!p || !p.items || !p.items.length) return;
+  function begin(p) {
+    if (started || !p || !p.items || !p.items.length) return;
+    started = true;
+    if (p.endsAt) endsAt = Number(p.endsAt);
+    tick();
     render(p);
-  }).catch(() => {});
+
+    // 미리 찍어둔 바탕화면 — 없으면 그냥 없이 간다
+    window.nunsseom.getOverlayBg(displayId).then((url) => {
+      if (!url) return;
+      const bd = $('backdrop');
+      bd.style.backgroundImage = `url("${url}")`;
+      requestAnimationFrame(() => bd.classList.add('ready'));
+    }).catch(() => {});
+
+    // 알림음 (주 모니터에서만 — 여러 화면에서 같이 울리면 겹쳐 들린다)
+    if (isMain && p.sound && p.sound.enabled) {
+      window.nunsSound.play(p.sound.name, p.sound.volume);
+    }
+  }
+
+  // 미리 만들어 둔 창은 여기서 시작 신호를 기다린다
+  window.nunsseom.onBreakBegin(begin);
+  // 예비가 없어 그때 만들어진 창이라면 이미 시작돼 있다 — 바로 받아온다
+  window.nunsseom.getBreakPayload().then(begin).catch(() => {});
 
   function render(p) {
     const first = p.items[0];
@@ -365,13 +383,6 @@
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); window.nunsseom.finish(); }
     else if (e.key === 'Escape') window.nunsseom.skip();
   });
-
-  // 알림음 (주 모니터에서만 — 여러 화면에서 같이 울리면 겹쳐 들린다)
-  if (isMain) {
-    window.nunsseom.getBreakPayload().then((p) => {
-      if (p && p.sound && p.sound.enabled) window.nunsSound.play(p.sound.name, p.sound.volume);
-    });
-  }
 </script>
 </body>
 </html>

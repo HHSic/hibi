@@ -187,7 +187,27 @@
   .drow { display: grid; grid-template-columns: 44px 1fr 46px; align-items: center; gap: 10px; padding: 4px 0; }
   .drow span:first-child { font-size: 11.5px; color: var(--secondary); }
   .drow .out { font-size: 11.5px; color: var(--tertiary); text-align: right; font-variant-numeric: tabular-nums; }
-  input[type=range] { width: 100%; accent-color: var(--rc, var(--accent)); height: 18px; }
+  /* 손잡이 — accent-color만 주면 윈도우 기본 막대에 색만 입힌 모양이 된다.
+     지나온 쪽만 색이 차도록 직접 그린다. --rc는 그 알림의 색이다. */
+  input[type=range] {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 18px; background: transparent; cursor: default;
+  }
+  input[type=range]::-webkit-slider-runnable-track {
+    height: 4px; border-radius: 2px;
+    /* 채워진 길이는 --fill-pct로 들어온다 (settings.js가 값과 함께 맞춰준다) */
+    background: linear-gradient(to right,
+      var(--rc, var(--accent)) var(--fill-pct, 0%), var(--track) var(--fill-pct, 0%));
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 13px; height: 13px; margin-top: -4.5px; border-radius: 50%;
+    background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.35), inset 0 0 0 0.5px rgba(0,0,0,0.12);
+  }
+  input[type=range]:hover::-webkit-slider-thumb { transform: scale(1.12); }
+  input[type=range]:focus-visible::-webkit-slider-thumb {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--rc, var(--accent)) 35%, transparent);
+  }
 
   .rem-wrap + .rem-wrap { box-shadow: inset 0 0.5px 0 var(--separator); }
 
@@ -238,6 +258,8 @@
     background: var(--fill); border-radius: 5px; padding: 1px 5px; margin-right: 6px;
   }
   .cust-name:focus { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent); }
+  /* 고르기 단추 — 누를 수 있는 곳이라는 표시 (모양은 pickfield.js가 들고 있다) */
+  .pickfield:hover { background: var(--track); }
   .emoji-grid {
     display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; margin-top: 8px;
     max-height: 120px; overflow-y: auto;
@@ -355,6 +377,13 @@
   .mini.danger { color: #ff6b6b; }
   .mini.danger:hover { background: rgba(255, 107, 107, 0.14); }
   .mini.armed { color: #fff; background: #e0453f; }
+  /* 요일 고르기 — 일곱 개가 한 줄에 들어가야 해서 «가나다» 알약보다 좁다 */
+  .mini.day { padding: 5px 0; width: 26px; text-align: center; }
+  /* 정해진 시각 줄 — 시·분 고르기와 지우기가 한 줄에 */
+  .drow.wide .helprow { align-items: center; gap: 5px; }
+  .drow.wide .helprow .sep2 { font-size: 12px; color: var(--tertiary); }
+  /* 아직 시각을 안 넣었을 때의 안내 — .col 밖에서도 보이게 */
+  .drow .hint { font-size: 11px; color: var(--tertiary); line-height: 1.5; }
 
   /* 캘린더 목록 */
   .cal { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 9px; padding: 10px 13px; }
@@ -664,6 +693,15 @@
       </div>
     </div>
 
+    <div class="sec">곁들이는 기능</div>
+    <div class="group">
+      <div class="row toggle">
+        <span class="nm">주식 시세<i>켜면 위젯에 단추가 생기고, 눌러야 창이 열립니다. 값은 창을 열어둔 동안에만 받아옵니다.</i></span>
+        <span></span>
+        <button class="sw" id="stocksEnabled" role="switch" aria-label="주식 시세"></button>
+      </div>
+    </div>
+
     <div class="sec">알림음</div>
     <div class="group">
       <div class="row toggle">
@@ -857,6 +895,7 @@
   </div>
  </div>
 
+<script src="pickfield.js"></script>
 <script src="settings.js"></script>
 </body>
 </html>

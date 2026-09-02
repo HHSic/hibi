@@ -10,6 +10,73 @@ const BUNDLE_MAX_MS = 15 * 60 * 1000;
 const BUNDLE_MIN_MS = 2 * 60 * 1000;
 
 /**
+ * 정해진 시각을 놓쳤을 때 얼마나 늦게까지 울려주나.
+ *
+ * 회의가 끝나거나 자리에서 돌아온 «직후»에 울리는 건 맞다 — 조금 늦어도 쓸모가 있다.
+ * 하지만 세 시간 지난 «아침 스트레칭»은 알림이 아니라 방해다. 그런 건 버리고
+ * 다음 차례로 넘긴다.
+ */
+const MISS_GRACE_MS = 30 * 60 * 1000;
+
+/** 주기가 아니라 «정해진 시각»에 우는 알림인가 */
+function isFixed(cfg) {
+  return !!(cfg && cfg.when === 'at');
+}
+
+/**
+ * 'HH:MM' 목록을 [시, 분]으로. 이상한 값은 버리고, 이른 순으로 정렬해 중복을 없앤다.
+ * 정렬은 보기 좋으라고 하는 게 아니다 — nextTimeAfter가 «그날 중 처음 오는 것»을
+ * 앞에서부터 훑어 찾기 때문에, 순서가 어긋나면 엉뚱한 시각을 고른다.
+ */
+function parseTimes(times) {
+  const out = [];
+  for (const t of Array.isArray(times) ? times : []) {
+    const m = String(t).trim().match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) continue;
+    const h = Number(m[1]);
+    const min = Number(m[2]);
+    if (h > 23 || min > 59) continue;
+    out.push([h, min]);
+  }
+  out.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  return out.filter((v, i) => !i || v[0] !== out[i - 1][0] || v[1] !== out[i - 1][1]);
+}
+
+/** 요일 제한 (0=일 … 6=토). 비었으면 «매일»이라는 뜻으로 null */
+function parseDays(days) {
+  if (!Array.isArray(days) || !days.length) return null;
+  const set = new Set();
+  for (const d of days) {
+    const n = Number(d);
+    if (Number.isInteger(n) && n >= 0 && n <= 6) set.add(n);
+  }
+  return set.size ? set : null;
+}
+
+/**
+ * from 다음에 처음 오는 «그 시각». 정해둔 시각이 없으면 null.
+ *
+ * 날짜를 하루씩 넘기며 찾는다. 서머타임이 있는 곳에서도 09:00은 그날의 09:00이어야 하므로
+ * epoch 산술로 24시간씩 더하지 않고 Date 생성자로 매일 새로 만든다.
+ * 8일까지만 본다 — 어떤 요일이든 7일 안에 반드시 한 번은 온다.
+ */
+function nextTimeAfter(cfg, from = Date.now()) {
+  const times = parseTimes(cfg && cfg.times);
+  if (!times.length) return null;
+  const days = parseDays(cfg && cfg.days);
+  const base = new Date(from);
+  for (let i = 0; i <= 7; i++) {
+    const day = new Date(base.getFullYear(), base.getMonth(), base.getDate() + i);
+    if (days && !days.has(day.getDay())) continue;
+    for (const [h, m] of times) {
+      const t = new Date(day.getFullYear(), day.getMonth(), day.getDate(), h, m, 0, 0).getTime();
+      if (t > from) return t;
+    }
+  }
+  return null;
+}
+
+/**
  * kind: 'short' → 짧은 안내 + 카운트다운
  *       'long'  → 체크리스트형 긴 휴식
  */
@@ -163,7 +230,18 @@ class Scheduler {
     const cfg = this.getConfig();
     if (cfg[id]) return cfg[id];
     const c = this.getCustom()[id];
-    return c ? { enabled: c.enabled !== false, intervalMin: c.intervalMin, durationSec: c.durationSec } : null;
+    // 여기서 고른 것만 스케줄러에 보인다 — when/times/days를 빠뜨리면
+    // 저장은 되는데 영영 안 울리는 알림이 된다.
+    return c
+      ? {
+        enabled: c.enabled !== false,
+        intervalMin: c.intervalMin,
+        durationSec: c.durationSec,
+        when: c.when,
+        times: c.times,
+        days: c.days
+      }
+      : null;
   }
 
   /** 전체 재스케줄 */
@@ -175,7 +253,44 @@ class Scheduler {
   schedule(id, from = Date.now()) {
     const c = this.cfgOf(id);
     if (!c) { this.nextAt.delete(id); return; }
+    if (isFixed(c)) {
+      const at = nextTimeAfter(c, from);
+      // 시각을 하나도 안 정했으면 울릴 때가 없다 — 켜져 있어도 목록에서 빼둔다
+      if (at == null) this.nextAt.delete(id);
+      else this.nextAt.set(id, at);
+      return;
+    }
     this.nextAt.set(id, from + Math.max(1, c.intervalMin) * 60_000);
+  }
+
+  /**
+   * 놓친 «정해진 시각»을 정리한다. 매 초 부른다.
+   *
+   * 멈춰 있거나 자리를 비운 동안 그 시각이 지나갔을 수 있다. 조금 늦은 것은 그대로 둬서
+   * 돌아오는 즉시 울리게 하고, 한참 지난 것은 버리고 다음 차례로 넘긴다.
+   * @returns {string[]} 건너뛴 id들
+   */
+  catchUp(now = Date.now()) {
+    const skipped = [];
+    for (const [id, at] of this.nextAt) {
+      if (now - at <= MISS_GRACE_MS) continue;
+      if (!isFixed(this.cfgOf(id))) continue;
+      this.schedule(id, now);
+      skipped.push(id);
+    }
+    return skipped;
+  }
+
+  /**
+   * 이 알림의 «한 바퀴»가 몇 ms인가 — 위젯 고리가 얼마나 찼는지 그리는 데 쓴다.
+   * 정해진 시각이면 이번 차례에서 다음 차례까지 (매일이면 24시간).
+   */
+  periodMsOf(id, at = Date.now()) {
+    const c = this.cfgOf(id);
+    if (!c) return 20 * 60_000;
+    if (!isFixed(c)) return Math.max(1, c.intervalMin) * 60_000;
+    const after = nextTimeAfter(c, at);
+    return after ? after - at : 24 * 60 * 60_000;
   }
 
   /** 설정이 바뀌었을 때 — 새로 켜진 건 예약하고, 꺼진 건 제거 */
@@ -187,7 +302,13 @@ class Scheduler {
 
   /** 자리 비움 등으로 카운트다운을 미룰 때 */
   postponeAll(ms) {
-    for (const [id, at] of this.nextAt) this.nextAt.set(id, at + ms);
+    for (const [id, at] of this.nextAt) {
+      // 정해진 시각은 밀지 않는다. 자리를 비웠다고 09:00이 09:37이 되면 안 되고,
+      // 한 번 밀리면 그 뒤로 영영 어긋난 시각에 운다 — 여기서 미룬 값이 다음 기준이 되므로.
+      // 대신 그 시각이 지나가 버린 건 catchUp()이 따로 정리한다.
+      if (isFixed(this.cfgOf(id))) continue;
+      this.nextAt.set(id, at + ms);
+    }
   }
 
   /** 가장 먼저 도래하는 종류 */
@@ -203,6 +324,9 @@ class Scheduler {
   bundleWindowOf(id) {
     const c = this.cfgOf(id);
     if (!c) return 0;
+    // 정해진 시각은 앞당겨 묶지 않는다 — 10시 알림이 9시 55분에 울리면 그건 10시가 아니다.
+    // (뒤로 묶이는 건 괜찮다. 10시에 울릴 때 곧 올 다른 알림을 데려가는 건 그대로 둔다.)
+    if (isFixed(c)) return 0;
     const intervalMs = Math.max(1, c.intervalMin) * 60_000;
     return Math.min(Math.max(intervalMs * BUNDLE_RATIO, BUNDLE_MIN_MS), BUNDLE_MAX_MS);
   }
@@ -243,4 +367,7 @@ class Scheduler {
   }
 }
 
-module.exports = { TYPES, getType, meta, defaultConfig, Scheduler };
+module.exports = {
+  TYPES, getType, meta, defaultConfig, Scheduler,
+  isFixed, parseTimes, parseDays, nextTimeAfter, MISS_GRACE_MS
+};

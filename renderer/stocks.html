@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src file: 'unsafe-inline'; style-src file: 'unsafe-inline'; font-src file:;">
+<title>주식</title>
+<link rel="stylesheet" href="../assets/font/pretendard.css">
+<script src="icons.js"></script>
+<style>
+  :root {
+    --accent: #4fc3a8;
+    --scrim-a: 0.88;
+    --scrim: rgba(22, 22, 26, var(--scrim-a));
+    --label: rgba(255, 255, 255, 0.96);
+    --secondary: rgba(235, 235, 245, 0.62);
+    --tertiary: rgba(235, 235, 245, 0.34);
+    --separator: rgba(255, 255, 255, 0.09);
+    --fill: rgba(255, 255, 255, 0.06);
+    --fill-hi: rgba(255, 255, 255, 0.14);
+    --hairline: rgba(255, 255, 255, 0.14);
+    /* 국내 관습대로 오르면 빨강, 내리면 파랑 */
+    --up: #ff6b6b;
+    --dn: #6aa9ff;
+    --r: 18px;
+  }
+  :root[data-theme="light"] {
+    --accent: #23a58a;
+    --scrim: rgba(250, 250, 252, var(--scrim-a));
+    --label: rgba(0, 0, 0, 0.90);
+    --secondary: rgba(60, 60, 67, 0.62);
+    --tertiary: rgba(60, 60, 67, 0.40);
+    --separator: rgba(60, 60, 67, 0.13);
+    --fill: rgba(0, 0, 0, 0.05);
+    --fill-hi: rgba(0, 0, 0, 0.10);
+    --hairline: rgba(0, 0, 0, 0.12);
+    --up: #e03b3b;
+    --dn: #2f6fd0;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: transparent; }
+  body {
+    font-family: 'Pretendard Variable', Pretendard, -apple-system, 'Segoe UI Variable Display', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    color: var(--label);
+    padding: var(--inset, 12px);
+    user-select: none; cursor: default;
+  }
+  .card {
+    width: 100%; height: 100%;
+    background: var(--scrim); border-radius: var(--r);
+    box-shadow: inset 0 0 0 0.5px var(--hairline), 0 12px 34px rgba(0, 0, 0, 0.42);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+
+  /* 머리글 — 끌어서 창을 옮긴다 */
+  .head {
+    flex: none; display: flex; align-items: center; gap: 8px;
+    padding: 11px 13px 9px;
+  }
+  .head .ttl { flex: 1; font-size: 13.5px; font-weight: 650; }
+  .head .note { font-size: 10.5px; color: var(--tertiary); font-variant-numeric: tabular-nums; }
+  .ic {
+    all: unset; cursor: default; width: 22px; height: 22px; border-radius: 6px;
+    display: grid; place-items: center; color: var(--secondary); flex: none;
+  }
+  .ic:hover { background: var(--fill); color: var(--label); }
+  .ic svg { width: 13px; height: 13px; display: block; }
+  .ic.spin svg { animation: sp 0.9s linear infinite; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+
+  /* 시장 고르기 */
+  .bar {
+    flex: none; display: flex; align-items: center; gap: 4px;
+    padding: 0 13px 8px;
+  }
+  .seg {
+    all: unset; cursor: default;
+    font-size: 11px; font-weight: 620; color: var(--accent);
+    padding: 4px 10px; border-radius: 999px;
+  }
+  .seg.on { background: var(--accent); color: #06231d; }
+  .seg:not(.on):hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  .bar .sp { flex: 1; }
+
+  /* 목록 */
+  .list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 9px 4px; }
+  .list::-webkit-scrollbar { width: 4px; }
+  .list::-webkit-scrollbar-thumb { background: transparent; border-radius: 2px; transition: background 0.15s; }
+  .list:hover::-webkit-scrollbar-thumb { background: var(--fill-hi); }
+
+  .row {
+    display: grid; grid-template-columns: 1fr auto auto 20px;
+    align-items: baseline; gap: 8px;
+    padding: 6px 6px; border-radius: 7px;
+  }
+  .row:hover { background: var(--fill); }
+  .row .nm {
+    font-size: 12.5px; font-weight: 560;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+  }
+  .row .nm b { font-weight: 560; }
+  .row .nm i {
+    font-style: normal; font-size: 10px; color: var(--tertiary); margin-left: 5px;
+  }
+  .row.idx .nm { color: var(--secondary); font-weight: 660; }
+  .row .px { font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  .row .pc {
+    font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums;
+    min-width: 56px; text-align: right; flex: none;
+  }
+  /* 값이 길어지는 통화가 있다 (닛케이 66,215.34) — 이름 칸이 먼저 줄어들게 둔다 */
+  .row .px { min-width: 0; }
+  .row .pc.up { color: var(--up); }
+  .row .pc.dn { color: var(--dn); }
+  .row .pc.flat { color: var(--tertiary); }
+  .row .pc.bad { color: var(--tertiary); font-weight: 400; font-size: 10.5px; }
+  .row.stale .px, .row.stale .nm { opacity: 0.5; }
+  /* 지우기는 그 줄에 마우스를 올렸을 때만 — 늘 보이면 목록이 시끄럽다 */
+  .row .del {
+    all: unset; cursor: default; width: 18px; height: 18px; border-radius: 5px;
+    display: grid; place-items: center; color: var(--tertiary);
+    font-size: 13px; line-height: 1; opacity: 0; align-self: center;
+  }
+  .row:hover .del { opacity: 1; }
+  .row .del:hover { background: var(--fill-hi); color: var(--up); }
+  .sep { height: 0.5px; background: var(--separator); margin: 5px 6px; }
+  .none { padding: 14px 8px; font-size: 11.5px; color: var(--tertiary); line-height: 1.7; }
+
+  /* 종목 넣기 */
+  .add {
+    flex: none; display: flex; align-items: center; gap: 5px;
+    padding: 8px 13px 11px; box-shadow: inset 0 0.5px 0 var(--separator);
+  }
+  .add input {
+    all: unset; flex: 1; min-width: 0;
+    font-family: inherit; font-size: 12px; color: var(--label);
+    background: var(--fill); border-radius: 8px; padding: 6px 10px;
+  }
+  .add input::placeholder { color: var(--tertiary); }
+  .add input:focus { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); }
+  .mini {
+    all: unset; cursor: default; flex: none;
+    font-size: 11.5px; font-weight: 620; color: #06231d; background: var(--accent);
+    padding: 6px 11px; border-radius: 999px;
+  }
+  .mini:hover { filter: brightness(1.08); }
+  .mini[disabled] { opacity: 0.45; }
+  .mini.ghost { background: transparent; color: var(--accent); }
+  .mini.ghost:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  .say { padding: 0 13px 9px; font-size: 11px; color: var(--secondary); min-height: 0; }
+  .say.bad { color: var(--up); }
+
+  /* 이름으로 찾기 — 입력칸이 아래에 있으니 목록은 위로 편다 */
+  .add { position: relative; }
+  .sug {
+    position: absolute; left: 13px; right: 13px; bottom: calc(100% - 2px);
+    background: #24242a; border-radius: 10px; padding: 4px;
+    box-shadow: 0 -8px 26px rgba(0, 0, 0, 0.45), inset 0 0 0 0.5px var(--hairline);
+    max-height: 216px; overflow-y: auto; display: none; z-index: 20;
+  }
+  :root[data-theme="light"] .sug { background: #fff; }
+  .sug.on { display: block; }
+  .sug .it {
+    display: flex; align-items: baseline; gap: 7px;
+    padding: 6px 9px; border-radius: 7px; font-size: 12px;
+  }
+  .sug .it b { font-weight: 600; color: var(--label); }
+  .sug .it span { font-size: 10.5px; color: var(--tertiary); margin-left: auto; }
+  .sug .it.on, .sug .it:hover { background: var(--fill-hi); }
+  .sug .none2 { padding: 7px 9px; font-size: 11.5px; color: var(--tertiary); }
+
+  /* 크기 조절 — 투명 창이라 네이티브 대신 직접 잡는다 */
+  .grip { position: fixed; z-index: 30; }
+  .grip.e { top: var(--inset, 12px); right: 0; width: 10px; bottom: var(--inset, 12px); cursor: ew-resize; }
+  .grip.s { left: var(--inset, 12px); bottom: 0; height: 10px; right: var(--inset, 12px); cursor: ns-resize; }
+  .grip.se { right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="head" id="head">
+    <span class="ttl">주식</span>
+    <span class="note" id="note"></span>
+    <button class="ic" id="refresh" title="지금 시세 확인"></button>
+    <button class="ic" id="close" title="닫기"></button>
+  </div>
+  <div class="bar">
+    <button class="seg" data-mk="all">전부</button>
+    <button class="seg" data-mk="KR">국내</button>
+    <button class="seg" data-mk="oversea" title="미국·일본·홍콩">해외</button>
+    <span class="sp"></span>
+    <button class="seg" id="idx" title="코스피·코스닥·나스닥·S&amp;P 500">지수</button>
+  </div>
+  <div class="list" id="list"></div>
+  <div class="say" id="say"></div>
+  <div class="add">
+    <div class="sug" id="sug"></div>
+    <input id="q" placeholder="이름으로 찾기 (삼성, 엔비디아, 토요타, 텐센트…)" autocomplete="off" spellcheck="false">
+    <button class="mini" id="btn-add">넣기</button>
+  </div>
+</div>
+<div class="grip e" data-dir="e"></div>
+<div class="grip s" data-dir="s"></div>
+<div class="grip se" data-dir="se"></div>
+<script src="stocks.js"></script>
+</body>
+</html>

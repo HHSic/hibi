@@ -12,7 +12,41 @@ root.style.setProperty('--scrim-a', String(Math.min(0.96, num('scrim', 0.92) + 0
 const fmtInterval = (m) => (m >= 60 && m % 60 === 0 ? `${m / 60}시간` : `${m}분`);
 const fmtDuration = (sec) => (sec >= 60 ? `${Math.round(sec / 60)}분` : `${sec}초`);
 
+const DAY_NAMES = ['일', '월', '화', '수', '목', '금', '토'];
+/** 요일 목록을 짧게 — 자주 쓰는 묶음은 이름으로 부른다 */
+function fmtDays(days) {
+  const d = Array.isArray(days) ? [...new Set(days)].sort((a, b) => a - b) : [];
+  if (!d.length || d.length === 7) return '매일';
+  if (d.length === 5 && d.every((x) => x >= 1 && x <= 5)) return '평일';
+  if (d.length === 2 && d.includes(0) && d.includes(6)) return '주말';
+  return d.map((x) => DAY_NAMES[x]).join('');
+}
+/** «언제 우는가»를 한 줄로. 주기 알림이면 예전 그대로 «20분». */
+function fmtTiming(def) {
+  if (!def || def.when !== 'at') return fmtInterval(def ? def.intervalMin : 0);
+  const t = [...(def.times || [])].sort();
+  if (!t.length) return '시각 없음';
+  return `${fmtDays(def.days)} ${t.join(', ')}`;
+}
+
 let data = null;
+
+/**
+ * 슬라이더의 «지나온 쪽»만 색이 차게 한다.
+ * 막대를 윈도우 기본 모양 대신 직접 그리기 때문에, 얼마나 찼는지를 CSS에 알려줘야 한다.
+ * 슬라이더는 세 군데서 따로 만들어져서 한 곳을 빠뜨리기 쉽다 — 그래서 끄는 동안에는
+ * 아래 한 줄이 종류를 안 가리고 전부 챙긴다.
+ */
+function fillRange(el) {
+  const lo = Number(el.min || 0);
+  const hi = Number(el.max || 100);
+  const pct = hi > lo ? ((Number(el.value) - lo) / (hi - lo)) * 100 : 0;
+  el.style.setProperty('--fill-pct', `${Math.max(0, Math.min(100, pct))}%`);
+}
+document.addEventListener('input', (e) => {
+  if (e.target && e.target.type === 'range') fillRange(e.target);
+}, true);
+
 
 // ── 알림 종류 행 만들기 ────────────────────────────
 function buildRow(type, cfg) {
@@ -36,7 +70,7 @@ function buildRow(type, cfg) {
   const val = document.createElement('span');
   val.className = 'val';
   const paintVal = () => {
-    val.textContent = `${fmtInterval(cfg.intervalMin)} · ${fmtDuration(cfg.durationSec)}`;
+    val.textContent = `${fmtTiming(cfg)} · ${fmtDuration(cfg.durationSec)}`;
   };
   paintVal();
 
@@ -70,6 +104,7 @@ function buildRow(type, cfg) {
     input.type = 'range';
     input.min = min; input.max = max; input.step = step;
     input.value = cfg[key];
+    fillRange(input);
     input.setAttribute('aria-label', `${type.name} ${label}`);
     const out = document.createElement('span');
     out.className = 'out';
@@ -139,7 +174,7 @@ function buildCustomRow(id, def, startOpen) {
 
   const val = document.createElement('span');
   val.className = 'val';
-  val.textContent = `${fmtInterval(def.intervalMin)} · ${fmtDuration(def.durationSec)}`;
+  val.textContent = `${fmtTiming(def)} · ${fmtDuration(def.durationSec)}`;
 
   const sw = document.createElement('button');
   sw.className = 'sw' + (def.enabled === false ? '' : ' on');
@@ -201,6 +236,7 @@ function buildCustomRow(id, def, startOpen) {
     const input = document.createElement('input');
     input.type = 'range';
     input.min = min; input.max = max; input.step = step; input.value = def[key];
+    fillRange(input);
     input.onclick = (e) => e.stopPropagation();
     const out = document.createElement('span');
     out.className = 'out';
@@ -208,7 +244,7 @@ function buildCustomRow(id, def, startOpen) {
     input.oninput = () => { out.textContent = fmt(Number(input.value)); };
     input.onchange = async () => {
       def[key] = Number(input.value);
-      val.textContent = `${fmtInterval(def.intervalMin)} · ${fmtDuration(def.durationSec)}`;
+      val.textContent = `${fmtTiming(def)} · ${fmtDuration(def.durationSec)}`;
       data.custom = await window.nunsseom.customUpdate(id, { [key]: def[key] });
     };
     dr.append(lb, input, out);
@@ -228,8 +264,178 @@ function buildCustomRow(id, def, startOpen) {
   };
   delRow.append(document.createElement('span'), del);
 
-  detail.append(nameRow, emojiGrid,
-    mkSlider('주기', 'intervalMin', 5, 240, 5, fmtInterval),
+  // ── 언제 울릴지 ──────────────────────────────────────────
+  // 주기마다(20분마다)와 정해진 시각(매일 09:00)은 서로 다른 물건이라 칸을 갈라 보여준다.
+  const save = async (patch) => {
+    Object.assign(def, patch);
+    val.textContent = `${fmtTiming(def)} · ${fmtDuration(def.durationSec)}`;
+    data.custom = await window.nunsseom.customUpdate(id, patch);
+  };
+
+  const everyBox = document.createElement('div');
+  const atBox = document.createElement('div');
+  const paintMode = (mode) => {
+    everyBox.style.display = mode === 'at' ? 'none' : '';
+    atBox.style.display = mode === 'at' ? '' : 'none';
+  };
+  const modeOf = () => (def.when === 'at' ? 'at' : 'every');
+
+  const whenRow = document.createElement('div');
+  whenRow.className = 'drow wide';
+  whenRow.onclick = (e) => e.stopPropagation();
+  const wlab = document.createElement('span');
+  wlab.className = 'lbl2';
+  wlab.textContent = '언제';
+  const whenPick = document.createElement('div');
+  whenPick.className = 'helprow';
+  const modeBtns = new Map();
+  for (const [mode, text] of [['every', '주기마다'], ['at', '정해진 시각']]) {
+    const b = document.createElement('button');
+    b.className = 'mini' + (modeOf() === mode ? '' : ' ghost');
+    b.textContent = text;
+    b.onclick = async () => {
+      if (modeOf() === mode) return;
+      for (const [k, btn] of modeBtns) btn.classList.toggle('ghost', k !== mode);
+      paintMode(mode);
+      await save({ when: mode });
+    };
+    modeBtns.set(mode, b);
+    whenPick.append(b);
+  }
+  whenRow.append(wlab, whenPick);
+
+  everyBox.append(mkSlider('주기', 'intervalMin', 5, 240, 5, fmtInterval));
+
+  // ── 정해진 시각: 시각 목록 + 요일 ────────────────────────
+  const HOURS = Array.from({ length: 24 }, (_, h) => String(h).padStart(2, '0'));
+  // 분은 5분 단위로만. 예순 줄짜리 목록은 고르기가 더 힘들다.
+  const MINS = Array.from({ length: 12 }, (_, k) => String(k * 5).padStart(2, '0'));
+
+  const timesBox = document.createElement('div');
+
+  const mkPick = (opts, cur) => {
+    const sel = document.createElement('select');
+    sel.className = 'cust-name';
+    sel.style.width = '58px';
+    for (const o of opts) {
+      const op = document.createElement('option');
+      op.value = o;
+      op.textContent = o;
+      if (o === cur) op.selected = true;
+      sel.append(op);
+    }
+    return sel;
+  };
+
+  const mkTimeRow = (value, i) => {
+    const dr = document.createElement('div');
+    dr.className = 'drow wide';
+    dr.onclick = (e) => e.stopPropagation();
+    const lb = document.createElement('span');
+    lb.className = 'lbl2';
+    lb.textContent = i ? '' : '시각';
+
+    const [hh, mm] = String(value).split(':');
+    // 5분 단위로 맞춰 보여준다 — 예전 값이나 손으로 넣은 값이 07이어도 목록엔 05가 있다
+    const near5 = String((Math.round(Number(mm) / 5) * 5) % 60).padStart(2, '0');
+    const hSel = mkPick(HOURS, hh);
+    const mSel = mkPick(MINS, near5);
+    const colon = document.createElement('span');
+    colon.className = 'sep2';
+    colon.textContent = ':';
+
+    const commit = async () => {
+      const next = [...(def.times || [])];
+      next[i] = `${hSel.value}:${mSel.value}`;
+      await save({ times: next });
+      drawTimes();          // 이른 순으로 다시 세워야 하므로 통째로 다시 그린다
+    };
+    hSel.onchange = commit;
+    mSel.onchange = commit;
+
+    const del = document.createElement('button');
+    del.className = 'mini ghost';
+    del.textContent = '지우기';
+    del.onclick = async () => {
+      await save({ times: (def.times || []).filter((_, k) => k !== i) });
+      drawTimes();
+    };
+
+    const box = document.createElement('div');
+    box.className = 'helprow';
+    box.append(hSel, colon, mSel, del);
+    dr.append(lb, box);
+    return dr;
+  };
+
+  function drawTimes() {
+    timesBox.textContent = '';
+    const list = [...(def.times || [])].sort();
+    if (!list.length) {
+      const dr = document.createElement('div');
+      dr.className = 'drow wide';
+      const lb = document.createElement('span');
+      lb.className = 'lbl2';
+      lb.textContent = '시각';
+      const warn = document.createElement('span');
+      warn.className = 'hint';
+      warn.textContent = '아직 시각이 없습니다 — 하나 넣기 전까지는 울리지 않아요.';
+      dr.append(lb, warn);
+      timesBox.append(dr);
+    }
+    list.forEach((t, i) => timesBox.append(mkTimeRow(t, i)));
+    // 방금 만든 <select>도 앱 목록으로 바꿔준다 (네이티브 드롭다운이 뜨지 않게)
+    window.nunsPickFields(timesBox);
+  }
+
+  const addRow = document.createElement('div');
+  addRow.className = 'drow wide';
+  addRow.onclick = (e) => e.stopPropagation();
+  const addBtn = document.createElement('button');
+  addBtn.className = 'mini ghost';
+  addBtn.textContent = '＋ 시각 추가';
+  addBtn.onclick = async () => {
+    const next = [...(def.times || [])];
+    if (next.length >= 12) return;
+    next.push('09:00');
+    await save({ times: next });
+    drawTimes();
+  };
+  addRow.append(document.createElement('span'), addBtn);
+
+  const dayRow = document.createElement('div');
+  dayRow.className = 'drow wide';
+  dayRow.onclick = (e) => e.stopPropagation();
+  const dlab = document.createElement('span');
+  dlab.className = 'lbl2';
+  dlab.textContent = '요일';
+  const chips = document.createElement('div');
+  chips.className = 'helprow';
+  // 저장은 «매일»을 빈 배열로 둔다. 화면에서는 일곱 개가 모두 켜진 모습이 곧 매일이다.
+  const picked = new Set(def.days && def.days.length ? def.days : [0, 1, 2, 3, 4, 5, 6]);
+  const dayBtns = [];
+  for (let d = 0; d < 7; d++) {
+    const b = document.createElement('button');
+    b.className = 'mini day' + (picked.has(d) ? '' : ' ghost');
+    b.textContent = DAY_NAMES[d];
+    b.onclick = async () => {
+      if (picked.has(d)) picked.delete(d);
+      else picked.add(d);
+      // 하나도 안 고르면 울릴 날이 없어진다 — 마지막 하나는 못 끄게 둔다
+      if (!picked.size) { picked.add(d); return; }
+      dayBtns.forEach((x, k) => x.classList.toggle('ghost', !picked.has(k)));
+      await save({ days: picked.size === 7 ? [] : [...picked].sort((x, y) => x - y) });
+    };
+    dayBtns.push(b);
+    chips.append(b);
+  }
+  dayRow.append(dlab, chips);
+
+  atBox.append(timesBox, addRow, dayRow);
+  drawTimes();
+  paintMode(modeOf());
+
+  detail.append(nameRow, emojiGrid, whenRow, everyBox, atBox,
     mkSlider('길이', 'durationSec', 10, 300, 10, fmtDuration),
     delRow);
 
@@ -1247,7 +1453,7 @@ $('btn-backup-stop').onclick = () => { window.nunsseom.mailBackupStop(); loadBac
 function bindAppRow(id, fmt, toValue, toStore) {
   const input = $(id);
   const out = $('out-' + id);
-  const paint = () => { out.textContent = fmt(Number(input.value)); };
+  const paint = () => { out.textContent = fmt(Number(input.value)); fillRange(input); };
   input.value = toValue(data.settings);
   paint();
   input.oninput = paint;
@@ -1300,7 +1506,7 @@ window.nunsseom.getSettings().then((d) => {
   for (const key of ['dndEnabled', 'autoUpdate', 'calendarBusy', 'calendarAllDay',
                      'calendarLead', 'calendarShow', 'soundEnabled', 'breakNoEscape',
                      'mailEnabled', 'mailShow', 'mailRemoteImages', 'mailAutoBackup',
-                     'mailPerAccount']) {
+                     'mailPerAccount', 'stocksEnabled']) {
     bindSwitch(key);
   }
   bindAutoLaunch();

@@ -60,11 +60,32 @@ for (const b of document.querySelectorAll('.bar button[data-cmd]')) {
   b.addEventListener('pointerdown', keepFocus);
   b.onclick = () => run(b.dataset.cmd);
 }
-for (const el of [$('font'), $('size'), $('color'), $('btn-image'), $('btn-link')]) {
+for (const el of [$('color'), $('btn-image'), $('btn-link')]) {
   el.addEventListener('pointerdown', keepFocus);
 }
-$('font').onchange = () => run('fontName', $('font').value);
-$('size').onchange = () => run('fontSize', $('size').value);
+
+// 글꼴·크기는 앱 목록을 띄워서 고른다 (pickfield.js). 그 목록은 별개의 창이라
+// 고르는 동안 이 창이 포커스를 잃는다 — 돌아왔을 때 어디에 서식을 걸어야 하는지
+// 모르면 엉뚱한 데 붙는다. 그래서 목록이 뜨기 전에 잡아둔 자리를 적어둔다.
+let mark = null;
+function markSpot() {
+  const s = getSelection();
+  mark = s && s.rangeCount && body.contains(s.getRangeAt(0).commonAncestorContainer)
+    ? s.getRangeAt(0).cloneRange() : null;
+}
+function runAtMark(cmd, value) {
+  body.focus();
+  if (mark) {
+    const s = getSelection();
+    s.removeAllRanges();
+    s.addRange(mark);
+  }
+  document.execCommand(cmd, false, value);
+  paintBar();
+}
+for (const el of [$('font'), $('size')]) el.addEventListener('pf-open', markSpot);
+$('font').onchange = () => runAtMark('fontName', $('font').value);
+$('size').onchange = () => runAtMark('fontSize', $('size').value);
 $('color').oninput = () => run('foreColor', $('color').value);
 body.addEventListener('keyup', paintBar);
 body.addEventListener('mouseup', paintBar);

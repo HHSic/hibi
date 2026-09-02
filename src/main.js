@@ -1,6 +1,6 @@
 const {
   app, BrowserWindow, Tray, Menu, ipcMain, screen,
-  powerMonitor, nativeImage, desktopCapturer, nativeTheme, shell, dialog, clipboard, Notification
+  powerMonitor, nativeImage, desktopCapturer, shell, dialog, clipboard, Notification
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -15,6 +15,51 @@ if (!app.isPackaged) {
 
 const store = require('./store');
 const glass = require('./glass');
+
+// 창을 만들 때 쓰는 것들은 win.js 로 옮겼다.
+// 이름을 풀어서 받는다 — 창을 만드는 함수마다 «win»이라는 지역 변수를 이미 쓰고 있어서
+// 모듈을 그 이름으로 두면 가려진다.
+const { PRELOAD, page, PAD, PAD_H, clamp, glassQuery } = require('./win');
+
+// 물어보는 창·오른쪽 클릭 메뉴는 popup.js 가 그린다 (윈도우 기본 대화상자를 안 쓴다)
+const { askUser, pickFromMenu } = require('./popup');
+// 주식 시세 창 — 여는 것은 그쪽이 IPC로 직접 받는다. 여기서는 «끌 때 닫기»만 쓴다.
+const { closeStocks } = require('./stockwin');
+
+// 메일 쓰기 창 — 여는 두 갈래만 여기서 쓴다 (나머지는 그쪽이 IPC로 직접 받는다).
+// 그쪽이 우리 것을 몇 개 필요로 해서, 순환 require 대신 시작할 때 건네준다.
+const composewin = require('./composewin');
+const { startCompose, startCopy } = composewin;
+
+// 메일 백업 — «한 통 저장»과 «새로 온 것 저장»만 여기서 부른다
+// 주소록 — 여기서 부를 일이 없다 (그쪽이 IPC로 직접 받는다).
+// 파일 고르기 창을 설정 창 위에 띄우려고 그것만 건네준다.
+const contacts = require('./contacts');
+
+// 메일 보기 창 — «어느 창에서 온 요청인가»와 «휴지통으로»만 여기서 쓴다
+// 본문 미리 받기·거르기 규칙 — 목록(mailState)을 그대로 넘겨준다 (복사하면 갱신을 못 본다)
+const mailbody = require('./mailbody');
+const { localOrServer, prefetchBodies, knownMessages } = mailbody;
+const mailfilter = require('./mailfilter');
+const { okToSpam } = mailfilter;
+
+// 기록 창 — 여는 것과 «기록이 바뀌었다» 알림만 여기서 쓴다
+const statswin = require('./statswin');
+const { openStats } = statswin;
+
+const mailwin = require('./mailwin');
+const { slotOf, doTrash } = mailwin;
+
+const backup = require('./backup');
+const { autoBackupNew } = backup;
+backup.init({ mailAccountsForUse: () => mailAccountsForUse() });
+// 화살표로 감싸 둔다 — 여기서 바로 값을 넘기면 아직 선언되지 않은 것이 섞인다.
+composewin.init({
+  mailAccountsForUse: () => mailAccountsForUse(),
+  refreshMail: (o) => refreshMail(o),
+  slotOf: (e) => slotOf(e),
+  doTrash: (msg, parent) => doTrash(msg, parent)
+});
 const reminders = require('./reminders');
 const dnd = require('./dnd');
 const calendar = require('./calendar');
@@ -25,14 +70,9 @@ const evlog = require('./evlog');
 const planner = require('./planner');
 const calcache = require('./calcache');
 const mail = require('./mail');
-const mailbackup = require('./mailbackup');
 const mailrules = require('./mailrules');
 const mailtally = require('./mailtally');
 const mailmark = require('./mailmark');
-const contactcsv = require('./contactcsv');
-const mailcache = require('./mailcache');
-const preview = require('./preview');
-const send = require('./send');
 const secret = require('./secret');
 
 // 마지막 안전망.
@@ -50,13 +90,7 @@ process.on('unhandledRejection', (e) => {
 });
 
 const ICON = path.join(__dirname, '..', 'assets', 'tray.png');
-const PRELOAD = path.join(__dirname, 'preload.js');
-const page = (name) => path.join(__dirname, '..', 'renderer', name);
-
-// 창 크기 = 카드 크기 + 그림자 여백(INSET*2) + 호버 컨트롤 띠(CONTROLS).
 // 카드 기준 176x84 ~ 640x520. 상한이 낮으면 크게 쓰던 사람이 리사이즈에서 벽에 막힌다.
-const PAD = glass.INSET * 2;
-const PAD_H = PAD + glass.CONTROLS;
 const WIDGET_MIN = { width: 176 + PAD, height: 84 + PAD_H };
 const WIDGET_MAX = { width: 640 + PAD, height: 520 + PAD_H };
 const WIDGET_DEFAULT = { width: 244 + PAD, height: 110 + PAD_H };
@@ -66,22 +100,11 @@ let tray = null;
 let widgetWin = null;
 let widgetSize = null;   // 우리가 정한 위젯 크기 (실제 크기를 되읽지 않기 위한 기준)
 let settingsWin = null;
-let statsWin = null;
 let overlayWins = [];
 let overlayShots = new Map();
 
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 /** 렌더러에 넘기는 공통 쿼리 */
-function glassQuery(extra) {
-  return {
-    theme: nativeTheme.shouldUseDarkColors ? 'dark' : 'light',
-    scrim: String(store.settings.scrim),
-    inset: String(glass.INSET),
-    ctlh: String(glass.CONTROLS),
-    ...extra
-  };
-}
 
 const scheduler = new reminders.Scheduler(() => store.reminders, () => store.custom);
 
@@ -614,7 +637,45 @@ function createWidget() {
 }
 
 // ── 오버레이 ──────────────────────────────────────────────
+/**
+ * 휴식 화면 뒤에 깔리는 바탕화면 사진 — 미리 찍어 둔다.
+ *
+ * desktopCapturer.getSources()는 메인 프로세스를 통째로 1~2.4초 멈춘다 (화면 3대 기준).
+ * 썸네일을 작게 해도, 아예 안 만들어도 마찬가지다 — 화면을 여는 값 자체가 그렇다.
+ * 그래서 await를 떼는 것으로는 아무것도 안 고쳐진다. 그동안 창도 못 만들고 IPC도 안 받는다.
+ *
+ * 휴식을 띄우는 «그 순간»에 이걸 하면 알림이 그만큼 늦게 뜬다. 20분마다 오는 알림이면
+ * 몰라도, 09:00에 울려야 하는 알림은 바로 티가 난다.
+ * 그래서 아무도 안 기다리는 1분 전에 미리 찍어 둔다. blur(44px)로 뭉개져 깔리는
+ * 배경이라 1분 묵어도 알아볼 수 없다.
+ *
+ * 휴식이 시작된 뒤에는 찍을 수 없다 — 바탕화면이 아니라 휴식 화면 자신이 찍힌다.
+ */
+const SHOT_LEAD_MS = 60_000;
+/** 이보다 오래된 사진은 안 쓴다 */
+const SHOT_FRESH_MS = 10 * 60_000;
+let shotsAt = 0;
+
+// 찍는 중이던 것이 «휴식이 끝난 뒤에» 뒤늦게 채워 넣지 않도록 세대를 센다
+let shotSeq = 0;
+/** 지금 찍고 있는 중이면 그 약속. 배경을 달라는 화면이 이걸 기다린다. */
+let shotsReady = null;
+
+/** 곧 올 휴식을 위해 미리 찍어 둔다. 아직 멀었으면 아무것도 안 한다. */
+function prepareShots(now) {
+  // 발표·전체화면 중에는 안 찍는다. 어차피 그 상태에서는 휴식을 안 띄우고,
+  // 메인이 2초 멈추면 발표 화면이 끊겨 보인다 — 그게 바로 방해 금지가 막으려던 것이다.
+  if (state.dnd) return;
+  const next = scheduler.soonest();
+  if (!next) return;
+  const left = next.at - now;
+  if (left <= 0 || left > SHOT_LEAD_MS) return;
+  if (now - shotsAt < SHOT_LEAD_MS) return;   // 이번 휴식 것은 이미 찍어 뒀다
+  shotsReady = captureScreens();
+}
+
 async function captureScreens() {
+  const seq = ++shotSeq;
   overlayShots.clear();
   try {
     const displays = screen.getAllDisplays();
@@ -624,11 +685,16 @@ async function captureScreens() {
     );
     const sources = await desktopCapturer.getSources({
       types: ['screen'],
-      thumbnailSize: { width: Math.round(max.width / 3), height: Math.round(max.height / 3) }
+      // 이 그림은 blur(44px)로 뭉개져 깔린다 — 크게 떠도 보이는 건 똑같다.
+      // 크기를 줄여도 찍는 시간은 그대로지만(화면을 긁는 값이 대부분이다),
+      // 화면마다 넘겨줄 데이터가 675KB에서 220KB로 준다.
+      thumbnailSize: { width: Math.round(max.width / 6), height: Math.round(max.height / 6) }
     });
+    if (seq !== shotSeq) return;   // 그 사이 휴식이 끝났거나 새로 시작했다
     for (const src of sources) {
       if (!src.thumbnail.isEmpty()) overlayShots.set(String(src.display_id), src.thumbnail.toDataURL());
     }
+    shotsAt = Date.now();
   } catch (e) {
     console.warn('[overlay] capture failed:', e.message);
   }
@@ -670,23 +736,22 @@ function buildBreakPayload(ids) {
 
 let breakPayload = null;
 
-async function openOverlays(ids) {
-  const durations = ids.map((id) => {
-    const c = scheduler.cfgOf(id);
-    return (c && c.durationSec) || 20;
-  });
-  const durationSec = Math.max(...durations, 10);
+/**
+ * 휴식 창을 미리 만들어 둔다.
+ *
+ * 창을 만들고 overlay.html을 읽는 데 0.4초가 걸린다. 그걸 «휴식이 오는 순간»에 하면
+ * 그대로 늦게 뜬다. 미리 만들어 숨겨 두면 그때는 show()만 하면 되고, 그건 10ms다.
+ *
+ * 다만 계속 들고 있지는 않는다 — 화면 3대 기준 숨긴 창만으로 364MB를 더 쓴다.
+ * 휴식이 가까워질 때 만들고, 안 오게 되면(멈춤·자리 비움·방해 금지) 바로 버린다.
+ */
+const WARM_LEAD_MS = 10_000;
+let warmWins = [];
+const warmReady = new WeakSet();
 
-  breakPayload = buildBreakPayload(ids);
-  await captureScreens();
-
-  state.onBreak = true;
-  state.breakIds = ids;
-  state.breakStartedAt = Date.now();
-  state.breakEndsAt = Date.now() + durationSec * 1000;
-
+function buildOverlayWins() {
   const primaryId = screen.getPrimaryDisplay().id;
-  for (const disp of screen.getAllDisplays()) {
+  return screen.getAllDisplays().map((disp) => {
     const win = new BrowserWindow({
       ...disp.bounds,
       frame: false,
@@ -696,23 +761,102 @@ async function openOverlays(ids) {
       alwaysOnTop: true,
       skipTaskbar: true,
       hasShadow: false,
+      show: false,          // 내용을 받은 다음에 보여준다
       webPreferences: { preload: PRELOAD }
     });
     win.setAlwaysOnTop(true, 'screen-saver');
+    win.webContents.once('did-finish-load', () => warmReady.add(win));
+    // endsAt과 내용은 시작할 때 보낸다 — 미리 만들 때는 아직 정해지지 않았다
     win.loadFile(page('overlay.html'), {
-      query: {
-        endsAt: String(state.breakEndsAt),
-        main: String(disp.id === primaryId),
-        display: String(disp.id)
-      }
+      query: { main: String(disp.id === primaryId), display: String(disp.id) }
     });
-    overlayWins.push(win);
+    return win;
+  });
+}
+
+function dropWarm() {
+  if (!warmWins.length) return;
+  for (const w of warmWins) { try { w.destroy(); } catch { /* 이미 없어졌다 */ } }
+  warmWins = [];
+}
+
+/** 곧 올 휴식을 위해 창을 미리 세워 두거나, 안 오게 됐으면 치운다 */
+function tendWarm(now) {
+  const next = scheduler.soonest();
+  const left = next ? next.at - now : Infinity;
+  // 한참 남았으면 들고 있을 이유가 없다. 만들고 버리기를 반복하지 않도록
+  // 버리는 선은 만드는 선보다 넉넉하게 둔다.
+  if (left > WARM_LEAD_MS * 2) { dropWarm(); return; }
+  if (left <= 0 || left > WARM_LEAD_MS || warmWins.length) return;
+  warmWins = buildOverlayWins();
+}
+
+/** 모니터를 꽂거나 빼면 미리 만들어 둔 창은 엉뚱한 자리에 있는 셈이 된다 — 버리고 다시 만든다 */
+function watchDisplays() {
+  for (const ev of ['display-added', 'display-removed', 'display-metrics-changed']) {
+    screen.on(ev, dropWarm);
+  }
+}
+
+async function openOverlays(ids) {
+  const durations = ids.map((id) => {
+    const c = scheduler.cfgOf(id);
+    return (c && c.durationSec) || 20;
+  });
+  const durationSec = Math.max(...durations, 10);
+
+  breakPayload = buildBreakPayload(ids);
+
+  // 미리 찍어둔 게 있으면 그대로 쓴다 — 예정된 휴식은 1분 전에 찍어 둔다.
+  // 없을 때만(«지금 쉬기»처럼 예고 없이 시작한 경우) 여기서 찍는다. 그때는 메인이
+  // 2초쯤 멈춰 화면이 늦게 뜨지만, 그건 사용자가 방금 직접 누른 경우다.
+  if (Date.now() - shotsAt > SHOT_FRESH_MS) await captureScreens();
+
+  state.onBreak = true;
+  state.breakIds = ids;
+  state.breakStartedAt = Date.now();
+  state.breakEndsAt = Date.now() + durationSec * 1000;
+
+  // 화면 쪽이 그릴 때 «언제 끝나는지»가 있어야 한다 — 미리 만들어 둔 창은
+  // 만들 때 그걸 몰랐으므로 여기서 같이 실어 보낸다.
+  breakPayload.endsAt = state.breakEndsAt;
+
+  // 미리 세워 둔 창이 다 준비됐으면 그걸 쓴다. 화면 수가 달라졌거나(모니터를 꽂았거나)
+  // 아직 다 안 읽혔으면 그냥 새로 만든다 — 반쯤 준비된 창에 신호를 보내면 놓친다.
+  const want = screen.getAllDisplays().length;
+  // 아직 다 안 읽혔어도 미리 세워 둔 창을 쓴다 — 새로 만드는 것보다 무조건 앞서 있다.
+  // 다 읽혔는지는 아래에서 창마다 따로 본다.
+  const usable = warmWins.length === want && warmWins.every((w) => !w.isDestroyed());
+  if (usable) {
+    overlayWins = warmWins;
+    warmWins = [];
+  } else {
+    dropWarm();
+    overlayWins = buildOverlayWins();
+  }
+
+  for (const win of overlayWins) {
+    if (win.isDestroyed()) continue;
+    const go = () => {
+      if (win.isDestroyed()) return;
+      win.webContents.send('overlay:begin', breakPayload);
+      win.show();
+    };
+    // 미리 만들어 둔 창은 이미 다 읽혔다 — 바로 보여준다 (여기가 빠른 길이다).
+    // 새로 만든 창은 다 읽힐 때까지 기다린다. 안 그러면 빈 화면이 먼저 뜬다.
+    if (warmReady.has(win)) go();
+    else win.webContents.once('did-finish-load', go);
   }
 }
 
 function closeOverlays() {
   for (const w of overlayWins) { try { w.destroy(); } catch {} }
   overlayWins = [];
+  // 아직 찍고 있는 중일 수 있다 (기다리지 않고 창을 띄우므로).
+  // 세대를 올려두면 그게 끝나도 지워진 자리에 다시 채워 넣지 않는다.
+  shotSeq++;
+  shotsReady = null;
+  shotsAt = 0;
   overlayShots.clear();
   breakPayload = null;
   state.onBreak = false;
@@ -736,7 +880,7 @@ function endBreak(kind) { // 'done' | 'skipped' | 'snoozed'
     else store.bumpStat('skipped', ids.length);
     scheduler.rescheduleAll(ids);
   }
-  if (statsWin && !statsWin.isDestroyed()) statsWin.webContents.send('stats:changed');
+  statswin.notifyChanged();
   state.breakIds = [];
   updateTray();
   pushTick();
@@ -750,12 +894,20 @@ function tick() {
     if (now >= state.breakEndsAt) endBreak('done');
     return;
   }
-  if (state.paused) { pushTick(); return; }
+  // 일시정지는 «시계를 멈추는 것»이다. 예전에는 알림만 안 띄우고 시계는 계속 갔다 —
+  // 그래서 30분 멈춰뒀다 풀면 밀린 것들이 한꺼번에 쏟아졌다. 멈춘 동안 쉬지 않았으니
+  // 남은 시간도 줄면 안 된다. 자리 비움과 같은 방식으로 다음 시각을 같이 밀어준다.
+  if (state.paused) { scheduler.postponeAll(1000); dropWarm(); pushTick(); return; }
+
+  // 멈춰 있거나 자리를 비운 사이에 지나가 버린 «정해진 시각»을 먼저 정리한다.
+  // 이걸 due()보다 먼저 해야, 풀자마자 세 시간 전 알림이 튀어나오지 않는다.
+  scheduler.catchUp(now);
 
   if (powerMonitor.getSystemIdleTime() >= store.settings.idlePauseSec) {
     scheduler.postponeAll(1000); // 자리 비움 동안 정지
     state.hold = null;
     state.dnd = null;
+    dropWarm();                  // 자리에 없으면 곧 안 띄운다
   } else {
     // 알림이 밀릴 때만이 아니라 방해 금지가 켜진 동안 계속 상태를 알린다.
     // 판단에 "이 휴식이 몇 분 걸리는지"가 필요하므로 due를 먼저 구한다.
@@ -767,6 +919,7 @@ function tick() {
       if (state.dnd) {
         state.hold = state.dnd;
         scheduler.postponeAll(1000);
+        dropWarm();              // 언제 풀릴지 모르는 채로 들고 있지 않는다
       } else {
         state.hold = null;
         startBreak(due);
@@ -774,6 +927,11 @@ function tick() {
       }
     } else {
       state.hold = null;
+      // 곧 올 휴식을 미리 준비해 둔다 — 배경 사진(1분 전)과 창(20초 전).
+      // 여기서 하면 아무도 안 기다린다. 띄우는 순간에 하면 그 시간이 그대로
+      // «늦게 뜬 알림»이 된다.
+      prepareShots(now);
+      tendWarm(now);
     }
   }
   announceMail();
@@ -805,6 +963,9 @@ function pushTick() {
   // 알림 한 줄은 잠깐만 살아 있는다 (기다리는 중이면 끝날 때까지)
   const nt = mailState.notice;
   const fresh = nt && (nt.kind === 'wait' || Date.now() - nt.at < 8000) ? nt : null;
+  // 주식은 켜져 있을 때만 위젯에 단추를 낸다 (값은 창에서만 본다)
+  const stocksOn = !!store.settings.stocksEnabled;
+
   const mailBox = (store.settings.mailEnabled && store.settings.mailShow)
     ? {
       unread: mailState.unread,
@@ -826,16 +987,21 @@ function pushTick() {
   logMailPayload(mailBox);
 
   if (!next) {
-    payload = { empty: true, paused: state.paused, today: store.todayStats(), schedule, mail: mailBox };
+    payload = { empty: true, paused: state.paused, today: store.todayStats(), schedule, mail: mailBox, stocksOn };
   } else {
     const cfg = scheduler.cfgOf(next.id);
-    const totalSec = Math.max(1, (cfg ? cfg.intervalMin : 20) * 60);
+    // 고리가 얼마나 찼는지는 «한 바퀴»가 얼마인지 알아야 그린다.
+    // 주기 알림이면 그 주기, 정해진 시각이면 이번 차례에서 다음 차례까지.
+    const totalSec = Math.max(1, Math.round(scheduler.periodMsOf(next.id, next.at) / 1000));
     const remaining = Math.max(0, Math.round((next.at - Date.now()) / 1000));
     payload = {
       empty: false,
       type: reminders.meta(next.id, custom),
       remaining,
       total: totalSec,
+      // 정해진 시각 알림은 «20시간 남음»보다 «09:00»이 쓸모 있다 — 알람 시계처럼.
+      // 가까워지면 화면 쪽에서 알아서 카운트다운으로 바꿔 보여준다.
+      fixedAt: reminders.isFixed(cfg) ? hhmm(next.at) : null,
       paused: state.paused,
       onBreak: state.onBreak,
       idle: powerMonitor.getSystemIdleTime() >= store.settings.idlePauseSec,
@@ -844,6 +1010,7 @@ function pushTick() {
       today: store.todayStats(),
       schedule,
       mail: mailBox,
+      stocksOn,
       // 일정 때문에 미루는 중이면 언제 이어지는지 알려준다
       holdUntil: state.hold && cal.hold ? cal.hold.until : null,
       upcoming: upcomingList(8),
@@ -862,6 +1029,12 @@ function pushTick() {
 }
 
 /** 다음 차례 순서대로 종류 메타 + 남은 시간 */
+/** epoch → '09:00' (로컬 시각) */
+function hhmm(at) {
+  const d = new Date(at);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 function upcomingList(n) {
   const custom = store.custom;
   const now = Date.now();
@@ -874,18 +1047,30 @@ function upcomingList(n) {
     }));
 }
 
+/**
+ * 트레이 풍선말의 «언제».
+ * 정해진 시각 알림은 «21:20에»라고 시각으로 말한다 — «약 300분 후»는 세어봐야 안다.
+ */
+function tipWhen(next) {
+  if (reminders.isFixed(scheduler.cfgOf(next.id))) return `${hhmm(next.at)}에`;
+  const mins = Math.max(0, Math.ceil((next.at - Date.now()) / 60_000));
+  if (mins < 60) return `약 ${mins}분 후`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m ? `약 ${h}시간 ${m}분 후` : `약 ${h}시간 후`;
+}
+
 // ── 트레이 ────────────────────────────────────────────────
 function updateTray() {
   if (!tray) return;
   const next = scheduler.soonest();
   const custom = store.custom;
-  const mins = next ? Math.max(0, Math.ceil((next.at - Date.now()) / 60_000)) : 0;
   const up = updater.getState();
   tray.setToolTip(
     state.paused ? 'Hibi — 일시정지됨'
       : state.hold ? `Hibi — 방해 금지 (${state.hold}) · 알림 대기 중`
         : state.dnd ? `Hibi — 방해 금지 (${state.dnd})`
-          : next ? `Hibi — ${reminders.meta(next.id, custom).name} 약 ${mins}분 후`
+          : next ? `Hibi — ${reminders.meta(next.id, custom).name} ${tipWhen(next)}`
             : 'Hibi — 켜진 알림 없음'
   );
 
@@ -1000,7 +1185,7 @@ function setEventLog(on) {
       evlog.log('main', `위젯 시작 상태 ${b.width}x${b.height} @${b.x},${b.y} · resizable=${widgetWin.isResizable()}`);
     }
   }
-  for (const w of [widgetWin, statsWin, settingsWin]) {
+  for (const w of [widgetWin, statswin.win(), settingsWin]) {
     if (w && !w.isDestroyed()) w.webContents.send('debug:mode', on);
   }
   updateTray();
@@ -1054,32 +1239,6 @@ function openSettings(tab) {
   settingsWin.on('closed', () => { settingsWin = null; });
 }
 
-// ── 기록 창 (통계 + 종류별 상세) ──────────────────────────
-function openStats(focusType) {
-  if (statsWin && !statsWin.isDestroyed()) {
-    statsWin.focus();
-    if (focusType) statsWin.webContents.send('stats:focus', focusType);
-    return;
-  }
-  statsWin = new BrowserWindow({
-    width: 316 + PAD,      // 15주 잔디에 맞춰 폭을 좁게 (더 긴 기간은 가로 스크롤)
-    height: 452 + PAD,
-    frame: false,
-    resizable: false,
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    ...glass.windowOptions(),
-    webPreferences: { preload: PRELOAD }
-  });
-  statsWin.loadFile(page('stats.html'), {
-    query: glassQuery({ radius: '20', focus: focusType || '' })
-  });
-  statsWin.on('closed', () => { statsWin = null; });
-}
-
-/** 위젯 안 달력을 펼친다 (별도 창을 두지 않고 위젯이 길어진다) */
-// 구독 주소는 15분마다 다시 읽는다. 그런데 사용자가 방금 일정을 고치고 달력을 열면
-// 그때까지 옛 내용을 보게 된다 — 열 때 한 번 더 읽는다. 너무 자주 부르지는 않는다.
 const CAL_NUDGE_MS = 45_000;
 let calNudgedAt = 0;
 function nudgeCalendar(force = false) {
@@ -1174,50 +1333,12 @@ ipcMain.on('cal:panel', (_e, { on, needed, which }) => {
 });
 
 /** 기록 창이 그릴 전체 데이터 */
-function statsPayloadFull(typeId) {
-  const custom = store.custom;
-  const weeks = store.settings.grassWeeks || 15;
-  const active = scheduler.activeIds();
-  const now = Date.now();
-
-  const tabs = active.map((id) => {
-    const at = scheduler.nextAt.get(id);
-    return {
-      ...reminders.meta(id, custom),
-      remaining: at ? Math.max(0, Math.round((at - now) / 1000)) : null
-    };
-  });
-
-  const sel = typeId && active.includes(typeId) ? typeId : null;
-  const g = store.grassSeries(weeks, sel);
-  const st = store.streaks(sel);
-
-  return {
-    weeks,
-    selected: sel,
-    tabs,
-    grass: g.cells,
-    max: g.max,
-    streak: st,
-    today: store.todayCount(sel),
-    detail: sel ? tabs.find((t) => t.id === sel) : null
-  };
-}
-
 // ── IPC ──────────────────────────────────────────────────
 ipcMain.on('widget:toggle-pause', togglePause);
 ipcMain.on('widget:break-now', (_e, id) => startBreak(id ? [id] : null));
 ipcMain.on('widget:open-settings', (_e, tab) => openSettings(tab));
-ipcMain.on('widget:open-stats', (_e, id) => openStats(id || null));
 ipcMain.on('widget:hide', () => widgetWin && widgetWin.hide());
 
-// 기록 창
-ipcMain.handle('stats:data', (_e, typeId) => statsPayloadFull(typeId));
-ipcMain.on('stats:set-weeks', (_e, weeks) => {
-  store.setSettings({ grassWeeks: clamp(Math.round(weeks), 4, 53) });
-});
-ipcMain.on('stats:break-now', (_e, id) => { if (id) startBreak([id]); });
-ipcMain.on('stats:close', () => statsWin && statsWin.close());
 ipcMain.on('widget:resize', (_e, { width, height }) => {
   if (!widgetWin || widgetWin.isDestroyed()) return;
   widgetWin.setSize(
@@ -1277,7 +1398,11 @@ ipcMain.on('widget:move', (_e, { x, y }) => {
 // 렌더러가 보내는 포인터 이벤트 기록
 ipcMain.on('debug:log', (_e, { source, message }) => evlog.log(source, message));
 
-ipcMain.handle('overlay:get-bg', (_e, id) => overlayShots.get(String(id)) || null);
+ipcMain.handle('overlay:get-bg', async (_e, id) => {
+  // 아직 찍는 중이면 여기서 기다린다 — 그동안 휴식 화면은 이미 떠 있다.
+  if (shotsReady) { try { await shotsReady; } catch { /* 배경 없이 간다 */ } }
+  return overlayShots.get(String(id)) || null;
+});
 ipcMain.handle('overlay:get-payload', () => breakPayload);
 ipcMain.on('overlay:snooze', () => endBreak('snoozed'));
 ipcMain.on('overlay:skip', () => endBreak('skipped'));
@@ -1514,360 +1639,6 @@ async function doMarkRead({ accountId, uids, read = true, mailbox = '' } = {}) {
 
 ipcMain.handle('mail:mark-read', (_e, opts) => doMarkRead(opts || {}));
 
-// ── 메일 쓰기 ───────────────────────────────────────────
-// 받기(IMAP)와 보내기(SMTP)는 서버가 다르다. 창은 하나만 띄운다 —
-// 쓰던 글이 있는데 새 창이 겹쳐 뜨면 어느 쪽에 쓰고 있었는지 잃는다.
-let composeWin = null;
-let composePayload = null;
-let composeSize = null;
-// 복사(다시 보내기)로 실어둔 원문 첨부. 바이트는 여기 메인에만 둔다 —
-// 화면에는 «무엇이 붙어 있나»만(이름·크기·id) 넘기고, 보낼 때 id로 다시 맞춘다.
-// composePayload와 짝이다(창이 하나뿐이다). 그래서 반드시 같이 확정해야 한다 —
-// 짝이 어긋나면 화면에 붙어 보이는 첨부를 못 보내게 된다.
-let composeCarried = [];
-// 창이 이미 열려 있어 갈아끼기를 «물어보는 중»인 첨부. 화면이 수락할 때 비로소 확정한다.
-// 먼저 확정하면, 사용자가 «현재 초안 유지»를 고른 순간 그 초안의 첨부가 사라진다.
-let pendingCarried = [];
-let copySeq = 0;
-// 보내는 중인가. 두 번 나가는 것을 막고, 그 사이에 들어오는 새 초안도 거절한다.
-// openCompose가 이걸 보므로 그보다 위에 선언한다 (선언 전 사용으로 화면이 죽은 적이 여러 번 있다).
-let sendingNow = false;
-
-function openCompose(payload, carried = []) {
-  if (composeWin && !composeWin.isDestroyed()) {
-    // 보내는 중이면 화면이 갈아끼우기를 그냥 버린다. 그걸 성공이라고 돌려주면
-    // 답장을 눌렀는데 아무 일도 안 일어나고 이유도 안 나온다 — 여기서 거절한다.
-    // (이 서버는 보내는 데 수십 초가 걸려서 그 사이가 짧지 않다)
-    if (sendingNow) {
-      return { ok: false, message: '쓰기 창이 메일을 보내는 중입니다 — 끝나면 다시 눌러주세요' };
-    }
-    // 창을 반드시 보이게 한 다음에 말을 건다.
-    // focus()만으로는 최소화된 창이 안 올라온다 — 그러면 답장을 눌렀는데
-    // 아무 일도 안 일어난다. 갈아끼울까 묻는 말도 안 보이는 창에서 뜼게 된다.
-    if (composeWin.isMinimized()) composeWin.restore();
-    if (!composeWin.isVisible()) composeWin.show();
-    composeWin.moveTop();
-    composeWin.focus();
-    // 쓰던 글이 있는데 새 초안으로 갈아끼우면 그 글은 그대로 사라진다.
-    // 화면에 물어보고, 아니라고 하면 쓰던 것을 그대로 둔다.
-    // 첨부도 여기서 확정하지 않는다 — 화면이 수락해야(compose:accept-replace) composeCarried와
-    // composePayload를 함께 바꾼다. 먼저 바꾸면 «유지»를 골랐을 때 그 초안의 첨부가 사라진다.
-    pendingCarried = carried;
-    composeWin.webContents.send('compose:replace', payload);
-    evlog.log('메일', '쓰기 창이 이미 열려 있어 갈아끼기를 물어봅니다');
-    return { ok: true, message: '쓰기 창이 이미 열려 있습니다 — 그쪽에서 물어봅니다', reused: true };
-  }
-  composePayload = payload;
-  composeCarried = carried;   // 새 창은 곧바로 확정한다 — composeData로 그대로 채운다
-  const saved = store.settings.composeSize;
-  const cap = mailViewMax();
-  composeWin = new BrowserWindow({
-    width: Math.round(clamp((saved && saved.width) || 520 + PAD, 380, cap.width)),
-    height: Math.round(clamp((saved && saved.height) || 520 + PAD, 320, cap.height)),
-    minWidth: 380, minHeight: 320,
-    frame: false,
-    resizable: false,            // 크기 조절은 렌더러의 리사이즈 존이 맡는다
-    alwaysOnTop: false, skipTaskbar: false,
-    title: '메일 쓰기',
-    ...glass.windowOptions(),
-    webPreferences: { preload: PRELOAD }
-  });
-  composeSize = { width: composeWin.getSize()[0], height: composeWin.getSize()[1] };
-  lockToOurPage(composeWin);
-  composeWin.loadFile(page('compose.html'), { query: glassQuery({ radius: '20' }) });
-  composeWin.on('closed', () => {
-    composeWin = null; composePayload = null; composeCarried = []; pendingCarried = [];
-  });
-  return { ok: true, message: '' };
-}
-
-/**
- * 새 메일 / 답장 / 전달 — 어느 쪽이든 초안을 만들어 창을 연다.
- * 메일 보기 창의 «답장» 버튼과 목록의 오른쪽 클릭이 같은 길을 쓴다.
- */
-function startCompose({ kind = 'new', accountId, source } = {}) {
-  const accounts = mailAccountsForUse();
-  if (!accounts.length) return { ok: false, message: '쓸 수 있는 계정이 없습니다' };
-
-  // 답장·전달은 반드시 그 메일을 받은 계정으로 써야 한다. 못 찾았다고 첫 계정으로 넘기면
-  // 개인 메일에 회사 주소로 답장이 나간다 — 받는 사람 눈에는 그게 내 정체다.
-  const asked = accounts.find((a) => a.id === accountId);
-  if (!asked && kind !== 'new') {
-    evlog.log('메일', `쓰기 못 열음 · 계정 ${accountId}을 목록에서 못 찾음`
-      + ` (쓸 수 있는 계정: ${accounts.map((a) => a.id).join(',') || '없음'})`);
-    return { ok: false, message: '이 메일을 받은 계정을 쓸 수 없습니다 (꺼져 있거나 지워졌습니다)' };
-  }
-  // 이어쓰는 것은 원래 쓰던 계정으로 — 그 계정이 없어졌으면 첫 계정으로 놓아둔다
-  const draftAcc = kind === 'new' && store.mailDraft
-    ? accounts.find((x) => x.id === store.mailDraft.accountId)
-    : null;
-  const acc = asked || draftAcc || accounts[0];
-
-  // 쓰다 말은 것이 있으면 이어서 쓴다. 답장·전달은 새 초안이 분명하므로 건드리지 않는다.
-  const kept = kind === 'new' ? store.mailDraft : null;
-  const draft = kept
-    ? {
-      to: kept.to, cc: kept.cc, bcc: kept.bcc, subject: kept.subject,
-      bodyHtml: kept.bodyHtml, inReplyTo: kept.inReplyTo, references: kept.references,
-      restored: true, restoredAt: kept.at, restoredNames: kept.attachNames || []
-    }
-    : (kind === 'new' ? { to: '', subject: '', text: '' } : send.draftFrom(kind, source));
-  const stored = store.mailAccounts.find((a) => a.id === acc.id) || {};
-  evlog.log('메일', `쓰기 열기 · ${kind} · 계정 ${acc.name || acc.user}`);
-  const opened = openCompose({
-    accountId: acc.id,
-    signature: stored.signature || '',
-    signatures: Object.fromEntries(store.mailAccounts.map((a) => [a.id, a.signature || ''])),
-    title: kept ? (kept.title || '이어 쓰기')
-      : kind === 'reply' ? '답장' : kind === 'forward' ? '전달' : '새 메일',
-    // 새 메일은 어느 계정으로 보낼지 고를 수 있어야 한다 — 안 그러면 «마지막에 온 메일의
-    // 계정»으로 정해져서, 받은 순서가 내 발신 주소를 결정하게 된다
-    pickable: kind === 'new',
-    accounts: accounts.map((a) => {
-      const f = mail.fromOf(a);
-      return { id: a.id, name: a.name || a.user, from: f.address, label: f.name };
-    }),
-    ...draft
-  });
-  if (!opened.ok) evlog.log('메일', `쓰기 못 열음 · ${opened.message}`);
-  return opened;
-}
-
-ipcMain.handle('compose:open', (_e, opts) => startCompose(opts || {}));
-
-// 본문에 박힌 그림은 «첨부»가 아니다 — 이미 본문(cid/data:)에 들어 있다.
-// 그것까지 다시 실으면 그림이 두 번(본문 한 번, 첨부 한 번) 나간다.
-// mailparser는 본문이 참조하는 조각에 related=true를 단다.
-function realAttachments(files) {
-  return (files || []).filter((a) => a && a.content && a.filename
-    && !a.related && a.contentDisposition !== 'inline');
-}
-
-/**
- * 보낸 메일을 복사해 새 메일로 연다 — «다시 보내기».
- * 원문 첨부의 바이트는 메인에만 두고(composeCarried), 화면에는 이름·크기·id만 넘긴다.
- * 보낼 때 그 id로 바이트를 다시 맞춘다 — 큰 파일이 화면을 오가지 않게, 그리고
- * 화면이 뚫려도 아무 파일이나 실어 보내지 못하게.
- */
-function startCopy({ accountId, view, files } = {}) {
-  const accounts = mailAccountsForUse();
-  if (!accounts.length) return { ok: false, message: '쓸 수 있는 계정이 없습니다' };
-  // 보낸 메일은 그 계정으로 다시 보내는 게 자연스럽다. 못 찾으면 첫 계정으로 둔다
-  // (내 보낸메일함이니 어느 계정이든 내 것이다).
-  const acc = accounts.find((a) => a.id === accountId) || accounts[0];
-  const draft = send.copyFrom(view || {});
-
-  const carry = realAttachments(files).slice(0, 20).map((a) => ({
-    id: `copy${++copySeq}`, filename: a.filename, size: a.content.length, content: a.content
-  }));
-
-  const stored = store.mailAccounts.find((a) => a.id === acc.id) || {};
-  evlog.log('메일', `복사 열기 · 계정 ${acc.name || acc.user}`
-    + (carry.length ? ` · 첨부 ${carry.length}개` : ''));
-  const opened = openCompose({
-    accountId: acc.id,
-    signature: stored.signature || '',
-    signatures: Object.fromEntries(store.mailAccounts.map((a) => [a.id, a.signature || ''])),
-    title: '복사본',
-    pickable: false,
-    accounts: accounts.map((a) => {
-      const f = mail.fromOf(a);
-      return { id: a.id, name: a.name || a.user, from: f.address, label: f.name };
-    }),
-    ...draft,
-    // 바이트는 빼고 이름·크기·id만. 화면은 이걸로 칩을 그리고, 보낼 때 도로 넘긴다.
-    attachments: carry.map(({ content, ...d }) => ({ ...d, carried: true }))
-  }, carry);
-  if (!opened.ok) evlog.log('메일', `복사 못 열음 · ${opened.message}`);
-  return opened;
-}
-
-// 메일 보기 창의 «휴지통» — 옮기고 나면 그 창은 없는 메일을 보고 있으므로 닫는다
-ipcMain.handle('mail:trash', async (e) => {
-  const slot = slotOf(e);
-  if (!slot || !slot.payload || slot.payload.error) {
-    return { ok: false, message: '메일을 아직 다 읽지 못했습니다' };
-  }
-  const v = slot.payload;
-  const r = await doTrash(
-    { accountId: v.accountId, uid: v.uid, mailbox: v.mailbox, subject: v.subject }, slot.win);
-  // 물어보고 그만뒀거나 실패했으면 창을 그대로 둔다 — 옮겨졌을 때만 닫는다.
-  // (목록이 줄었는지로 판단하면 안 된다. refreshMail을 기다리지 않기 때문이다.)
-  if (r.moved && !slot.win.isDestroyed()) slot.win.close();
-  // 그만두기를 고른 것은 실패가 아니다 — 화면이 «옮기지 못했습니다»라고 하면 안 된다
-  return { ok: r.moved, cancelled: !!r.cancelled, closed: !!r.moved, message: r.message || '' };
-});
-
-// 메일 보기 창의 «복사» — 원문 버퍼가 여기(slot.files)에 있으므로 메인이 만든다
-ipcMain.handle('mail:copy', (e) => {
-  const slot = slotOf(e);
-  if (!slot || !slot.payload || slot.payload.error) {
-    return { ok: false, message: '메일을 아직 다 읽지 못했습니다' };
-  }
-  const v = slot.payload;
-  // 단추·메뉴는 내가 보낸 메일에서만 «복사»를 보여준다. IPC도 같은 문을 지켜야 한다 —
-  // 안 그러면 뚫린 화면이 받은 메일의 첨부 바이트(메인에만 두는 것)를 실어 보낼 수 있다.
-  if (!v.fromSelf) return { ok: false, message: '복사는 내가 보낸 메일에서만 됩니다' };
-  return startCopy({
-    accountId: v.accountId,
-    view: { subject: v.subject, to: v.to, cc: v.cc, text: v.text, html: v.html },
-    files: slot.files
-  });
-});
-
-// 쓰다 말은 것을 계속 적어둔다. 화면이 손이 멈출 때마다 보낸다 —
-// 창을 닫았거나 앱이 죽어도 다음에 새 메일을 열면 그대로 나온다.
-ipcMain.on('compose:draft-save', (_e, d) => {
-  try { store.setMailDraft(d || null); } catch (err) { evlog.log('메일', `임시 저장 실패 — ${err.message}`); }
-});
-ipcMain.on('compose:draft-clear', () => store.clearMailDraft());
-
-/**
- * 쓰기 창이 물어볼 것들.
- * 브라우저 confirm은 테두리 없는 창에서 동떨어지게 뜨고 버튼이 둘뿐이다.
- * 닫기는 세 갈래길이다 — 저장 / 버림 / 계속 쓰기.
- */
-ipcMain.handle('compose:ask', async (_e, kind) => {
-  const win = composeWin && !composeWin.isDestroyed() ? composeWin : undefined;
-  if (kind === 'replace') {
-    // «임시 저장하고 열기»는 여기서 넣지 않는다 — 칸이 하나라 새 답장을
-    // 치는 순간 그게 덮인다. 할 수 없는 걸 리스트에 두면 그게 거짓말이 된다.
-    const r = await askUser(win, {
-      buttons: ['버리고 열기', '그만두기'],
-      defaultId: 1,
-      danger: false,
-      title: '메일 쓰기',
-      message: '쓰던 글을 버리고 새로 여시겠습니까?',
-      detail: '임시 저장은 한 통뿐이라 새 글을 쓰기 시작하면 지금 글은 사라집니다.\n'
-        + '지금 글을 지키려면 «그만두기»를 누르고 먼저 보내거나 닫으세요.'
-    });
-    return r === 0 ? 'discard' : 'cancel';
-  }
-  if (kind === 'discard') {
-    const r = await askUser(win, {
-      buttons: ['버리기', '그만두기'],
-      defaultId: 1,
-      title: '새로 쓰기',
-      message: '이어쓰던 글을 버릴까요?',
-      detail: '빈 메일로 시작합니다. 버린 글은 되돌릴 수 없습니다.'
-    });
-    return r === 0 ? 'discard' : 'cancel';
-  }
-  const r = await askUser(win, {
-    buttons: ['임시 저장', '저장 안 함', '계속 쓰기'],
-    defaultId: 0,
-    title: '메일 쓰기',
-    message: '쓰다 만 메일을 임시 저장할까요?',
-    detail: '저장하면 다음에 «쓰기»를 누를 때 이어서 씁니다.'
-  });
-  // 창 밖을 눌렀거나 Esc — 아무것도 안 고른 것은 «계속 쓰기»다.
-  // 글이 날아가는 쪽으로 기울면 안 된다.
-  return r === 0 ? 'save' : r === 1 ? 'discard' : 'cancel';
-});
-
-ipcMain.handle('compose:data', () => composePayload);
-ipcMain.on('compose:close', () => composeWin && !composeWin.isDestroyed() && composeWin.close());
-/**
- * 화면이 «갈아끼워도 좋다»고 하면 그때 초안을 바꾼다.
- * 실어둔 첨부도 바로 이 순간에 확정한다 — payload와 짝을 맞춰야, «유지»를 골랐을 때
- * 옛 초안이 제 첨부를 그대로 들고 있게 된다.
- */
-ipcMain.on('compose:accept-replace', (_e, payload) => {
-  composePayload = payload;
-  composeCarried = pendingCarried;
-  pendingCarried = [];
-});
-/** 새 메일에서 보낼 계정을 바꾼다 */
-ipcMain.on('compose:set-account', (_e, id) => {
-  if (composePayload && mailAccountsForUse().some((a) => a.id === id)) composePayload.accountId = id;
-});
-
-// 화면이 «이 파일을 붙여라»라고 말한 것을 그대로 믿으면, 렌더러가 뚫렸을 때 이 PC의
-// 아무 파일이나 메일로 실어 보낼 수 있다. 대화상자로 사용자가 직접 고른 것만 기억해 둔다.
-const attachOk = new Set();
-
-ipcMain.handle('compose:attach', async () => {
-  const { canceled, filePaths } = await dialog.showOpenDialog(composeWin || undefined, {
-    title: '첨부할 파일', properties: ['openFile', 'multiSelections']
-  });
-  if (canceled) return [];
-  return filePaths.map((p) => {
-    let size = 0;
-    try { size = fs.statSync(p).size; } catch { /* 크기를 못 읽어도 붙일 수는 있다 */ }
-    attachOk.add(p);
-    return { path: p, filename: path.basename(p), size };
-  });
-});
-
-const ATTACH_MAX = 25 * 1024 * 1024;   // 대부분의 메일 서버가 이쯤에서 거절한다
-
-ipcMain.handle('compose:send', async (_e, msg) => {
-  // 화면 쪽 잠금이 풀린 틈에 두 번 들어와도 두 번 나가지 않게 한다
-  if (sendingNow) return { ok: false, message: '이미 보내는 중입니다' };
-  const acc = mailAccountsForUse().find((a) => a.id === (composePayload && composePayload.accountId));
-  if (!acc) return { ok: false, message: '계정을 찾을 수 없습니다' };
-
-  const picked = (msg && msg.attachments) || [];
-  // 복사(다시 보내기)로 실어둔 것은 id로 안다 — 바이트는 메인에만 있다.
-  const carriedById = new Map((composeCarried || []).map((f) => [f.id, f]));
-  const outAtts = [];
-  let bytes = 0;
-  for (const a of picked) {
-    if (a && a.carried) {
-      // 화면이 준 것은 «이 id를 보내달라»는 표시뿐이다. 실물은 메인에서 꺼낸다 —
-      // 화면이 뚫려도 우리가 실어둔 것만 나간다.
-      const f = carriedById.get(a.id);
-      if (!f) return { ok: false, message: '복사한 첨부를 찾지 못했습니다 (다시 열어주세요)' };
-      outAtts.push({ filename: f.filename, content: f.content });
-      bytes += f.size || (f.content ? f.content.length : 0);
-    } else {
-      // 대화상자로 사용자가 직접 고른 것만. 화면이 준 경로를 그대로 믿지 않는다.
-      if (!attachOk.has(a && a.path)) {
-        return { ok: false, message: '첨부는 «파일 첨부»로 고른 것만 보낼 수 있습니다' };
-      }
-      outAtts.push({ path: a.path, filename: a.filename });
-      try { bytes += fs.statSync(a.path).size; } catch { /* 없으면 보낼 때 걸린다 */ }
-    }
-  }
-  if (bytes > ATTACH_MAX) {
-    return { ok: false, message: `첨부가 너무 큽니다 (${Math.round(bytes / 1048576)}MB · 최대 25MB)` };
-  }
-
-  sendingNow = true;
-  let r;
-  try {
-    r = await send.sendMail(acc, { ...msg, attachments: outAtts });
-  } finally {
-    sendingNow = false;
-  }
-  evlog.log('메일', r.ok
-    ? `보냄 · ${r.accepted}명${r.rejected && r.rejected.length ? ` · 거절 ${r.rejected.join(',')}` : ''}`
-      + `${r.sentBox ? ` · 보낸편지함(${r.sentBox})에 저장` : ''}`
-    : `보내기 실패 · ${r.message}`);
-  if (r.ok) {
-    // 보낸 주소는 다음부터 자동완성된다 — 주소록을 손으로 채우게 하면 아무도 안 채운다.
-    // 받은 것보다 무겁게 센다: 내가 답장한 사람이 진짜 아는 사람이다.
-    // 소식지는 매일 오지만 나는 한 번도 답하지 않는다.
-    store.rememberContacts([
-      ...send.addresses(msg.to), ...send.addresses(msg.cc), ...send.addresses(msg.bcc)
-    ].map((a) => ({ address: a.replace(/^.*<|>.*$/g, '').trim(), name: '' })), { weight: 5 });
-    // 나갔으면 임시 저장은 지운다 — 안 그러면 다음에 «쓰기»를 눌렀을 때
-    // 방금 보낸 메일이 그대로 다시 떠서 두 번 보내게 된다.
-    store.clearMailDraft();
-    refreshMail();
-  }
-  return r;
-});
-
-/**
- * 목록에서 오른쪽 클릭 — 여기가 규칙을 만드는 주된 길이다.
- *
- * 설정 화면에 들어가 조건을 손으로 적게 하면 아무도 안 쓴다.
- * 「이 광고 또 왔네」 하는 그 순간에 두 번 눌러 끝나야 한다.
- *
- * HTML 메뉴가 아니라 진짜 메뉴를 쓴다 — 위젯은 작고 테두리가 없어서
- * 직접 그리면 창 밖으로 잘린다.
- */
 ipcMain.handle('mail:row-menu', async (e, msg) => {
   const win = BrowserWindow.fromWebContents(e.sender);
 
@@ -2058,15 +1829,6 @@ ipcMain.handle('mail:row-menu', async (e, msg) => {
   return null;
 });
 
-/** 메일 필터 — 설정 화면과 위젯의 오른쪽 클릭이 함께 쓴다 */
-function rulesPayload() {
-  return {
-    rules: store.mailRules,
-    actions: mailrules.ACTION_NAMES,
-    filtered: mailState.filtered,
-    groups: mailState.groups.map((g) => ({ name: g.name, count: g.items.length }))
-  };
-}
 /**
  * 임시보관함 한 칸.
  *
@@ -2292,1057 +2054,6 @@ ipcMain.handle('mail:sent', async () => {
   return { loading: r.loading, count: r.messages.length, error: r.error };
 });
 
-// ── 본문 곳간 ────────────────────────────
-// 목록을 읽을 때 본문까지 미리 받아둔다. 그래야 메일을 두 번 눌렀을 때 창이
-// 곳바로 뜼다 — 이 서버는 본문 한 통에도 몇 초가 걸린다.
-const CACHE_DIR = () => path.join(app.getPath('userData'), 'mailcache');
-const PREFETCH_MAX = 12;
-let prefetching = false;
-
-/** 이 메일의 원문이 이미 디스크에 있나 — 백업본이 먼저다 (같은 것을 두 번 두지 않게) */
-function localSource(acc, mailbox, uid) {
-  const dir = store.settings.mailBackupDir;
-  if (dir && store.settings.mailAutoBackup) {
-    const f = mailbackup.savedFile(dir, acc, mailbox || acc.mailbox || 'INBOX', uid);
-    if (f) {
-      try { return fs.readFileSync(f); } catch { /* 그 사이 지워졌으면 곳간을 본다 */ }
-    }
-  }
-  return mailcache.read(CACHE_DIR(), acc.id, mailbox, uid);
-}
-
-/**
- * 본문 한 통 — 디스크에 있으면 거기서, 없으면 서버에서.
- * 읽음 상태는 원문에 없으므로 목록이 아는 값을 넘긴다.
- */
-async function localOrServer(acc, msg) {
-  const box = msg.mailbox || '';
-  const allowRemote = store.settings.mailRemoteImages !== false;
-  const src = localSource(acc, box, msg.uid);
-  if (src) {
-    evlog.log('메일', `본문 · 디스크에서 바로 열음 (uid ${msg.uid})`);
-    return mail.viewFromSource(src, {
-      uid: msg.uid,
-      mailbox: box || acc.mailbox || 'INBOX',
-      seen: !!msg.seen,
-      receivedAt: msg.at || 0,
-      allowRemote
-    });
-  }
-  const got = await mail.fetchBody(acc, msg.uid, { markSeen: false, allowRemote, mailbox: box });
-  // 받은 김에 적어둔다 — 같은 메일을 다시 열 때는 서버를 안 부른다
-  if (got && got.source) {
-    mailcache.write(CACHE_DIR(), acc.id, got.mailbox || box, msg.uid, got.source);
-  }
-  return got;
-}
-
-/**
- * 목록에 있는데 아직 원문이 없는 것들을 뒤에서 받아둔다.
- * 자동 백업이 켜져 있으면 그쪽이 이미 다 받아 놓으므로 여기선 건드리지 않는다.
- */
-async function prefetchBodies() {
-  if (prefetching) return;
-  if (store.settings.mailAutoBackup && store.settings.mailBackupDir) return;
-  const dir = CACHE_DIR();
-  const byAccount = new Map();
-  for (const m of mailState.messages) {
-    if (!m.accountId || !m.uid) continue;
-    const box = m.mailbox || '';
-    if (mailcache.has(dir, m.accountId, box, m.uid)) continue;
-    const k = m.accountId + '|' + box;
-    if (!byAccount.has(k)) byAccount.set(k, { accountId: m.accountId, mailbox: box, uids: [] });
-    const slot = byAccount.get(k);
-    if (slot.uids.length < PREFETCH_MAX) slot.uids.push(m.uid);
-  }
-  if (!byAccount.size) return;
-
-  prefetching = true;
-  try {
-    for (const slot of byAccount.values()) {
-      const acc = mailAccountsForUse().find((a) => a.id === slot.accountId);
-      if (!acc) continue;
-      try {
-        const n = await mail.fetchSources(acc, slot.uids, {
-          mailbox: slot.mailbox,
-          onOne: (one) => mailcache.write(dir, acc.id, one.mailbox, one.uid, one.source)
-        });
-        if (n) evlog.log('메일', `본문 미리 받기 · ${n}통`);
-      } catch (e) {
-        // 미리 받기는 덕이지 의무가 아니다 — 안 되면 열 때 서버를 부르면 그만이다
-        evlog.log('메일', `미리 받기 건너뜀 — ${mail.friendly(e)}`);
-      }
-    }
-    mailcache.sweep(dir);
-  } finally {
-    prefetching = false;
-  }
-}
-
-/** 화면이 지금 알고 있는 메일 전부 (보이는 것 · 묶인 것 · 숨긴 것 · 보낸 것) */
-function knownMessages() {
-  return [
-    ...mailState.messages,
-    ...mailState.groups.flatMap((g) => g.items),
-    ...mailState.folders.filter((f) => f.id === 'hidden').flatMap((f) => f.items),
-    ...mailState.sent.messages
-  ];
-}
-
-/** 지금 받아둔 것 중 이 조건에 걸리는 메일 — 규칙을 만들기 전에 보여준다 */
-function wouldHit(rule) {
-  const all = [
-    ...mailState.messages,
-    ...mailState.groups.flatMap((g) => g.items),
-    ...mailState.folders.filter((f) => f.id === 'hidden').flatMap((f) => f.items)
-  ];
-  return all.filter((m) => mailrules.hits({ ...rule, on: true }, m));
-}
-
-/**
- * «스팸으로»는 서버에서 메일을 옮긴다 — 웹메일에서도 사라진다.
- * 그래서 규칙이 어디서 만들어지든 이 문을 지나야 한다. 확인을 화면 쪽에 두면
- * 입구가 늘 때마다 빠뜨리게 된다 — 실제로 설정 화면 쪽이 그렇게 빠져 있었다.
- *
- * 조건이 얼마나 넓은지도 여기서 같이 보여준다. «제목에 안내»처럼 무심코 적은 한 마디가
- * 사내 공지까지 쓸어가는데, 숫자를 보기 전에는 그걸 알 방법이 없다.
- */
-/**
- * 휴지통으로 옮긴다.
- *
- * 물어보고 옮긴다 — 목록에서 오른쪽 클릭 한 번으로 메일이 사라지면, 잘못 눌렀을 때
- * «방금 뭐가 없어졌지»가 된다. 다만 겁주지는 않는다: 휴지통에 남으므로 되찾을 수 있다.
- * 그 사실을 대화상자에 적어 둔다.
- */
-async function doTrash(msg, parent) {
-  const acc = mailAccountsForUse().find((a) => a.id === msg.accountId);
-  if (!acc) {
-    notice('bad', '이 메일의 계정을 쓸 수 없습니다');
-    return { moved: false, message: '이 메일의 계정을 쓸 수 없습니다' };
-  }
-
-  const r0 = await askUser(parent, {
-    buttons: ['휴지통으로', '그만두기'],
-    defaultId: 0,
-    danger: true,          // 되돌릴 수 있지만 «치우는» 일이라 색으로 알린다
-    title: '휴지통으로 옮기기',
-    message: String(msg.subject || '(제목 없음)').slice(0, 60),
-    detail: '서버의 휴지통으로 옮깁니다 — 웹메일에서도 받은편지함에서 사라집니다.\n'
-      + '완전히 지우는 것이 아니라, 휴지통에서 되찾을 수 있습니다.'
-  });
-  if (r0 !== 0) return { moved: false, cancelled: true };
-
-  notice('wait', '휴지통으로 옮기는 중…');
-  try {
-    const r = await mail.moveToTrash(acc, [msg.uid], { mailbox: msg.mailbox || '' });
-    if (r.already) {
-      notice('', '이미 휴지통에 있습니다');
-      return { moved: false, already: true, message: '이미 휴지통에 있습니다' };
-    }
-    evlog.log('메일', `휴지통으로 · ${r.moved}통 · ${r.mailbox}`);
-    notice('good', `휴지통으로 옮겼습니다 (${r.mailbox})`);
-    // 목록 갱신은 기다리지 않는다 — 느린 서버에서 몇십 초다.
-    // 옮겼다는 사실은 여기서 이미 확정이므로 부르는 쪽은 이 반환값을 믿으면 된다.
-    refreshMail({ force: true });
-    return { moved: true, mailbox: r.mailbox };
-  } catch (e) {
-    // 휴지통을 못 찾았거나 서버가 거부한 경우 — 지운 척하지 않는다
-    evlog.log('메일', `휴지통 실패 · ${e.message}`);
-    const message = mail.friendly(e);
-    notice('bad', message);
-    return { moved: false, message };
-  }
-}
-
-async function okToSpam(rule, parent) {
-  if (!rule || rule.action !== 'spam' || rule.on === false) return true;
-  const caught = wouldHit(rule);
-  const sample = caught.slice(0, 3).map((m) => ' · ' + String(m.subject || '(제목 없음)').slice(0, 46));
-  const r = await askUser(parent, {
-    buttons: ['스팸으로', '그만두기'],
-    defaultId: 0,
-    danger: true,
-    title: '스팸으로 보내기',
-    message: caught.length
-      ? `지금 받아둔 메일 중 ${caught.length}통이 이 조건에 걸립니다.`
-      : '지금 받아둔 메일 중에는 걸리는 것이 없습니다.',
-    detail: (sample.length ? sample.join('\n') + '\n\n' : '')
-      + `조건: ${mailrules.describe(rule)}\n\n`
-      + '화면에서만 숨기는 것이 아니라 서버의 스팸 폴더로 옮깁니다.\n'
-      + '지금 있는 것과 앞으로 오는 것 모두 옮겨지고, 웹메일에서도 사라집니다.'
-  });
-  return r === 0;
-}
-
-ipcMain.handle('mail:rules', () => rulesPayload());
-ipcMain.handle('mail:rule-add', async (e, rule) => {
-  if (!await okToSpam(rule, BrowserWindow.fromWebContents(e.sender))) return rulesPayload();
-  store.addMailRule(rule || {});
-  forgetRuleWork();
-  // 방금 만든 규칙이 지금 목록에 바로 먹히게 한다 — 다음 주기(몇 분)를 기다리면 «안 됐네» 싶다
-  await refreshMail({ force: true });
-  return rulesPayload();
-});
-ipcMain.handle('mail:rule-update', async (e, { id, patch } = {}) => {
-  // 꺼둔 스팸 규칙을 다시 켜는 것도 «지금부터 옮긴다»와 같은 일이다
-  const now = store.mailRules.find((r) => r.id === id);
-  const after = { ...(now || {}), ...(patch || {}) };
-  const wakingUp = after.action === 'spam' && after.on !== false && (!now || now.on === false);
-  if (wakingUp && !await okToSpam(after, BrowserWindow.fromWebContents(e.sender))) {
-    return rulesPayload();
-  }
-  store.updateMailRule(id, patch || {});
-  forgetRuleWork();
-  await refreshMail({ force: true });
-  return rulesPayload();
-});
-ipcMain.handle('mail:rule-remove', async (_e, id) => {
-  store.removeMailRule(id);
-  forgetRuleWork();
-  await refreshMail({ force: true });
-  return rulesPayload();
-});
-
-/** 주소록 — 쓰기 창의 자동완성과 설정 화면이 쓴다 */
-ipcMain.handle('mail:contacts', () => store.contacts);
-ipcMain.handle('mail:contact-save', (_e, c) => store.saveContact(c || {}));
-ipcMain.handle('mail:contact-remove', (_e, address) => store.removeContact(address));
-
-/**
- * 주소록 가져오기 — 아웃룭·구글·엑셀이 내보낸 CSV를 그대로 받는다.
- * 덮어쓰지 않고 합친다 — 이미 있는 사람은 이름만 채워 넣는다.
- * 지우지는 않는다: 가져오기로 주소록이 줄어들면 되돌릴 길이 없다.
- */
-ipcMain.handle('mail:contacts-import', async () => {
-  const { canceled, filePaths } = await dialog.showOpenDialog(settingsWin || undefined, {
-    title: '주소록 불러오기',
-    filters: [{ name: '주소록 (CSV)', extensions: ['csv', 'txt'] }],
-    properties: ['openFile']
-  });
-  if (canceled || !filePaths.length) return { ok: false, canceled: true, contacts: store.contacts };
-
-  let raw;
-  try {
-    raw = fs.readFileSync(filePaths[0]);
-  } catch (e) {
-    return { ok: false, message: `파일을 읽지 못했습니다 — ${e.message}`, contacts: store.contacts };
-  }
-  if (raw.length > 8 * 1024 * 1024) {
-    return { ok: false, message: '파일이 너무 큽니다 (8MB까지)', contacts: store.contacts };
-  }
-
-  const { text, encoding } = contactcsv.decode(raw);
-  const r = contactcsv.toContacts(text);
-  if (!r.contacts.length) {
-    return {
-      ok: false,
-      message: r.total
-        ? `주소를 찾지 못했습니다 — ${r.total}줄을 봤지만 메일 주소가 없었습니다`
-        : '빈 파일입니다',
-      contacts: store.contacts
-    };
-  }
-
-  const before = new Set(store.contacts.map((c) => c.address));
-  for (const c of r.contacts) {
-    // 이름 없는 줄이 이미 있던 이름을 지우면 안 된다. saveContact는 준 값을 그대로
-    // 덮어쓰므로, 빈 이름이면 있던 것을 그대로 다시 넣는다.
-    const had = store.contacts.find((x) => x.address === c.address);
-    store.saveContact({ address: c.address, name: c.name || (had && had.name) || '' });
-  }
-  const added = store.contacts.filter((c) => !before.has(c.address)).length;
-  const updated = r.contacts.length - added;
-
-  evlog.log('메일', `주소록 가져오기 · ${encoding} · 새로 ${added} · 이미있음 ${updated}`
-    + (r.skipped ? ` · 버림 ${r.skipped}` : ''));
-
-  return {
-    ok: true,
-    contacts: store.contacts,
-    added,
-    updated,
-    skipped: r.skipped,
-    encoding,
-    message: `${added}명 넣음`
-      + (updated ? ` · ${updated}명은 이미 있어 이름만 갱신` : '')
-      + (r.skipped ? ` · ${r.skipped}줄은 주소가 없어 건너뜀` : '')
-      + (encoding === 'cp949' ? ' · CP949로 읽음' : '')
-  };
-});
-
-/** 주소록 내보내기 — 엑셀이 한글을 제대로 열도록 BOM을 붙인 UTF-8 */
-ipcMain.handle('mail:contacts-export', async () => {
-  const list = store.contacts;
-  if (!list.length) return { ok: false, message: '내보낼 주소가 없습니다' };
-
-  const stamp = new Date();
-  const pad = (n) => String(n).padStart(2, '0');
-  const { canceled, filePath } = await dialog.showSaveDialog(settingsWin || undefined, {
-    title: '주소록 내보내기',
-    defaultPath: `Hibi 주소록 ${stamp.getFullYear()}-${pad(stamp.getMonth() + 1)}-${pad(stamp.getDate())}.csv`,
-    filters: [{ name: '주소록 (CSV)', extensions: ['csv'] }]
-  });
-  if (canceled || !filePath) return { ok: false, canceled: true };
-
-  try {
-    fs.writeFileSync(filePath, contactcsv.encode(contactcsv.fromContacts(list)));
-  } catch (e) {
-    return { ok: false, message: `저장하지 못했습니다 — ${e.message}` };
-  }
-  evlog.log('메일', `주소록 내보내기 · ${list.length}명 → ${filePath}`);
-  return { ok: true, path: filePath, count: list.length, message: `${list.length}명 내보냈습니다` };
-});
-
-/** 본문에 넣을 그림 — 대화상자로 고른 것만 읽어 화면에 돌려준다 */
-const IMAGE_MAX = 5 * 1024 * 1024;
-ipcMain.handle('compose:pick-image', async () => {
-  const { canceled, filePaths } = await dialog.showOpenDialog(composeWin || undefined, {
-    title: '본문에 넣을 그림',
-    filters: [{ name: '그림', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'] }],
-    properties: ['openFile', 'multiSelections']
-  });
-  if (canceled) return [];
-  const out = [];
-  for (const p of filePaths) {
-    try {
-      const buf = fs.readFileSync(p);
-      if (buf.length > IMAGE_MAX) continue;   // 본문 그림은 크면 메일이 통째로 무거워진다
-      const ext = path.extname(p).slice(1).toLowerCase();
-      const type = ext === 'jpg' ? 'image/jpeg' : `image/${ext || 'png'}`;
-      out.push({
-        filename: path.basename(p),
-        contentType: type,
-        dataUrl: `data:${type};base64,${buf.toString('base64')}`
-      });
-    } catch { /* 못 읽는 파일은 건너뛴다 */ }
-  }
-  return out;
-});
-
-ipcMain.handle('compose:bounds', () => {
-  if (!composeWin || composeWin.isDestroyed()) return { x: 0, y: 0, width: 520, height: 520 };
-  return composeWin.getBounds();
-});
-ipcMain.on('compose:move', (_e, { x, y }) => {
-  if (!composeWin || composeWin.isDestroyed() || !composeSize) return;
-  // setPosition은 배율이 100%가 아닐 때 호출마다 창을 부풀린다 — 크기를 못박아 옮긴다
-  composeWin.setBounds({ x: Math.round(x), y: Math.round(y), ...composeSize });
-});
-ipcMain.on('compose:set-bounds', (_e, { x, y, width, height, dir }) => {
-  if (!composeWin || composeWin.isDestroyed()) return;
-  const max = mailViewMax();
-  const w = Math.round(clamp(width, 380, max.width));
-  const h = Math.round(clamp(height, 320, max.height));
-  const nx = Math.round(String(dir).includes('w') ? x + (width - w) : x);
-  const ny = Math.round(String(dir).includes('n') ? y + (height - h) : y);
-  composeSize = { width: w, height: h };
-  composeWin.setBounds({ x: nx, y: ny, width: w, height: h });
-  store.setSettings({ composeSize });
-});
-
-/** 보내기 설정이 맞는지 — 메일은 보내지 않고 로그인만 해 본다 */
-ipcMain.handle('mail:smtp-test', async (_e, acc) => {
-  const stored = store.mailAccounts.find((a) => a.id === (acc && acc.id));
-  const pass = (acc && acc.pass) || secret.open(stored && stored.sealed);
-  if (!pass) return { ok: false, message: '비밀번호를 입력하세요' };
-  return send.verify({ ...stored, ...acc, pass });
-});
-
-// ── 메일 백업 ───────────────────────────────────────────
-// 서버에 있는 메일을 .eml 파일로 내 PC에 내려둔다. 회사를 옮기거나 계정이 닫히면
-// 웹메일에 있던 것은 같이 사라진다 — 파일로 남겨두면 그때도 열린다.
-// 오래 걸리는 작업이라 상태를 남기고, 설정 화면이 그걸 들여다본다.
-const backup = {
-  running: false, stop: false,
-  account: '', mailbox: '', done: 0, total: 0,
-  saved: 0, skipped: 0, message: '', at: 0, dir: null
-};
-
-// 자동 백업은 사용자가 보고 있지 않을 때 도는 일이라 수동 진행률과 섞지 않는다.
-// 여기 값만 따로 보여준다 — "언제 몇 통을 저장했는가".
-const autoBackup = { at: 0, saved: 0, total: 0, error: null, seeded: 0 };
-
-function backupStatus() {
-  return {
-    ...backup,
-    dir: store.settings.mailBackupDir || null,
-    auto: store.settings.mailAutoBackup === true,
-    autoAt: autoBackup.at,
-    autoSaved: autoBackup.saved,
-    autoTotal: autoBackup.total,
-    autoSeeded: autoBackup.seeded,
-    autoError: autoBackup.error
-  };
-}
-
-// ── 자동 백업 ───────────────────────────────────────────
-// 두 순간에 저장한다.
-//  1) 새 메일이 들어왔을 때 — 폴링이 끝나면 새로 생긴 UID만 받아 둔다
-//  2) 사용자가 메일을 열었을 때 — 본문을 이미 받아왔으므로 서버를 더 부르지 않는다
-//
-// 켜자마자 몇 년치를 몰래 받지는 않는다(onlyNew). 지난 메일은 «백업 시작»의 몫이다.
-const AUTO_GAP_MS = 2 * 60_000;   // 폴링이 잦아도 이보다 자주 돌지 않는다
-let autoRunAt = 0;
-
-/**
- * 자동 백업이 실제로 돌 수 있는 상태인가.
- * 메일 확인이 꺼져 있으면 폴링이 없어 새 메일을 알 방법이 없다 — 화면에도 그대로 알린다.
- */
-function autoBackupOn() {
-  return store.settings.mailAutoBackup === true
-    && !!store.settings.mailBackupDir
-    && store.settings.mailEnabled === true;
-}
-
-/** 열어본 메일 한 통 — 이미 받아온 원문을 그대로 파일로 남긴다 */
-async function autoBackupOne(acc, m) {
-  if (!autoBackupOn() || !m || !m.source) return;
-  // 전체 백업이 도는 중이면 손대지 않는다. 그쪽은 폴더 목록을 미리 읽어두고 쓰는데
-  // 그 사이에 파일을 끼워 넣으면 같은 메일이 두 번 저장된다. 어차피 그쪽이 받아간다.
-  if (backup.running || autoBackup.running) return;
-  try {
-    const r = await mailbackup.saveOne(acc, store.settings.mailBackupDir, {
-      mailbox: m.mailbox, uid: m.uid, receivedAt: m.receivedAt,
-      subject: m.subject, source: m.source
-    });
-    if (r.saved) {
-      autoBackup.at = Date.now();
-      autoBackup.saved = 1;
-      autoBackup.total += 1;
-      autoBackup.error = null;
-      evlog.log('메일', `자동 백업 · 열어본 메일 저장 (uid ${m.uid})`);
-    }
-  } catch (e) {
-    autoBackup.error = e.message;
-    evlog.log('메일', `자동 백업 실패 · ${e.message}`);
-  }
-}
-
-/**
- * 폴링 뒤 — 새로 들어온 것만 받아 둔다.
- * @param now 켜자마자 한 번은 간격을 무시하고 돈다 (그래야 «지금부터»가 진짜 지금이다)
- */
-async function autoBackupNew({ now = false } = {}) {
-  // 수동 백업이 도는 중이면 비켜준다. 같은 폴더에 둘이 쓰면 서로를 밟는다.
-  if (!autoBackupOn() || backup.running || autoBackup.running) return;
-  if (!now && Date.now() - autoRunAt < AUTO_GAP_MS) return;
-  autoRunAt = Date.now();
-
-  const dir = store.settings.mailBackupDir;
-  const accounts = mailAccountsForUse();
-  if (!accounts.length) return;
-
-  // 폴더를 못 쓰면 10분마다 같은 실패를 반복해봐야 아무것도 안 바뀐다.
-  // 한 번 알리고 멈춘다 — 폴더를 다시 고르면 그때 풀린다.
-  const bad = backupDirProblem(dir);
-  if (bad) {
-    if (autoBackup.error !== bad) {
-      autoBackup.error = bad;
-      evlog.log('메일', `자동 백업 멈춤 · ${bad}`);
-    }
-    return;
-  }
-
-  autoBackup.running = true;
-  let saved = 0;
-  let seeded = 0;
-  const failed = [];
-  for (const acc of accounts) {
-    // 계정 하나가 넘어져도 나머지는 받는다
-    try {
-      const r = await mailbackup.backupAccount(acc, dir, { onlyNew: true });
-      saved += r.saved;
-      seeded += r.seeded;
-    } catch (e) {
-      failed.push(`${acc.name || acc.user}: ${mail.friendly(e)}`);
-    }
-  }
-  autoBackup.running = false;
-  autoBackup.at = Date.now();
-  autoBackup.saved = saved;
-  autoBackup.total += saved;
-  autoBackup.seeded = seeded;
-  autoBackup.error = failed.length ? failed[0] : null;
-  if (saved || seeded || failed.length) {
-    evlog.log('메일', `자동 백업 · 새 메일 ${saved}통 저장`
-      + (seeded ? ` · 폴더 ${seeded}곳을 «지금부터»로 표시 (지난 메일은 받지 않음)` : '')
-      + (failed.length ? ` · 실패 ${failed.join(' / ')}` : ''));
-  }
-}
-
-ipcMain.handle('mail:backup-status', () => backupStatus());
-
-ipcMain.handle('mail:backup-pick', async () => {
-  // 도는 중에 폴더를 바꾸면 절반은 저쪽, 절반은 이쪽에 남는다
-  if (backup.running || autoBackup.running) {
-    backup.message = '백업이 도는 중에는 폴더를 바꿀 수 없습니다';
-    return backupStatus();
-  }
-  const { canceled, filePaths } = await dialog.showOpenDialog({
-    title: '메일을 저장할 폴더',
-    properties: ['openDirectory', 'createDirectory'],
-    defaultPath: store.settings.mailBackupDir || app.getPath('documents')
-  });
-  if (canceled || !filePaths[0]) return backupStatus();
-
-  // 여기서 못 쓰는 곳인지 바로 확인한다. 나중에 백업을 눌렀을 때 실패하면
-  // 원인이 폴더인지 서버인지 알 수 없다. (C:\Users 밑처럼 윈도우가 막는 자리가 있다)
-  const bad = backupDirProblem(filePaths[0]);
-  if (bad) { backup.message = bad; return backupStatus(); }
-
-  store.setSettings({ mailBackupDir: filePaths[0] });
-  backup.message = '';
-  return backupStatus();
-});
-
-/**
- * 이 폴더에 정말 쓸 수 있나. 실제로 만들어 보고 지운다 —
- * 권한은 존재 여부만으로는 알 수 없다.
- * @returns 문제가 있으면 사람이 읽을 사유, 없으면 null
- */
-function backupDirProblem(dir) {
-  const probe = path.join(dir, '.hibi-쓰기확인');
-  try {
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(probe, 'ok');
-    fs.unlinkSync(probe);
-    return null;
-  } catch (e) {
-    try { fs.unlinkSync(probe); } catch { /* 없으면 그만 */ }
-    if (e.code === 'EPERM' || e.code === 'EACCES') {
-      return `이 폴더에는 쓸 수 없습니다 — 윈도우가 막는 자리입니다 (${dir}).`
-        + ' 문서 폴더 안처럼 내 폴더를 고르세요.';
-    }
-    return `이 폴더를 쓸 수 없습니다 — ${e.message}`;
-  }
-}
-
-ipcMain.on('mail:backup-stop', () => { backup.stop = true; });
-ipcMain.on('mail:backup-open', () => {
-  if (store.settings.mailBackupDir) shell.openPath(store.settings.mailBackupDir);
-});
-
-ipcMain.handle('mail:backup-start', async () => {
-  // 자리를 먼저 잡는다. await 뒤에 검사하면 두 번 빠르게 누른 사이에 둘 다 통과해
-  // 같은 폴더에 백업이 두 개 돈다.
-  if (backup.running) return backupStatus();
-  backup.running = true;
-  try {
-    // 자동 백업이 돌고 있으면 끝나기를 잠깐 기다린다 — 같은 폴더를 둘이 쓰면 안 된다
-    for (let i = 0; i < 60 && autoBackup.running; i++) {
-      await new Promise((r) => setTimeout(r, 500));
-    }
-    if (autoBackup.running) throw new Error('자동 백업이 도는 중입니다. 잠시 뒤 다시 눌러주세요');
-    if (!store.settings.mailBackupDir) throw new Error('저장할 폴더를 먼저 고르세요');
-    // 폴더는 고른 뒤에도 지워지거나 권한이 바뀔 수 있다 — 시작 전에 다시 본다
-    const bad = backupDirProblem(store.settings.mailBackupDir);
-    if (bad) throw new Error(bad);
-    if (!mailAccountsForUse().length) throw new Error('쓸 수 있는 계정이 없습니다');
-  } catch (e) {
-    backup.running = false;
-    backup.message = e.message;
-    return backupStatus();
-  }
-
-  // 도는 동안 폴더가 바뀌어도 시작할 때 고른 곳에 끝까지 쓴다
-  const dir = store.settings.mailBackupDir;
-  const accounts = mailAccountsForUse();
-
-  Object.assign(backup, {
-    running: true, stop: false, account: '', mailbox: '',
-    done: 0, total: 0, saved: 0, skipped: 0, message: '', at: Date.now()
-  });
-  evlog.log('메일', `백업 시작 · 계정 ${accounts.length}개 · ${dir}`);
-
-  // 기다리지 않고 바로 상태를 돌려준다 — 몇 시간짜리가 될 수도 있다
-  (async () => {
-    try {
-      // 계정마다 0부터 세므로, 화면에 보이는 숫자는 여기서 합산한다
-      let saved = 0;
-      let skipped = 0;
-      let missing = 0;
-      const failed = [];
-      for (const acc of accounts) {
-        if (backup.stop) break;
-        backup.account = acc.name || acc.user;
-        // 한 계정이 넘어져도 나머지는 받아야 한다. 여기서 통째로 중단하면
-        // 비밀번호가 만료된 계정 하나 때문에 나머지 계정은 영영 백업되지 않는다.
-        try {
-          const r = await mailbackup.backupAccount(acc, dir, {
-            onProgress: (p) => Object.assign(backup, p,
-              { saved: saved + p.saved, skipped: skipped + p.skipped }),
-            shouldStop: () => backup.stop
-          });
-          saved += r.saved;
-          skipped += r.skipped;
-          missing += r.missing;
-          if (r.stateError) failed.push(`${backup.account}: 진행 기록 저장 실패 (${r.stateError})`);
-        } catch (e) {
-          failed.push(`${backup.account}: ${mail.friendly(e)}`);
-          evlog.log('메일', `백업 실패 · ${backup.account} · ${mail.friendly(e)}`);
-        }
-        backup.saved = saved;
-        backup.skipped = skipped;
-      }
-      backup.message = (backup.stop ? `멈췄습니다 — ${saved}통 저장` : `끝났습니다 — ${saved}통 저장`)
-        + (missing ? ` · ${missing}통은 서버가 원문을 주지 않았습니다` : '')
-        + (failed.length ? ` · 실패 ${failed.length}건: ${failed[0]}` : '');
-      evlog.log('메일', `백업 ${backup.stop ? '중단' : '완료'} · ${saved}통`
-        + (failed.length ? ` · 실패 ${failed.join(' / ')}` : ''));
-    } catch (e) {
-      backup.message = mail.friendly(e);
-      evlog.log('메일', `백업 실패 · ${backup.message}`);
-    } finally {
-      backup.running = false;
-      backup.mailbox = '';
-    }
-  })();
-
-  return backupStatus();
-});
-
-// ── 메일 한 통 보기 ──────────────────────────────────────
-// 본문은 이때만 받는다. 폴링에서 매번 받으면 느리고, 대부분은 열어보지도 않는다.
-/**
- * 메일 보기 창들.
- *
- * 예전엔 하나였다 — 두 번째 메일을 열면 앞에 보던 것이 그 자리에서 바뀌어
- * 둘을 나란히 놓고 볼 수가 없었다. 이젠 창마다 제 메일을 든다.
- *
- * 상태를 전역으로 두면 두 창이 같은 칸을 밟는다 — 열쇠는 그 창의 webContents id다.
- * 물어보는 쪽(mail:view-data, 첨부 저장, 크기 조절)은 전부 e.sender로 자기 칸을 찾는다.
- */
-const mailWins = new Map();   // webContents.id → { win, payload, files, seq, size }
-// 한 번에 열 수 있는 창 수. 실수로 목록을 드로그하듯 눌러도 화면이 안 덮이게.
-const MAIL_WIN_MAX = 8;
-let mailViewSize = null;     // 마지막으로 조절한 크기 (다음에 열 때 이 크기로)
-
-/** 그 창의 칸 — IPC는 전부 이걸로 자기 것을 찾는다 */
-function slotOf(e) {
-  return e && e.sender ? mailWins.get(e.sender.id) : null;
-}
-
-/** 제일 오래전에 열린 창 — 상한을 넘길 때 이걸 닫는다 */
-function oldestMailWin() {
-  let found = null;
-  for (const slot of mailWins.values()) {
-    if (!found || slot.at < found.at) found = slot;
-  }
-  return found;
-}
-
-/**
- * 이 창은 우리 페이지에서 절대 벗어나지 않는다.
- * preload를 물린 창이 남의 사이트로 이동하면 그 사이트가 우리 IPC를 그대로 쓴다 —
- * 메일 보내기와 파일 첨부가 붙은 지금은 그게 곧 계정 탈취다.
- */
-function lockToOurPage(win) {
-  const ours = (url) => url.startsWith('file://');
-  win.webContents.on('will-navigate', (e, url) => {
-    if (ours(url)) return;
-    e.preventDefault();
-    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
-  });
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
-    return { action: 'deny' };
-  });
-  win.webContents.on('will-attach-webview', (e) => e.preventDefault());
-}
-
-// ── 물어보는 창 · 오른쪽 클릭 메뉴 ──────────────────────
-// 앱이 온통 유리 마감인데 여기서만 윈도우 기본 상자가 튀어나오면 남의 앱처럼 보인다.
-// 파일 고르기는 그대로 둔다 — 그건 OS 것이고, 흉내 내면 오히려 낯설고 위험하다.
-const popups = new Map();   // webContents.id → { win, data, done }
-
-/**
- * 팝업 창 하나를 띄우고 사용자가 고를 때까지 기다린다.
- *
- * 창을 따로 띄우는 이유: 위젯은 270px밖에 안 된다. 그 안에 겹쳐 그리면 긴 메뉴도
- * 두 줄짜리 물음도 들어가지 않는다. 창이면 부모 밖으로 나갈 수 있다.
- *
- * @param at 화면 좌표 {x,y}. 주면 그 자리(메뉴), 없으면 부모 한가운데(물음).
- */
-function openPopup(parent, data, at) {
-  return new Promise((resolve) => {
-    const win = new BrowserWindow({
-      width: 320, height: 160,
-      show: false,
-      frame: false, resizable: false, movable: false, minimizable: false, maximizable: false,
-      skipTaskbar: true,
-      // 부모 위에 뜨고, 부모를 따라 다닌다. 모달로 두지 않는 이유는
-      // 투명 창에서 모달이 그림자·둥근 모서리를 망가뜨리기 때문이다.
-      parent: parent && !parent.isDestroyed() ? parent : undefined,
-      alwaysOnTop: true,
-      ...glass.windowOptions(),
-      webPreferences: { preload: PRELOAD }
-    });
-    const id = win.webContents.id;
-    let settled = false;
-    const done = (value) => {
-      if (settled) return;
-      settled = true;
-      popups.delete(id);
-      resolve(value);
-      if (!win.isDestroyed()) win.close();
-    };
-    popups.set(id, { win, data, done, at });
-
-    // 창 밖을 누르면 그만둔 것으로 — 메뉴는 이게 없으면 빠져나갈 길이 없다
-    win.on('blur', () => done(null));
-    win.on('closed', () => done(null));
-
-    lockToOurPage(win);
-    win.loadFile(page('popup.html'), { query: glassQuery({}) });
-  });
-}
-
-/** 앱 마감의 «물어보기» — 고른 단추 번호를 준다 (그만두면 null) */
-async function askUser(parent, { title, message, detail, buttons, defaultId = 0, danger = false }) {
-  const r = await openPopup(parent, {
-    kind: 'dialog', title, message, detail, buttons, defaultId, danger
-  });
-  return typeof r === 'number' ? r : null;
-}
-
-/** 앱 마감의 오른쪽 클릭 메뉴 — 고른 항목의 id를 준다 (그만두면 null) */
-function pickFromMenu(parent, items, at) {
-  return openPopup(parent, { kind: 'menu', items }, at);
-}
-
-ipcMain.handle('popup:data', (e) => {
-  const p = popups.get(e.sender.id);
-  return p ? p.data : null;
-});
-
-// 화면이 «이만큼 필요하다»고 하면 그때 크기를 잡고 보여준다.
-// 먼저 보여주고 크기를 고치면 창이 한 번 튀어 보인다.
-ipcMain.on('popup:size', (e, { width, height }) => {
-  const p = popups.get(e.sender.id);
-  if (!p || p.win.isDestroyed()) return;
-  const cap = mailViewMax(p.win);
-  const w = Math.round(clamp(width || 320, 200, Math.min(560, cap.width)));
-  const h = Math.round(clamp(height || 160, 90, cap.height));
-
-  // 화면 밖으로 나가지 않게 — 커서 옆에 띄우는 메뉴가 특히 그렇다
-  const area = screen.getDisplayNearestPoint(
-    p.at || screen.getCursorScreenPoint()).workArea;
-  let x;
-  let y;
-  if (p.at) {
-    x = p.at.x;
-    y = p.at.y;
-  } else if (p.win.getParentWindow() && !p.win.getParentWindow().isDestroyed()) {
-    const b = p.win.getParentWindow().getBounds();
-    x = b.x + Math.round((b.width - w) / 2);
-    y = b.y + Math.round((b.height - h) / 2);
-  } else {
-    x = area.x + Math.round((area.width - w) / 2);
-    y = area.y + Math.round((area.height - h) / 2);
-  }
-  x = Math.round(clamp(x, area.x, area.x + area.width - w));
-  y = Math.round(clamp(y, area.y, area.y + area.height - h));
-
-  p.win.setBounds({ x, y, width: w, height: h });
-  p.win.show();
-  p.win.focus();
-});
-
-ipcMain.on('popup:pick', (e, value) => {
-  const p = popups.get(e.sender.id);
-  if (p) p.done(value === undefined ? null : value);
-});
-
-let mailViewSeq = 0;   // 늦게 도착한 예전 요청이 지금 보고 있는 메일을 덤어쓰지 못하게
-
-/**
- * 새 창을 어디에 놓을까 — 정확히 같은 자리에 곹쳐 띄우면 둘이 하나처럼 보인다.
- * 이미 열린 창이 있으면 그 옆으로 조금씩 비쪨 놓는다 (윈도우 기본 동작과 같은 모양).
- */
-function cascadeFrom(width, height) {
-  const last = [...mailWins.values()].sort((x, y) => y.at - x.at)[0];
-  if (!last || !last.win || last.win.isDestroyed()) return {};
-  const b = last.win.getBounds();
-  const step = 28;
-  let x = b.x + step;
-  let y = b.y + step;
-  try {
-    const area = screen.getDisplayMatching(b).workArea;
-    // 화면 밖으로 나가면 다시 왼쪽 위로 돌아온다
-    if (x + width > area.x + area.width || y + height > area.y + area.height) {
-      x = area.x + step;
-      y = area.y + step;
-    }
-  } catch { /* 모니터를 못 읽으면 그냥 비쪨만 */ }
-  return { x: Math.round(x), y: Math.round(y) };
-}
-
-/**
- * 메일 한 통을 새 창으로 열어 보여준다.
- * 같은 메일을 또 열면 새 창을 만들지 않고 그 창을 앞으로 가져온다 —
- * 같은 글이 두 번 떠 있을 이유가 없다.
- */
-function openMailView(msg) {
-  const acc = mailAccountsForUse().find((a) => a.id === msg.accountId);
-
-  // 이미 그 메일을 보고 있으면 그 창을 올린다
-  const key = `${msg.accountId}:${msg.mailbox || ''}:${msg.uid}`;
-  for (const slot of mailWins.values()) {
-    if (slot.key !== key || !slot.win || slot.win.isDestroyed()) continue;
-    if (slot.win.isMinimized()) slot.win.restore();
-    slot.win.moveTop();
-    slot.win.focus();
-    return true;
-  }
-
-  // 너무 많이 쌓이면 제일 오래된 것부터 닫는다
-  while (mailWins.size >= MAIL_WIN_MAX) {
-    const old = oldestMailWin();
-    if (!old || !old.win || old.win.isDestroyed()) break;
-    old.win.close();
-    mailWins.delete(old.id);
-  }
-
-  const saved = store.settings.mailViewSize;
-  const cap = mailViewMax(null);
-  const width = Math.round(clamp((saved && saved.width) || 420 + PAD, 320, cap.width));
-  const height = Math.round(clamp((saved && saved.height) || 480 + PAD, 260, cap.height));
-
-  const win = new BrowserWindow({
-    width, height, minWidth: 320, minHeight: 260,
-    ...cascadeFrom(width, height),
-    frame: false,
-    // 크기 조절은 렌더러의 리사이즈 존이 맡는다 (네이티브는 투명 창에서 폭주한다)
-    resizable: false,
-    // 메일은 읽는 동안 다른 창을 보기도 한다 — 항상 위에 두지 않고
-    // 작업표시줄에도 올려 다시 찾아올 수 있게 한다
-    alwaysOnTop: false, skipTaskbar: false,
-    title: '메일',
-    ...glass.windowOptions(),
-    webPreferences: { preload: PRELOAD }
-  });
-
-  const id = win.webContents.id;
-  const slot = {
-    id, win, key,
-    payload: null,
-    files: [],
-    seq: ++mailViewSeq,
-    size: { width: win.getSize()[0], height: win.getSize()[1] },
-    at: Date.now()
-  };
-  mailWins.set(id, slot);
-
-  // 계정을 못 찾으면 그냥 실패시킨다. 예전에는 첫 계정으로 넘어갔는데,
-  // 그러면 엉뚜한 계정에서 같은 번호의 메일을 열고 읽음 표시까지 해 버린다.
-  if (!acc) {
-    slot.payload = { error: '이 메일의 계정을 찾을 수 없습니다' };
-  } else {
-    // 본문을 받아오는 동안 창을 먼저 띄운다 — 클릭했는데 한참 아무 일도 없으면 고장 같다.
-    // 열었다고 바로 읽음으로 바꾸지 않는다. 창의 «안 읽음» 칩을 눌러 사용자가 정한다.
-    localOrServer(acc, msg)
-      .then((m) => {
-        // 원문 버퍼는 화면으로 보내지 않는다 — 백업에만 쓰고 여기서 떼어낸다
-        const { source, ...forView } = m;
-        autoBackupOne(acc, { ...forView, source });
-        if (win.isDestroyed()) return;      // 받는 사이에 닫았으면 버린다
-        slot.files = m.attachments || [];
-        slot.payload = {
-          ...forView,
-          accountId: acc.id,
-          // 내가 쓴 메일이면 «답장»을 감춘다 — 나에게 답장이 가는 건 뜻이 없다
-          fromSelf: !!msg.fromSelf,
-          // 방금 바꿔둔 값이 있으면 그것이 먼저다. 서버는 아직 옷 값을 말할 수 있는데,
-          // 그걸 그대로 보여주면 «분명히 읽음으로 바꾸었는데 다시 열면 안 읽음»이 된다.
-          seen: seenMarks.seenOf({ accountId: acc.id, mailbox: forView.mailbox, uid: msg.uid }, forView.seen),
-          attachments: mail.attachmentsForView(slot.files)
-        };
-        refreshMail();
-      })
-      .catch((e) => {
-        if (win.isDestroyed()) return;
-        slot.payload = { error: mail.friendly(e) };
-      });
-  }
-
-  // 메일 본문은 남이 쓴 것이다. 그 안의 링크로 이 창이 이동해 버리면 그 사이트가
-  // preload 다리(메일 보내기·파일 첨부)를 그대로 쥐다. 창은 우리 페이지에 못박고
-  // 바깥 주소는 기본 브라우저로 보낸다.
-  lockToOurPage(win);
-  win.loadFile(page('mailview.html'), {
-    query: glassQuery({ radius: '20',
-      remote: store.settings.mailRemoteImages !== false ? '1' : '' })
-  });
-  win.on('closed', () => { mailWins.delete(id); });
-  return true;
-}
-
-ipcMain.handle('mail:open', (_e, msg) => openMailView(msg));
-/** 렌더러가 본문을 달라고 하면, 도착할 때까지 잠깐 기다렸다 준다 */
-ipcMain.handle('mail:view-data', async (e) => {
-  const slot = slotOf(e);
-  if (!slot) return { error: '창을 찾지 못했습니다' };
-  for (let i = 0; i < 60 && !slot.payload; i++) {
-    await new Promise((r) => setTimeout(r, 250));
-  }
-  return slot.payload || { error: '시간이 초과되었습니다' };
-});
-ipcMain.on('mail:view-close', (e) => {
-  const slot = slotOf(e);
-  if (slot && !slot.win.isDestroyed()) slot.win.close();
-});
-
-/** 첨부 저장 — 어디에 저장할지는 사용자가 고른다 */
-ipcMain.handle('mail:save-attachment', async (e, index) => {
-  // 첨부는 창마다 따로 든다 — 전역 목록을 쓰면 두 번째 창을 연 순간
-  // 첫 창의 «첨부 저장»이 엉뚱한 파일을 내놓는다.
-  const slot = slotOf(e);
-  const a = slot && slot.files[index];
-  if (!a || !a.content) return { ok: false, message: '첨부를 찾을 수 없습니다' };
-  const { canceled, filePath } = await dialog.showSaveDialog(slot.win || undefined, {
-    defaultPath: a.filename || '첨부파일',
-    title: '첨부 저장'
-  });
-  if (canceled || !filePath) return { ok: false };
-  try {
-    fs.writeFileSync(filePath, a.content);
-    return { ok: true, message: '저장했습니다', path: filePath };
-  } catch (e) {
-    return { ok: false, message: e.message };
-  }
-});
-
-/**
- * 첨부 미리보기 — 저장하지 않고 그 자리에서 본다.
- *
- * 그림은 이미 창이 data:로 그리고 있으므로 여기 오지 않는다.
- * 글은 글자로 풀어 돌려주고, PDF는 크로미움 뷰어를 띄운다.
- * 열 수 없는 것은 그렇다고 말한다 — 눌렀는데 아무 일도 없는 게 제일 나쁘다.
- */
-const PREVIEW_DIR = () => path.join(app.getPath('userData'), 'preview');
-const pdfWins = new Set();
-
-ipcMain.handle('mail:preview-attachment', async (e, index) => {
-  const slot = slotOf(e);
-  const a = slot && slot.files[index];
-  if (!a || !a.content) return { kind: 'none', message: '첨부를 찾을 수 없습니다' };
-
-  const kind = preview.kindOf(a);
-  if (kind === 'toobig') {
-    return { kind: 'none', message: '파일이 커서 미리보기를 건너뜁니다 — 저장한 뒤 열어주세요' };
-  }
-  if (kind === 'none') {
-    return { kind: 'none', message: '이 형식은 미리보기를 못 합니다 — 저장한 뒤 열어주세요' };
-  }
-
-  if (kind === 'text') {
-    // 한국어 윈도우에서 만든 텍스트는 CP949인 경우가 많다 — 주소록에서 쓰던 판별을 그대로 쓴다.
-    // HTML이어도 글자로만 돌려준다. 첨부로 온 HTML을 그려주면 그건 남의 페이지를 여는 것이다.
-    const { text, encoding } = contactcsv.decode(a.content);
-    return { kind: 'text', text, encoding, filename: a.filename };
-  }
-
-  if (kind === 'image') {
-    // 목록에는 그림을 다 실어 보내지 않는다 — 본문에 박힌 것과 아주 큰 것은 dataUrl이 없다
-    // (본문이 밀리고 틱마다 무거워진다). 그래서 눌렀을 때 여기서 만들어 준다.
-    //
-    // 이 갈래가 없어서 그림이 아래 PDF 길로 흘러들어갔다. PNG를 .pdf로 써서 열었으니
-    // 크로미움이 «PDF 문서를 로드하지 못했습니다»라고 할 수밖에 없었다.
-    return {
-      kind: 'image',
-      dataUrl: `data:${a.contentType || 'image/png'};base64,${a.content.toString('base64')}`,
-      filename: a.filename
-    };
-  }
-
-  // 여기까지 왔는데 PDF가 아니면 아래로 흘려보내지 않는다 — 아는 것만 연다.
-  // (새 형식이 kindOf에 늘어도 조용히 PDF로 열리는 일이 없게)
-  if (kind !== 'pdf') {
-    return { kind: 'none', message: '이 형식은 미리보기를 못 합니다 — 저장한 뒤 열어주세요' };
-  }
-
-  // PDF — 임시 파일로 떨구고 크로미움 뷰어로 연다
-  const dir = PREVIEW_DIR();
-  const file = preview.tempPathFor(dir, a, '.pdf');
-  if (!file) return { kind: 'none', message: '미리보기 파일을 만들지 못했습니다' };
-  try {
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(file, a.content);
-  } catch (err) {
-    return { kind: 'none', message: `미리보기 파일을 쓰지 못했습니다 — ${err.message}` };
-  }
-
-  const win = new BrowserWindow({
-    width: 900, height: 1000,
-    title: a.filename || '첨부 미리보기',
-    backgroundColor: '#2b2b2b',
-    // 이 창에는 다리를 놓지 않는다 — 남이 보낸 파일을 여는 창이다
-    webPreferences: { preload: undefined, nodeIntegration: false, contextIsolation: true, sandbox: true, plugins: true }
-  });
-  pdfWins.add(win);
-  // 이 창은 그 파일에서 절대 벗어나지 않는다
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  win.webContents.on('will-navigate', (ev, url) => {
-    if (url !== `file:///${file.replace(/\\/g, '/')}`) ev.preventDefault();
-  });
-  win.on('closed', () => {
-    pdfWins.delete(win);
-    // 본 뒤에는 남겨두지 않는다 — 첨부가 임시 폴더에 쌓이면 그것대로 새는 길이다
-    try { fs.unlinkSync(file); } catch { /* 이미 없으면 그만 */ }
-  });
-  win.loadFile(file);
-  evlog.log('메일', `첨부 미리보기 · ${a.filename}`);
-  return { kind: 'pdf', filename: a.filename };
-});
-
-/** 저장한 첨부를 탐색기에서 보여준다 */
-ipcMain.on('mail:reveal', (_e, p) => { if (p) shell.showItemInFolder(p); });
-
-/** 메일 보기 창 크기 조절 — 위젯과 같은 방식(기준 크기를 못박아 되먹임을 끊는다) */
-ipcMain.on('mailview:move', (e, { x, y }) => {
-  const slot = slotOf(e);
-  if (!slot || slot.win.isDestroyed() || !slot.size) return;
-  // setPosition은 배율이 100%가 아닐 때 호출마다 창을 부풀린다 — 크기를 못박아 옮긴다
-  slot.win.setBounds({ x: Math.round(x), y: Math.round(y), ...slot.size });
-});
-
-ipcMain.handle('mailview:bounds', (e) => {
-  const slot = slotOf(e);
-  if (!slot || slot.win.isDestroyed()) return { x: 0, y: 0, width: 420, height: 480 };
-  return slot.win.getBounds();
-});
-/**
- * 얼마나 크게 늘릴 수 있나. 고정 숫자로 막으면 큰 화면에서 답답하다 —
- * 그 창이 놓인 모니터의 작업 영역만큼 허용한다.
- * 창에는 그림자 여백(PAD)이 붙어 있으므로 그만큼 더해야 보이는 카드가 화면을 꽉 채운다.
- */
-function mailViewMax(win) {
-  try {
-    const d = win && !win.isDestroyed()
-      ? screen.getDisplayMatching(win.getBounds())
-      : screen.getPrimaryDisplay();
-    return { width: d.workAreaSize.width + PAD, height: d.workAreaSize.height + PAD };
-  } catch {
-    return { width: 2400, height: 1600 };
-  }
-}
-
-ipcMain.on('mailview:set-bounds', (e, { x, y, width, height, dir }) => {
-  const slot = slotOf(e);
-  if (!slot || slot.win.isDestroyed()) return;
-  const max = mailViewMax(slot.win);
-  const w = Math.round(clamp(width, 320, max.width));
-  const h = Math.round(clamp(height, 260, max.height));
-  const nx = Math.round(String(dir).includes('w') ? x + (width - w) : x);
-  const ny = Math.round(String(dir).includes('n') ? y + (height - h) : y);
-  slot.size = { width: w, height: h };
-  slot.win.setBounds({ x: nx, y: ny, width: w, height: h });
-  // 마지막으로 조절한 크기를 다음 창의 기본으로 쓴다
-  mailViewSize = slot.size;
-  store.setSettings({ mailViewSize });
-});
-
-/** 우리가 넣어둔 안내 링크만 연다 — 렌더러가 임의 주소를 열지 못하게 http(s)로 제한 */
 ipcMain.handle('app:open-url', (_e, url) => {
   const s = String(url || '');
   if (!/^https:\/\//i.test(s)) return false;
@@ -3454,6 +2165,8 @@ function installUpdate() {
 
 ipcMain.on('settings:set-app', (_e, patch) => {
   store.setSettings(patch);
+  // 주식을 끄면 열려 있던 창도 닫는다 — 끈 기능의 창이 남아 있으면 이상하다
+  if (patch && patch.stocksEnabled === false) closeStocks();
   if (patch.autoUpdate != null) updater.startAuto(patch.autoUpdate);
   if (patch.calendarAllDay != null) refreshCalendars();
   // «지금부터»의 기준점을 바로 찍는다. 다음 폴링까지 기다리면 그 사이에 온 메일이
@@ -3486,7 +2199,11 @@ ipcMain.handle('settings:custom-add', (_e, def) => {
 ipcMain.handle('settings:custom-update', (_e, { id, patch }) => {
   store.setCustom(id, patch);
   scheduler.sync();
-  if (patch && patch.intervalMin != null) scheduler.schedule(id);
+  // 언제 울릴지를 건드렸으면 다시 예약한다. 주기만 보고 있어서
+  // 시각·요일을 바꿔도 예전 예약이 그대로 남아 있었다.
+  if (patch && ['intervalMin', 'when', 'times', 'days'].some((k) => patch[k] != null)) {
+    scheduler.schedule(id);
+  }
   updateTray();
   pushTick();
   return store.custom;
@@ -3526,6 +2243,23 @@ if (!app.requestSingleInstanceLock()) {
     if (resumed) console.log(`[session] 이전 상태 이어가기 (알림 ${resumed.restored}개)`);
 
     updateTray();
+    watchDisplays();
+    // 주소록의 파일 고르기 창을 설정 창 위에 띄우기 위해 (여기서 해야 settingsWin이 선언된 뒤다)
+    contacts.init({ parentWin: () => settingsWin });
+    statswin.init({ scheduler, startBreak: (ids) => startBreak(ids) });
+    mailbody.init({ mailAccountsForUse: () => mailAccountsForUse(), mailState });
+    mailfilter.init({
+      mailState,
+      refreshMail: (o) => refreshMail(o),
+      forgetRuleWork: () => forgetRuleWork()
+    });
+    mailwin.init({
+      mailAccountsForUse: () => mailAccountsForUse(),
+      refreshMail: (o) => refreshMail(o),
+      localOrServer: (acc, msg) => localOrServer(acc, msg),
+      notice: (k, t) => notice(k, t),
+      seenMarks
+    });
     createWidget();
     if (resumed && resumed.widgetHidden) widgetWin.hide();
     setInterval(tick, 1000);
