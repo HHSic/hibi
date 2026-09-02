@@ -4,6 +4,7 @@ const {
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { pathToFileURL } = require('url');
 
 // 개발용으로 실행할 때는 설치본과 데이터 폴더를 분리한다.
 // 같은 폴더를 쓰면 개발 인스턴스가 옛 설정을 들고 있다가 저장하면서
@@ -705,6 +706,54 @@ function pickTip(type) {
   return type.tips[Math.floor(Math.random() * type.tips.length)];
 }
 
+
+// ── 등장 연출 ────────────────────────────────────────────
+// 직접 넣은 그림·영상은 이 폴더에 복사해 둔다. 원본을 그대로 가리키면
+// 사용자가 파일을 옮기거나 지운 순간 연출이 조용히 사라진다.
+const ENTER_DIR = () => path.join(app.getPath('userData'), 'enters');
+const ENTER_EXT = ['png', 'gif', 'webp', 'apng', 'webm', 'mp4'];
+
+/** 화면 쪽이 읽을 수 있는 주소로 바꾼다 */
+function enterAsset(id) {
+  if (!id || !id.startsWith('my:')) return null;
+  const item = store.enterCustom.find((x) => x.id === id.slice(3));
+  if (!item) return null;
+  const full = path.join(ENTER_DIR(), item.file);
+  if (!fs.existsSync(full)) return null;   // 파일이 없어졌으면 연출도 없다
+  return { url: pathToFileURL(full).href, kind: item.kind, ms: item.ms };
+}
+
+/**
+ * 마우스가 있는 화면. 창을 만들 때 넘기는 display 값과 맞춰 문자열로 준다.
+ * 못 읽으면 null 을 주고, 그때는 화면 쪽이 모두 그린다 (예전 동작).
+ */
+function cursorDisplayId() {
+  try {
+    return String(screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).id);
+  } catch {
+    return null;
+  }
+}
+
+/** 설정 화면에 넘길 목록 — 미리 보려면 주소가 있어야 한다 */
+function enterList() {
+  return store.enterCustom.map((x) => ({
+    ...x, url: pathToFileURL(path.join(ENTER_DIR(), x.file)).href
+  }));
+}
+
+/**
+ * «그때그때»를 지금 하나로 정한다.
+ *
+ * 화면 쪽에서 고르면 모니터마다 다른 연출이 나온다 — 세 대를 쓰면 왼쪽은 고양이,
+ * 오른쪽은 거미줄이 된다. 한 번의 휴식은 어디서 보든 같아야 하므로 여기서 정한다.
+ */
+function resolveEnter(id) {
+  if (id !== 'random') return id;
+  const pool = ['web', 'cat', 'blinds', ...store.enterCustom.map((x) => `my:${x.id}`)];
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
 /** 발동한 종류들을 오버레이가 그릴 수 있는 형태로 만든다 */
 function buildBreakPayload(ids) {
   const custom = store.custom;
@@ -725,7 +774,16 @@ function buildBreakPayload(ids) {
   const grouped = items.length > 1;
   const anyLong = items.some((i) => i.kind === 'long');
   const s = store.settings;
+  const enter = resolveEnter(s.overlayEnter || 'fade');
   return {
+    // 연출은 «지금 보고 있는» 화면에서만 그린다.
+    // 휴식 내용과 확인 목록은 모든 화면에 그대로 뜬다 — 덮는 것이 목적이니까.
+    // 다만 연출까지 화면 수만큼 그리면 같은 영상을 세 번 디코딩하게 된다.
+    enterOn: cursorDisplayId(),
+    // 어떤 연출로 등장할지 — 화면 쪽(enter.js)이 그린다.
+    // 'my:<id>'면 그릴 파일 주소를 enterAsset 에 같이 실어 보낸다.
+    enter,
+    enterAsset: enterAsset(enter),
     items, grouped,
     mode: grouped || anyLong ? 'checklist' : 'single',
     // 켜면 «건너뛰기»·«다 했어요»를 숨긴다. 시간이 끝나면 tick()이 알아서 닫는다.
@@ -1421,6 +1479,7 @@ ipcMain.handle('settings:get', () => ({
   reminders: store.reminders,
   custom: store.custom,
   calendars: store.calendars,
+  enterCustom: enterList(),
   calendarStatus: calendarStatus(),
   dndPresets: dnd.PRESETS,
   update: updater.getState(),
@@ -2186,6 +2245,55 @@ ipcMain.on('settings:set-reminder', (_e, { id, patch }) => {
   pushTick();
 });
 ipcMain.on('settings:close', () => settingsWin && settingsWin.close());
+
+// ── 내 등장 연출 ──
+// 고르기와 넣기를 나눈 이유: 영상 길이는 화면 쪽에서만 잴 수 있다.
+// 먼저 고른 파일 주소를 돌려주면, 설정 화면이 미리 보며 길이를 재고 그 다음에 넣는다.
+ipcMain.handle('enter:pick', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    title: '등장 연출로 쓸 그림·영상 고르기',
+    filters: [{ name: '그림·영상', extensions: ENTER_EXT }],
+    properties: ['openFile']
+  });
+  if (canceled || !filePaths[0]) return null;
+  const src = filePaths[0];
+  const ext = path.extname(src).slice(1).toLowerCase();
+  if (!ENTER_EXT.includes(ext)) return { error: '이 형식은 쓸 수 없습니다.' };
+  const size = fs.statSync(src).size;
+  // 배포물에 들어가는 게 아니라 사용자 폴더로 복사될 뿐이지만, 그래도 한도는 둔다 —
+  // 100MB짜리를 휴식마다 읽으면 뜨는 게 느려진다.
+  if (size > 40 * 1024 * 1024) return { error: '파일이 너무 큽니다 (40MB까지).' };
+  return {
+    path: src,
+    url: pathToFileURL(src).href,
+    name: path.basename(src, path.extname(src)),
+    kind: ext === 'webm' || ext === 'mp4' ? 'video' : 'img'
+  };
+});
+
+ipcMain.handle('enter:add', (_e, { path: src, name, ms }) => {
+  try {
+    const ext = path.extname(src).slice(1).toLowerCase();
+    if (!ENTER_EXT.includes(ext)) return { error: '이 형식은 쓸 수 없습니다.' };
+    const dir = ENTER_DIR();
+    fs.mkdirSync(dir, { recursive: true });
+    // 같은 이름을 두 번 넣어도 서로 안 덮어쓰게 시각을 붙인다
+    const file = `${Date.now().toString(36)}.${ext}`;
+    fs.copyFileSync(src, path.join(dir, file));
+    store.addEnter({ name, file, kind: ext === 'webm' || ext === 'mp4' ? 'video' : 'img', ms });
+    return { list: enterList() };
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
+ipcMain.handle('enter:remove', (_e, id) => {
+  const item = store.enterCustom.find((x) => x.id === id);
+  store.removeEnter(id);
+  // 목록에서 뺀 다음에 지운다 — 지우다 실패해도 목록엔 안 남아야 한다
+  if (item) { try { fs.unlinkSync(path.join(ENTER_DIR(), item.file)); } catch { /* 이미 없으면 됐다 */ } }
+  return { list: enterList(), overlayEnter: store.settings.overlayEnter };
+});
 
 // 사용자 지정 알림
 ipcMain.handle('settings:custom-add', (_e, def) => {

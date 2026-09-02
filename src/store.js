@@ -100,6 +100,10 @@ const DEFAULT_SETTINGS = {
   stocksIndexes: true,     // 코스피·코스닥·나스닥·S&P 500도 같이
   stocksSize: null,        // 창을 마지막으로 조절한 크기
 
+  // 휴식 화면 등장 연출. 기본 연출은 renderer/enter.js 의 LIST,
+  // 직접 넣은 것은 'my:<id>' 꼴로 enterCustom 을 가리킨다.
+  overlayEnter: 'fade',
+
   // 알림음 — 화면만으로는 다른 창을 보고 있을 때 놓친다
   soundEnabled: true,
   soundName: 'chime',      // renderer/sound.js의 LIST 참고
@@ -128,6 +132,7 @@ function blank() {
     mailRules: [],       // [{ id, on, field, match, action, label }]
     mailDraft: null,     // 쓰다 말은 메일 한 통
     stocksWatch: [],     // 관심 종목 [{ ticker, name, market }] — 이 앱이 직접 들고 있다
+    enterCustom: [],     // 직접 넣은 등장 연출 [{ id, name, file, kind, ms }]
     stats: {},           // { 'YYYY-MM-DD': { done, skipped } }
     widgetPos: null,
     widgetSize: null,
@@ -154,6 +159,7 @@ function load() {
       mailRules: Array.isArray(raw.mailRules) ? raw.mailRules : [],
       mailDraft: raw.mailDraft || null,
       stocksWatch: Array.isArray(raw.stocksWatch) ? raw.stocksWatch : [],
+      enterCustom: Array.isArray(raw.enterCustom) ? raw.enterCustom : [],
       stats: raw.stats || {},
       widgetPos: raw.widgetPos || null,
       widgetSize: raw.widgetSize || null,
@@ -339,6 +345,33 @@ module.exports = {
       }));
     save();
     return s2.stocksWatch;
+  },
+
+  // ── 내 등장 연출 ──
+  // 파일 자체는 main 이 userData/enters 로 복사해 두고, 여기엔 그 이름만 적는다.
+  get enterCustom() { return load().enterCustom; },
+  addEnter(item) {
+    const s2 = load();
+    const id = `e${Date.now().toString(36)}`;
+    s2.enterCustom.push({
+      id,
+      name: String(item.name || '내 연출').slice(0, 24),
+      file: String(item.file),          // userData/enters 안의 파일 이름
+      kind: item.kind === 'video' ? 'video' : 'img',
+      // 영상 길이를 못 읽는 파일이 있다 (MediaRecorder 로 만든 webm 이 그렇다).
+      // 그럴 때를 위해 여기서 한 번 더 범위를 잡는다.
+      ms: Math.max(300, Math.min(2500, Math.round(item.ms) || 900))
+    });
+    save();
+    return s2.enterCustom;
+  },
+  removeEnter(id) {
+    const s2 = load();
+    s2.enterCustom = s2.enterCustom.filter((x) => x.id !== id);
+    // 지운 것을 고른 채로 두면 아무 연출도 안 나온다 — 기본으로 되돌린다
+    if (s2.settings.overlayEnter === `my:${id}`) s2.settings.overlayEnter = 'fade';
+    save();
+    return s2.enterCustom;
   },
 
   get calendars() { return load().calendars; },

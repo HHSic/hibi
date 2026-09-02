@@ -453,6 +453,116 @@ $('btn-custom-add').onclick = async () => {
   document.querySelector('.rem-wrap.open')?.scrollIntoView({ block: 'center' });
 };
 
+/**
+ * 휴식 화면이 어떻게 등장할지.
+ *
+ * 기본 연출 목록은 enter.js 가, 직접 넣은 파일은 data.enterCustom 이 들고 있다.
+ * 둘을 한 줄에 같이 놓는다 — 고르는 사람에게는 어차피 같은 종류의 선택이다.
+ */
+function renderEnter() {
+  const host = $('enter-pick');
+  host.textContent = '';
+  const cur = data.settings.overlayEnter || 'fade';
+  const mine = data.enterCustom || [];
+
+  const pick = (id) => {
+    data.settings.overlayEnter = id;
+    window.nunsseom.setApp({ overlayEnter: id });
+    renderEnter();
+  };
+  const chip = (id, label) => {
+    const b = document.createElement('button');
+    b.className = 'mini' + (cur === id ? '' : ' ghost');
+    b.textContent = label;
+    b.onclick = () => pick(id);
+    host.append(b);
+    return b;
+  };
+
+  for (const m of window.nunsEnter.LIST) chip(m.id, m.name);
+  for (const m of mine) chip(`my:${m.id}`, m.name);
+
+  const add = document.createElement('button');
+  add.className = 'mini ghost';
+  add.textContent = '＋ 내 파일';
+  add.onclick = () => addEnterFile(add);
+  host.append(add);
+
+  // 고른 것이 내 파일이면 지울 수 있어야 한다
+  const own = mine.find((m) => `my:${m.id}` === cur);
+  if (own) {
+    const del = document.createElement('button');
+    del.className = 'mini danger';
+    del.textContent = '지우기';
+    del.onclick = async () => {
+      const r = await window.nunsseom.enterRemove(own.id);
+      data.enterCustom = r.list;
+      data.settings.overlayEnter = r.overlayEnter;
+      renderEnter();
+    };
+    host.append(del);
+  }
+
+  const built = window.nunsEnter.LIST.find((m) => m.id === cur);
+  $('enter-hint').textContent = built ? built.hint
+    : own ? `${own.kind === 'video' ? '영상' : '그림'} · ${(own.ms / 1000).toFixed(1)}초 동안 화면을 덮습니다`
+      : '';
+  renderEnterPreview(own);
+}
+
+/** 넣은 파일이 무엇인지 눈으로 확인시켜 준다 — 이름만으로는 알 수 없다 */
+function renderEnterPreview(item) {
+  const box = $('enter-preview');
+  box.textContent = '';
+  box.hidden = !item;
+  if (!item) return;
+  const m = document.createElement(item.kind === 'video' ? 'video' : 'img');
+  if (item.kind === 'video') { m.muted = true; m.loop = true; m.autoplay = true; m.playsInline = true; }
+  m.src = item.url;
+  box.append(m);
+  if (item.kind === 'video') m.play().catch(() => { /* 첫 프레임만 보여도 된다 */ });
+}
+
+/**
+ * 파일을 골라 넣는다.
+ *
+ * 고르기와 넣기를 나눈 이유는 길이 때문이다 — 영상이 몇 초짜리인지는 화면 쪽에서만
+ * 잴 수 있어서, 먼저 주소를 받아 재보고 그 길이와 함께 넣는다.
+ * 길이를 못 읽는 파일도 있다(만든 도구에 따라 헤더가 비어 있다). 그때는 기본값으로 둔다.
+ */
+async function addEnterFile(btn) {
+  btn.disabled = true;
+  try {
+    const got = await window.nunsseom.enterPick();
+    if (!got) return;
+    if (got.error) { $('enter-hint').textContent = got.error; return; }
+    const ms = got.kind === 'video' ? await videoMs(got.url) : 900;
+    const r = await window.nunsseom.enterAdd({ path: got.path, name: got.name, ms });
+    if (r.error) { $('enter-hint').textContent = r.error; return; }
+    data.enterCustom = r.list;
+    const last = r.list[r.list.length - 1];
+    data.settings.overlayEnter = `my:${last.id}`;
+    window.nunsseom.setApp({ overlayEnter: `my:${last.id}` });
+    renderEnter();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/** 영상 길이(ms). 못 읽으면 0을 주고, 넣는 쪽이 기본값으로 채운다. */
+function videoMs(url) {
+  return new Promise((done) => {
+    const v = document.createElement('video');
+    v.muted = true;
+    v.preload = 'metadata';
+    const give = (n) => done(Number.isFinite(n) && n > 0 ? Math.round(n * 1000) : 0);
+    v.onloadedmetadata = () => give(v.duration);
+    v.onerror = () => done(0);
+    setTimeout(() => done(0), 2500);   // 안 읽히는 파일에 매달리지 않는다
+    v.src = url;
+  });
+}
+
 /** 켜기/끄기 스위치를 설정 키에 묶는다 */
 function bindSwitch(key) {
   const el = $(key);
@@ -1494,6 +1604,7 @@ window.nunsseom.getSettings().then((d) => {
   bindAppRow('soundVolume', (v) => (v ? `${v}%` : '무음'),
     (s) => s.soundVolume ?? 55, (v) => ({ soundVolume: v }));
   renderSounds();
+  renderEnter();
   bindAppRow('mailPollMin', (v) => `${v}분`, (s) => s.mailPollMin ?? 10, (v) => ({ mailPollMin: v }));
   bindAppNum('mailCount', {
     min: 1,

@@ -5,6 +5,7 @@
 <link rel="stylesheet" href="../assets/font/pretendard.css">
 <script src="icons.js"></script>
 <script src="sound.js"></script>
+<script src="enter.js"></script>
 <style>
   :root {
     --accent: #0a84ff;
@@ -375,6 +376,17 @@
   .mini.ghost { background: transparent; color: var(--accent); }
   .mini.ghost:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
   .mini.danger { color: #ff6b6b; }
+  /* 넣은 파일 미리보기 — 바둑판 무늬로 깔아 «어디가 투명한지»를 보여준다 */
+  .entprev {
+    margin-top: 8px; width: 168px; height: 95px; border-radius: 8px; overflow: hidden;
+    background-color: rgba(128, 128, 128, 0.16);
+    background-image:
+      linear-gradient(45deg, rgba(128,128,128,0.22) 25%, transparent 25% 75%, rgba(128,128,128,0.22) 75%),
+      linear-gradient(45deg, rgba(128,128,128,0.22) 25%, transparent 25% 75%, rgba(128,128,128,0.22) 75%);
+    background-size: 12px 12px;
+    background-position: 0 0, 6px 6px;
+  }
+  .entprev > * { width: 100%; height: 100%; object-fit: contain; display: block; }
   .mini.danger:hover { background: rgba(255, 107, 107, 0.14); }
   .mini.armed { color: #fff; background: #e0453f; }
   /* 요일 고르기 — 일곱 개가 한 줄에 들어가야 해서 «가나다» 알약보다 좁다 */
@@ -731,6 +743,12 @@
         <span class="nm">시작 시 자동 실행<small id="autoLaunch-note"></small></span>
         <span></span>
         <button class="sw" id="autoLaunch" role="switch" aria-label="Windows 시작 시 자동 실행"></button>
+      </div>
+      <div class="col">
+        <span class="lbl">등장 연출</span>
+        <div class="helprow" id="enter-pick"></div>
+        <span class="hint" id="enter-hint"></span>
+        <div class="entprev" id="enter-preview" hidden></div>
       </div>
       <div class="row toggle">
         <span class="nm">휴식을 끝까지<i>휴식 화면에서 «건너뛰기»와 «다 했어요»를 숨깁니다. 시간이 끝나면 저절로 닫히고, «5분 뒤에»는 남습니다.</i></span>

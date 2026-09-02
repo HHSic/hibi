@@ -48,6 +48,11 @@ contextBridge.exposeInMainWorld('nunsseom', {
   customRemove: (id) => ipcRenderer.invoke('settings:custom-remove', id),
   closeSettings: () => ipcRenderer.send('settings:close'),
 
+  // 내 등장 연출 — 고르고, 넣고, 지운다
+  enterPick: () => ipcRenderer.invoke('enter:pick'),
+  enterAdd: (item) => ipcRenderer.invoke('enter:add', item),
+  enterRemove: (id) => ipcRenderer.invoke('enter:remove', id),
+
   // 캘린더
   calAdd: (name, url) => ipcRenderer.invoke('cal:add', { name, url }),
   calUpdate: (id, patch) => ipcRenderer.invoke('cal:update', { id, patch }),
