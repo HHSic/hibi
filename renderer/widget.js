@@ -463,6 +463,11 @@ function paintCal() {
   const host = $('cal-list');
   host.textContent = '';
   const list = eventsOn(fromKey(calSel));
+  // 격자를 다 그렸으면 높이를 다시 잰다. 달마다 줄 수가 다르다(5줄·6줄) — 모드를 바꿀 때만
+  // 재면 ‹ ›로 6줄짜리 달에 들어섰을 때 창은 그대로고 아래 한 줄이 잘린다 (실측 30px).
+  // 반드시 아래 두 return 보다 앞이어야 한다 — 일정 없는 달이면 거기서 끝나 버린다.
+  // resizeForCal 은 rAF 안에서 재므로, 뒤에 붙는 일정 목록까지 포함한 값이 잡힌다.
+  resizeForCal();
   if (calData && !calData.hasCalendar) {
     const p = document.createElement('div');
     p.className = 'calempty';

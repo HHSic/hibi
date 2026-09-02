@@ -294,10 +294,17 @@
   .card.calon { grid-template-rows: min-content 1fr; }
   /* 둘 다 켜면 세로가 모자란다.
      행을 안 정해두면 달력이 제 높이를 통째로 가져가고 메일은 «1fr = 남은 것 = 0»이 되어
-     머리글만 남은 채 달력 위에 겹쳐 그려진다. 각자 최소 몫을 정하고, 넘치면 안에서 굴린다. */
+     머리글만 남은 채 달력 위에 겹쳐 그려진다.
+
+     메일 줄은 «내용만큼(auto)»이어야 한다. 예전엔 minmax(3.25rem, 7.5rem)였는데,
+     grid는 남는 공간을 fr 줄보다 먼저 이런 줄의 상한까지 채운다 — 메일이 27px뿐인데도
+     120px을 받아 갔고, 그 차이를 달력이 뺏겨 월 보기 아래 두 줄이 잘렸다 (실측 71px).
+     main은 창 높이를 «각 패널이 실제로 보고한 높이»의 합으로 잡으므로, 여기서도 같은
+     숫자를 써야 둘이 맞는다. 메일의 상한도 main의 MAIL_PANEL_MAX(300px)와 같게 둔다. */
   .card.mailon.calon {
-    grid-template-rows: min-content minmax(3.25rem, 7.5rem) minmax(6rem, 1fr);
+    grid-template-rows: min-content auto minmax(0, 1fr);
   }
+  .card.mailon.calon .mailpanel { max-height: 300px; }
   .card.mailon.calon .mailpanel,
   .card.mailon.calon .cal:not(.mailpanel) { min-height: 0; }
 
