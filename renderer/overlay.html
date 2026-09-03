@@ -173,9 +173,31 @@
     to { opacity: 1; transform: scale(1); }
   }
 
-  /* 걷힐 때는 무엇이든 같이 사라진다 — 각자 다르게 걷으면 산만하다 */
-  .curtain.lift { animation: entLift var(--lift) ease-in both; }
-  @keyframes entLift { to { opacity: 0; transform: scale(1.06); } }
+  /* ── 내용 드러내기(.show) ──────────────────────────────
+     내용은 도착 직후 뜬다. 화면을 덮던 것(veil·그림·TV 판)은 걷어 내용을 보이고,
+     연출의 «캐릭터»는 희미한 유령으로 내용 위에 남아 계속 논다. */
+  .curtain.show .ent-veil { animation: entOut var(--fade) ease both; }
+  @keyframes entOut { from { opacity: 1; } to { opacity: 0; } }
+
+  /* 고양이: 몸은 희미해지고 눈은 그대로 깜빡인다 — 내용 위 마스코트 */
+  .curtain.ent-cat.show .ent-fill { fill: rgba(14, 14, 18, 0.14); transition: fill 600ms ease; }
+  /* 블라인드·거미줄 막: 희미하게 남는다 */
+  .curtain.ent-blinds.show .ent-blind { opacity: 0.14; transition: opacity 500ms ease; }
+  .curtain.ent-web.show::before { animation: entOut var(--fade) ease both; }
+  /* 호흡: 어둡게가 아니라 살짝 어둑하게만 남겨 숨쉬는 원이 내용 위에서 계속 돈다 */
+  .curtain.ent-breathe.show .ent-veil { animation: entDim var(--fade) ease both; }
+  @keyframes entDim { from { opacity: 1; } to { opacity: 0.26; } }
+  /* 브라운관: 판을 다시 한 줄로 수축시켜 «꺼지듯» 내용을 드러낸다 (남지 않는다) */
+  .curtain.ent-tv.show .ent-tv-screen { animation: entTvOff var(--fade) ease both; }
+  @keyframes entTvOff { from { transform: scaleY(1); opacity: 1; } 70% { transform: scaleY(0.02); opacity: 1; } to { transform: scaleY(0.02); opacity: 0; } }
+  .curtain.ent-tv.show .ent-tv-scan { animation: entOut var(--fade) ease both; }
+  /* 내 그림·영상: 걷어 내용을 드러낸다 (남지 않는다) */
+  .curtain.ent-media.show .ent-media { animation: entMediaOut var(--fade) ease both; }
+  @keyframes entMediaOut { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(1.04); } }
+
+  /* ── 사라짐(.gone) ── 위에서 놀던 유령마저 조용히 걷힌다 */
+  .curtain.gone { animation: entGone var(--fade) ease both; }
+  @keyframes entGone { from { opacity: 1; } to { opacity: 0; } }
 
   @media (prefers-reduced-motion: reduce) {
     .curtain { display: none !important; }
@@ -211,26 +233,8 @@
   .kicker .emoji { font-size: 16px; line-height: 1; display: inline-grid; place-items: center; }
   .list .item .g.emoji { font-size: 16px; line-height: 1; display: inline-grid; place-items: center; }
 
-  /* 숨쉬는 유리 원 */
-  .breath { position: relative; width: 312px; height: 312px; margin: 0 auto 36px; display: grid; place-items: center; }
-  .breath .disc {
-    position: absolute; inset: 0; border-radius: 50%;
-    background: linear-gradient(160deg, rgba(255,255,255,0.13), rgba(255,255,255,0.04) 62%);
-    box-shadow:
-      inset 0 0 0 0.5px var(--hairline),
-      inset 0 1px 0 rgba(255,255,255,0.30),
-      0 24px 60px rgba(0,0,0,0.28);
-    animation: breathe 5.5s ease-in-out infinite;
-  }
-  .breath .halo {
-    position: absolute; inset: -26px; border-radius: 50%;
-    box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--tint) 26%, transparent);
-    animation: breathe 5.5s ease-in-out infinite reverse;
-  }
-  @keyframes breathe { 0%, 100% { transform: scale(0.96); } 50% { transform: scale(1.04); } }
-  @media (prefers-reduced-motion: reduce) {
-    .breath .disc, .breath .halo { animation: none; }
-  }
+  /* 남은 시간(초)만 — 예전엔 숨쉬는 유리 원반이 감쌌는데, 그 맥동 원을 걷어냈다 */
+  .breath { margin: 0 auto 34px; display: grid; place-items: center; }
   .count {
     position: relative;
     font-size: 100px; font-weight: 210;
@@ -241,11 +245,10 @@
   }
   .count small { font-size: 27px; font-weight: 420; letter-spacing: 0; color: var(--secondary); margin-left: 6px; }
 
-  /* 체크리스트가 길면 숨쉬는 원이 자리를 다 차지한다. 그때는 원을 줄여 목록에 자리를 준다 —
+  /* 체크리스트가 길면 남은 시간을 줄여 목록에 자리를 준다 —
      이 화면의 주인공이 «남은 시간»에서 «해야 할 것»으로 바뀌는 순간이기 때문이다. */
   body.dense .kicker { margin-bottom: 18px; }
-  body.dense .breath { width: 148px; height: 148px; margin: 0 auto 18px; }
-  body.dense .breath .halo { inset: -14px; }
+  body.dense .breath { margin: 0 auto 18px; }
   body.dense .count { font-size: 46px; }
   body.dense .count small { font-size: 15px; margin-left: 4px; }
   body.dense .headline { font-size: 19px; }
@@ -254,8 +257,7 @@
   /* 그래도 안 들어가면 한 단 더 조인다. 12px 넘쳤다고 굴리게 만들면
      «다 보이는데 왜 굴려야 하지»가 된다 — 줄이 몇이든 한눈에 들어오는 편이 낫다. */
   body.denser .kicker { margin-bottom: 10px; }
-  body.denser .breath { width: 92px; height: 92px; margin: 0 auto 10px; }
-  body.denser .breath .halo { inset: -8px; }
+  body.denser .breath { margin: 0 auto 10px; }
   body.denser .count { font-size: 30px; }
   body.denser .count small { font-size: 12px; margin-left: 3px; }
   body.denser .headline { font-size: 17px; }
@@ -337,8 +339,6 @@
   <div class="stage">
     <div class="kicker" id="kicker"></div>
     <div class="breath">
-      <div class="halo"></div>
-      <div class="disc"></div>
       <div class="count" id="count">20<small>초</small></div>
     </div>
     <div class="headline" id="headline"></div>

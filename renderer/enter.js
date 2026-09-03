@@ -15,15 +15,18 @@
  * 덮기 안에서 그림이 «다 그려져야» 한다 — 안 그러면 그리다 만 채로 걷힌다 (실제로 그랬다).
  */
 
-// cover = 화면을 덮는 «도착» 시간(자연스러운 빠르기). hold = 최소 머무름. lift = 걷기.
-const MS = { cover: 900, hold: 260, lift: 460 };
+// 흐름: 짧게 덮고(cover) → 잠깐 멈췄다(hold) → 휴식 내용을 «먼저» 보여주고,
+// 그 위에서 연출이 희미하게 계속 놀다가(presence) → 사라진다(fade).
+//
+// 예전엔 연출이 다 끝날 때까지 내용을 숨겼는데, 그러면 20초 휴식에서 타이머가
+// 9초나 안 보였다. 이제 내용은 도착 직후(~1.2초) 뜨고, 연출은 그 위에 얹혀 논다.
+const MS = { cover: 900, hold: 260, fade: 600 };
 
-// 총 길이는 휴식의 절반쯤 — «20초면 10초는 돼야지». 다만 짧아도 최소, 길어도 상한을 둔다.
-// 덮고 나면 나머지는 화면을 점유한 채 머문다(눈 깜빡임 같은 잔 움직임). 걷히면 휴식 내용.
+// 연출이 화면 위에 머무는 총 길이는 휴식의 절반쯤 — «20초면 10초». 짧아도·길어도 한계.
 const RATIO = 0.5;
 const MIN_TOTAL = 2600;
 const MAX_TOTAL = 12_000;
-const TOTAL = MS.cover + MS.hold + MS.lift;   // 휴식 길이를 모를 때의 기본
+const TOTAL = MS.cover + MS.hold + MS.fade;   // 휴식 길이를 모를 때의 기본
 
 /** 이 연출이 화면을 덮는 데 걸리는 «도착» 시간 */
 function arrivalMs(id, asset) {
@@ -31,15 +34,16 @@ function arrivalMs(id, asset) {
   return MS.cover;
 }
 
-/** 연출 전체가 차지할 시간 — 휴식 길이의 절반(상·하한 안에서) */
+/** 연출이 화면 위에 있는 전체 시간 — 휴식 길이의 절반(상·하한 안에서) */
 function targetTotal(breakSec) {
   const b = Number(breakSec) > 0 ? Number(breakSec) : 20;
   return Math.max(MIN_TOTAL, Math.min(MAX_TOTAL, Math.round(b * 1000 * RATIO)));
 }
 
-/** 도착 뒤 얼마나 머무는가 — 남는 시간을 여기에 몰아준다 */
-function lingerMs(id, asset, breakSec) {
-  return Math.max(MS.hold, targetTotal(breakSec) - arrivalMs(id, asset) - MS.lift);
+/** 내용을 보여준 뒤 연출이 위에서 더 노는 시간 */
+function presenceMs(id, asset, breakSec) {
+  const reveal = arrivalMs(id, asset) + MS.hold;
+  return Math.max(900, targetTotal(breakSec) - reveal - MS.fade);
 }
 
 /** 직접 넣은 연출인가 — 'my:<id>' 꼴 */
@@ -65,12 +69,13 @@ const el = (n, at) => {
 };
 
 /**
- * 화면이 덮여 있는 총 시간(도착 + 머무름) — 휴식 내용은 그 뒤에 걷히며 나타난다.
- * fade·none 은 덮지 않으므로 0.
+ * 휴식 내용이 뜨기까지 기다리는 시간 — «도착 + 잠깐»뿐이다(짧다).
+ * 그 뒤 연출은 내용 위에서 희미하게 더 놀지만, 내용을 가리지 않는다.
+ * fade·none 은 덮지 않으므로 0. breakSec 은 안 쓰지만 부르는 쪽 시그니처를 맞춘다.
  */
-function coverMs(id, asset, breakSec) {
+function coverMs(id, asset) {
   if (id === 'none' || id === 'fade') return 0;
-  return arrivalMs(id, asset) + lingerMs(id, asset, breakSec);
+  return arrivalMs(id, asset) + MS.hold;
 }
 
 // ── 거미줄 ──────────────────────────────────────────────
@@ -226,14 +231,14 @@ function play(id, host, asset, breakSec) {
   const mine = isMine(pick) && asset && asset.url;
   if (reduce || (!mine && !MAKERS[pick])) return Promise.resolve(0);
 
-  // 도착(덮기) → 머무름(화면 점유) → 걷기. 머무는 시간이 휴식 길이를 따라 늘어난다.
+  // 도착(덮기) → reveal(내용을 보여줌) → presence(위에서 희미하게 계속) → fade(사라짐).
   const arrival = arrivalMs(pick, asset);
-  const linger = lingerMs(pick, asset, breakSec);
+  const presence = presenceMs(pick, asset, breakSec);
   host.textContent = '';
   host.className = `curtain on ent-${mine ? 'media' : pick}`;
-  // --cover 는 덮는 동작에 걸리는 시간(도착). 머무는 동안 CSS는 마지막 상태를 유지한다.
+  // --cover 는 덮는 동작에 걸리는 시간(도착). --fade 는 마지막에 사라지는 시간.
   host.style.setProperty('--cover', `${arrival}ms`);
-  host.style.setProperty('--lift', `${MS.lift}ms`);
+  host.style.setProperty('--fade', `${MS.fade}ms`);
   // 연출을 그리다 실패해도 휴식 화면은 떠야 한다. 여기서 새어 나가면 부르는 쪽의
   // 다음 줄(휴식 내용 그리기)이 통째로 건너뛰어져 빈 화면만 남는다 — 실제로 그랬다.
   try {
@@ -245,9 +250,13 @@ function play(id, host, asset, breakSec) {
     return Promise.resolve(0);
   }
 
-  const total = arrival + linger + MS.lift;
+  const reveal = arrival + MS.hold;           // 이때 내용을 보여준다(coverMs 와 같다)
+  const total = reveal + presence + MS.fade;
   return new Promise((done) => {
-    setTimeout(() => host.classList.add('lift'), arrival + linger);
+    // reveal: 덮개(veil 등)를 걷어 내용을 드러내고, 연출은 «희미한 유령»으로 남긴다
+    setTimeout(() => host.classList.add('show'), reveal);
+    // presence 가 끝나면 유령마저 사라진다
+    setTimeout(() => host.classList.add('gone'), reveal + presence);
     setTimeout(() => {
       host.className = 'curtain';
       host.textContent = '';
