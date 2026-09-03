@@ -34,11 +34,11 @@ function isMine(id) { return typeof id === 'string' && id.startsWith('my:'); }
  *  직접 넣은 파일은 여기 없다. 설정 화면이 store 의 enterCustom 을 뒤에 붙여 그린다. */
 const LIST = [
   { id: 'fade', name: '기본', hint: '조용히 밝아집니다' },
-  { id: 'web', name: '거미줄', hint: '모서리에서 거미줄이 날아와 화면을 덮습니다' },
-  { id: 'cat', name: '고양이', hint: '고양이가 올라와 화면을 가립니다' },
-  { id: 'blinds', name: '블라인드', hint: '가로 띠가 차례로 닫혔다 열립니다' },
-  { id: 'breathe', name: '호흡', hint: '숨을 고르는 원이 커졌다 작아집니다' },
-  { id: 'tv', name: '브라운관', hint: '옛날 TV처럼 화면이 켜졌다 꺼집니다' },
+  { id: 'web', name: '거미줄', hint: '거미줄이 날아와 배경이 됩니다' },
+  { id: 'cat', name: '고양이', hint: '고양이가 올라와 배경에서 함께 쉽니다' },
+  { id: 'blinds', name: '블라인드', hint: '가로 띠가 내려와 배경이 됩니다' },
+  { id: 'breathe', name: '호흡', hint: '숨 고르는 원이 계속 커졌다 작아집니다' },
+  { id: 'tv', name: '브라운관', hint: '옛 TV처럼 켜져 배경이 됩니다' },
   { id: 'random', name: '그때그때', hint: '올 때마다 다른 연출' }
 ];
 

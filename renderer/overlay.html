@@ -158,6 +158,9 @@
   }
   .ent-blind:nth-child(even) { transform-origin: right center; }
   @keyframes entBlind { to { transform: scaleX(1); } }
+  /* 닫힌 뒤 띠가 아주 살짝 밝아졌다 어두워진다 — 배경에서 «살아 있게». 띠마다 어긋나게. */
+  .curtain.ent-blinds.on .ent-blind { animation: entBlind calc(var(--cover) - 60ms) cubic-bezier(0.3, 0.8, 0.2, 1) both var(--d, 0ms), entBlindIdle 4.2s ease-in-out both infinite calc(var(--cover) + var(--d, 0ms)); }
+  @keyframes entBlindIdle { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.18); } }
 
   /* 내 파일 — 그림·영상 하나로는 화면이 안 덮이니 뒤에 막을 같이 깐다 */
   .ent-veil {
@@ -173,6 +176,12 @@
   @keyframes entMedia {
     from { opacity: 0; transform: scale(1.08); }
     to { opacity: 1; transform: scale(1); }
+  }
+  /* 커스텀 그림·영상은 밝을 수 있다 — 그 위에만 옅은 어둠을 한 겹 깔아 글자가 읽히게.
+     기본(어두운) 연출엔 없다. */
+  .curtain.ent-media::after {
+    content: ""; position: absolute; inset: 0; background: rgba(8, 10, 14, 0.42);
+    animation: entVeil calc(var(--cover) * 0.5) ease both;
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -277,7 +286,7 @@
     flex: none; width: 100%;
     padding: 14px 24px 46px;
     display: flex; justify-content: center; gap: 10px;
-    animation: fadein 0.7s ease both 1.3s;
+    animation: fadein 0.7s ease both calc(var(--enter-delay, 0ms) + 250ms);
   }
   .actions button {
     all: unset; cursor: default;
