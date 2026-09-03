@@ -897,7 +897,22 @@ function watchDisplays() {
   }
 }
 
+let openingBreak = false;
+
 async function openOverlays(ids) {
+  // 여는 도중에 또 부르면 창이 두 벌 생긴다. 두 번째가 overlayWins 를 덮어써서
+  // 첫 벌이 목록에서 떨어져 나가고, 그 창은 «닫기»가 닿지 않는 유령이 된다.
+  // state.onBreak 는 화면 캡처를 기다린 뒤에야 켜지므로 그 사이가 비어 있다.
+  if (openingBreak) return;
+  openingBreak = true;
+  try {
+    await reallyOpenOverlays(ids);
+  } finally {
+    openingBreak = false;
+  }
+}
+
+async function reallyOpenOverlays(ids) {
   const durations = ids.map((id) => {
     const c = scheduler.cfgOf(id);
     return (c && c.durationSec) || 20;
@@ -925,6 +940,9 @@ async function openOverlays(ids) {
   const want = screen.getAllDisplays().length;
   // 아직 다 안 읽혔어도 미리 세워 둔 창을 쓴다 — 새로 만드는 것보다 무조건 앞서 있다.
   // 다 읽혔는지는 아래에서 창마다 따로 본다.
+  // 앞의 것이 남아 있으면 먼저 치운다 — 덮어쓰면 그 창들이 목록에서 떨어져 나간다
+  for (const w of overlayWins) { try { w.destroy(); } catch { /* 이미 없다 */ } }
+  overlayWins = [];
   const usable = warmWins.length === want && warmWins.every((w) => !w.isDestroyed());
   if (usable) {
     overlayWins = warmWins;
@@ -949,8 +967,17 @@ async function openOverlays(ids) {
 }
 
 function closeOverlays() {
-  for (const w of overlayWins) { try { w.destroy(); } catch {} }
+  // 목록만 믿지 않는다. 어떤 까닭으로든 목록에서 떨어져 나간 휴식 창이 있으면
+  // 그 창은 단추를 눌러도 안 닫혀 사용자가 빠져나갈 길이 없어진다.
+  // 휴식 창인 것은 남김없이 치운다.
+  const all = new Set(overlayWins);
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (w.isDestroyed()) continue;
+    try { if (w.webContents.getURL().includes('overlay.html')) all.add(w); } catch { /* 못 읽으면 넘어간다 */ }
+  }
+  for (const w of all) { try { w.destroy(); } catch { /* 이미 없다 */ } }
   overlayWins = [];
+  warmWins = warmWins.filter((w) => !w.isDestroyed());
   // 아직 찍고 있는 중일 수 있다 (기다리지 않고 창을 띄우므로).
   // 세대를 올려두면 그게 끝나도 지워진 자리에 다시 채워 넣지 않는다.
   shotSeq++;
