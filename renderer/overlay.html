@@ -97,6 +97,54 @@
   }
   @keyframes entEyeOn { to { opacity: 1; } }
   @keyframes entBlink { 0%, 90%, 100% { transform: scaleY(1); } 95% { transform: scaleY(0.08); } }
+  /* 머무는 동안 고양이가 숨쉬듯 아주 살짝 부푼다 — 마스코트처럼 «살아 있게».
+     올라오는 것은 안쪽 <g>(entCat)라서, svg 자체를 건드리는 이 애니와 안 부딪친다. */
+  .curtain.ent-cat .ent-svg {
+    transform-box: fill-box; transform-origin: 50% 100%;
+    animation: entCatBreathe 4.2s ease-in-out both infinite var(--cover);
+  }
+  @keyframes entCatBreathe { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(1.015); } }
+
+  /* ── 호흡 ── 어두운 바탕 위 숨 고르는 두 겹 원 */
+  .ent-breathe { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .ent-ring2 {
+    fill: none; stroke: rgba(150, 200, 255, 0.8); stroke-width: 1.1;
+    transform-box: fill-box; transform-origin: center; opacity: 0;
+    animation: entBreathe 6s ease-in-out both infinite var(--cover);
+  }
+  .ent-ring2.rb { stroke: rgba(150, 200, 255, 0.32); animation-delay: calc(var(--cover) + 220ms); }
+  @keyframes entBreathe {
+    0% { transform: scale(0.5); opacity: 0.25; }
+    45%, 55% { transform: scale(1); opacity: 0.9; }
+    100% { transform: scale(0.5); opacity: 0.25; }
+  }
+  .ent-breathe-label {
+    position: absolute; left: 0; right: 0; top: 63%; text-align: center;
+    color: rgba(222, 232, 255, 0.85); letter-spacing: 0.02em; opacity: 0;
+    font-size: clamp(14px, 2.2vw, 22px);
+    animation: entVeil 700ms ease both var(--cover);
+  }
+
+  /* ── 브라운관 ── 한 줄이 퍼져 덮이고, 스캔라인이 흐른다 */
+  .ent-tv-screen {
+    position: absolute; inset: 0;
+    background: radial-gradient(130% 90% at 50% 50%, #26314c, #05070c 82%);
+    transform: scaleY(0.02); transform-origin: center;
+    animation: entTvOn var(--cover) cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+  @keyframes entTvOn {
+    0% { transform: scaleY(0.02); filter: brightness(3); }
+    60% { transform: scaleY(1); filter: brightness(1.7); }
+    100% { transform: scaleY(1); filter: brightness(1); }
+  }
+  .ent-tv-scan {
+    position: absolute; inset: 0; opacity: 0;
+    background: repeating-linear-gradient(to bottom, rgba(255,255,255,0.05) 0 2px, transparent 2px 4px);
+    animation: entTvScan 5s linear both infinite var(--cover),
+               entTvFlick 2.6s steps(2) both infinite var(--cover);
+  }
+  @keyframes entTvScan { to { background-position: 0 40px; } }
+  @keyframes entTvFlick { 0%, 100% { opacity: 0.5; } 50% { opacity: 0.3; } }
 
   /* 블라인드 — 가로 띠가 차례로 닫힌다 */
   .ent-blind {

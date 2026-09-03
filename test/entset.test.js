@@ -25,7 +25,8 @@ app.whenReady().then(async () => {
     hint: document.getElementById('enter-hint').textContent
   }))()`);
   console.log('  ', JSON.stringify(st));
-  ok(st.names.length === 6 && st.names[5] === '＋ 내 파일', '기본 다섯 개 + 파일 넣기', st.names);
+  ok(st.names.includes('기본') && st.names.includes('그때그때') && st.names[st.names.length - 1] === '＋ 내 파일',
+    '기본 연출들 끝에 «＋ 내 파일»', st.names);
   ok(st.on.length === 1 && st.on[0] === '기본', '지금 고른 것이 하나만 켜져 있다', st.on);
   // 골라보기
   await wc.executeJavaScript(`[...document.querySelectorAll('#enter-pick .mini')].find(b=>b.textContent==='고양이').click()`);

@@ -52,6 +52,8 @@ const LIST = [
   { id: 'web', name: '거미줄', hint: '모서리에서 거미줄이 날아와 화면을 덮습니다' },
   { id: 'cat', name: '고양이', hint: '고양이가 올라와 화면을 가립니다' },
   { id: 'blinds', name: '블라인드', hint: '가로 띠가 차례로 닫혔다 열립니다' },
+  { id: 'breathe', name: '호흡', hint: '숨을 고르는 원이 커졌다 작아집니다' },
+  { id: 'tv', name: '브라운관', hint: '옛날 TV처럼 화면이 켜졌다 꺼집니다' },
   { id: 'random', name: '그때그때', hint: '올 때마다 다른 연출' }
 ];
 
@@ -178,7 +180,34 @@ function media(host, asset) {
   if (isVid) m.play().catch(() => { /* 못 틀면 첫 프레임이라도 남는다 */ });
 }
 
-const MAKERS = { web, cat, blinds };
+// ── 호흡 ────────────────────────────────────────────────
+// 화면을 어둡게 덮고, 가운데서 숨 고르는 원이 커졌다 작아진다. 눈·숨 고르기에 맞다.
+function breathe(host) {
+  const veil = document.createElement('div');
+  veil.className = 'ent-veil';
+  host.append(veil);
+  // viewBox 를 정사각으로 두고 가운데 맞춤(meet) — 어느 화면 비율에도 원이 안 찌그러진다
+  const svg = el('svg', { viewBox: '0 0 100 100', preserveAspectRatio: 'xMidYMid meet', class: 'ent-svg ent-breathe' });
+  svg.append(el('circle', { cx: 50, cy: 50, r: 15, class: 'ent-ring2' }));
+  svg.append(el('circle', { cx: 50, cy: 50, r: 15, class: 'ent-ring2 rb' }));
+  host.append(svg);
+  const label = document.createElement('div');
+  label.className = 'ent-breathe-label';
+  label.textContent = '천천히 숨을 고르세요';
+  host.append(label);
+}
+
+// ── 브라운관 ────────────────────────────────────────────
+// 옛날 TV 켜지듯 한 줄이 위아래로 확 퍼져 화면을 덮고, 머무는 동안 스캔라인이 흐른다.
+function tv(host) {
+  const scr = document.createElement('div');
+  scr.className = 'ent-tv-screen';
+  const scan = document.createElement('div');
+  scan.className = 'ent-tv-scan';
+  host.append(scr, scan);
+}
+
+const MAKERS = { web, cat, blinds, breathe, tv };
 
 /**
  * 연출을 재생한다. 다 걷히면 resolve.
