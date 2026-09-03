@@ -94,10 +94,9 @@ app.whenReady().then(async () => {
   ok(mid.delay === want, '휴식 내용은 덮는 시간만큼 기다린다', { 실제: mid.delay, 기대: want });
   ok(Number(mid.stage) < 0.5, '덮인 동안은 휴식 내용이 아직 안 보인다', mid.stage);
 
-  // 휴식 창은 시간이 되면 스스로 닫힌다 — 고정 대기로는 늦어서 놓친다.
-  // 연출이 다 걷힌 상태를 기다리되, 창이 사라지면 마지막으로 본 것을 쓴다.
+  // 이제 연출은 배경으로 남는다 — 걷히길 기다리지 않고, 내용이 그 위에 뜨는 것을 본다.
   let after = null;
-  for (let i = 0; i < 80; i++) {
+  for (let i = 0; i < 60; i++) {
     if (ov.isDestroyed()) break;
     const st = await ov.webContents.executeJavaScript(`(() => ({
       on: document.getElementById('curtain').classList.contains('on'),
@@ -107,12 +106,14 @@ app.whenReady().then(async () => {
     }))()`).catch(() => null);
     if (!st) break;
     after = st;
-    if (!st.on && st.kids === 0 && Number(st.stage) > 0.9) break;
+    if (Number(st.stage) > 0.9) break;
     await sleep(100);
   }
-  if (!after) { ok(false, '휴식 창을 못 읽음'); after = { on: true, kids: -1, head: '', stage: '0' }; }
-  ok(!after.on && after.kids === 0, '커튼이 깨끗이 걷혔다', after);
-  ok(after.head.length > 0 && Number(after.stage) > 0.9, '휴식 내용이 떴다', after.head);
+  if (!after) { ok(false, '휴식 창을 못 읽음'); after = { on: false, kids: 0, head: '', stage: '0' }; }
+  ok(after.head.length > 0 && Number(after.stage) > 0.9, '휴식 내용이 그 위에 떴다', after.head);
+  ok(after.on && after.kids > 0, '내 영상이 배경으로 남는다', { on: after.on, kids: after.kids });
+  ipcMain.emit('overlay:done');
+  await sleep(500);
 
   // ── 지우기 ──
   await wc.executeJavaScript(`[...document.querySelectorAll('#enter-pick .mini')].find(b=>b.textContent==='지우기').click()`);

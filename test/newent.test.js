@@ -1,6 +1,6 @@
 const ROOT = require('path').join(__dirname, '..').split(require('path').sep).join('/');
 const OUT = process.env.HIBI_TEST_OUT || require('os').tmpdir();
-// 호흡·브라운관이 실제 휴식에서 화면을 덮고, 걷힌 뒤 내용이 뜨는가. 정지 그림도 찍는다.
+// 호흡·브라운관이 배경으로 화면을 채우고, 그 위에 내용이 뜨는가. 정지 그림도 찍는다.
 const path = require('path'); const fs = require('fs'); const os = require('os');
 const { app, BrowserWindow, ipcMain } = require('electron');
 process.on('uncaughtException', (e) => { console.error('LAB 터짐:', (e && e.stack) || e); process.exit(1); });
@@ -38,20 +38,20 @@ app.whenReady().then(async () => {
     ok(Number(mid.stage) < 0.5, `${kind}: 덮인 동안 내용 숨김`, mid.stage);
     fs.writeFileSync(path.join(OUT, `ent-${kind}.png`), (await owc.capturePage()).toPNG());
 
-    // 걷힐 때까지 기다린다
+    // 내용이 그 위에 뜰 때까지 기다린다 (연출은 배경으로 남는다)
     let after = null;
-    for (let i = 0; i < 80; i++) {
+    for (let i = 0; i < 60; i++) {
       if (ov.isDestroyed()) break;
       after = await owc.executeJavaScript(`(() => ({
         on: document.getElementById('curtain').classList.contains('on'),
         kids: document.getElementById('curtain').children.length,
         head: (document.getElementById('headline').textContent || '').trim(),
         stage: getComputedStyle(document.querySelector('.stage')).opacity }))()`).catch(() => null);
-      if (after && !after.on && after.kids === 0 && Number(after.stage) > 0.9) break;
+      if (after && Number(after.stage) > 0.9) break;
       await sleep(100);
     }
-    ok(after && !after.on && after.kids === 0, `${kind}: 커튼이 깨끗이 걷혔다`, after);
-    ok(after && after.head.length > 0, `${kind}: 휴식 내용이 떴다`, after && after.head);
+    ok(after && after.head.length > 0 && Number(after.stage) > 0.9, `${kind}: 내용이 그 위에 떴다`, after && after.head);
+    ok(after && after.on && after.kids > 0, `${kind}: 연출은 배경으로 남는다`, after && { on: after.on, kids: after.kids });
     ipcMain.emit('overlay:done');
     await sleep(800);
   }

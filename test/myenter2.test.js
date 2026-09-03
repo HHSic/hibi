@@ -64,7 +64,9 @@ app.whenReady().then(async () => {
     `window.nunsseom.getBreakPayload().then(p =>
        window.nunsEnter.coverMs(p.enter, p.enterAsset, p.durationSec) + 'ms')`);
   ok(st.delay === wantImg, '그림도 덮는 시간만큼 기다린다', { 실제: st.delay, 기대: wantImg });
-  await until(async () => winsBy('overlay').length === 0, 120);
+  // 연출은 배경으로 남으므로 스스로 안 닫힌다 — 다음 절 전에 확실히 끝낸다
+  ipcMain.emit('overlay:done', {});
+  await until(async () => winsBy('overlay').length === 0, 80);
 
   // ── 그때그때 ──
   // className 은 연출이 도는 «순간»에만 남아 시점을 타므로, main 이 정해서 보낸
