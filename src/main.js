@@ -934,6 +934,8 @@ async function reallyOpenOverlays(ids) {
   // 화면 쪽이 그릴 때 «언제 끝나는지»가 있어야 한다 — 미리 만들어 둔 창은
   // 만들 때 그걸 몰랐으므로 여기서 같이 실어 보낸다.
   breakPayload.endsAt = state.breakEndsAt;
+  // 등장 연출 길이는 휴식 길이를 따라간다 (화면 쪽 enter.js 가 절반쯤으로 잡는다)
+  breakPayload.durationSec = durationSec;
 
   // 미리 세워 둔 창이 다 준비됐으면 그걸 쓴다. 화면 수가 달라졌거나(모니터를 꽂았거나)
   // 아직 다 안 읽혔으면 그냥 새로 만든다 — 반쯤 준비된 창에 신호를 보내면 놓친다.

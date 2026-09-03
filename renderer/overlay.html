@@ -67,6 +67,9 @@
   .ent-spoke { stroke-width: 2.1; }
   .ent-ring { stroke-width: 1.5; stroke: rgba(255,255,255,0.5); }
   @keyframes entDraw { to { stroke-dashoffset: 0; } }
+  /* 다 치고 머무는 동안 거미줄이 숨쉬듯 옅어졌다 진해진다 — 멈춰 있지 않게 */
+  .ent-web { animation: entWebIdle 3.4s ease-in-out both infinite; animation-delay: var(--cover); }
+  @keyframes entWebIdle { 0%, 100% { opacity: 1; } 50% { opacity: 0.74; } }
   /* 거미줄만으론 화면이 안 가려진다 — 같이 퍼지는 얇은 막이 실제로 덮는다 */
   .ent-web::after { content: none; }
   .curtain.ent-web::before {
@@ -83,11 +86,17 @@
     from { transform: translateY(78%) scale(0.42); transform-origin: 50% 100%; }
     to { transform: translateY(0) scale(1); transform-origin: 50% 100%; }
   }
+  /* 도착하며 눈이 켜지고(entEyeOn), 머무는 동안 3.6초마다 한 번 깜빡인다(entBlink).
+     깜빡임은 세로로 잠깐 눌러 감는 것 — fill-box 로 눈 제 중심에서 눌러야 제자리에서 감긴다. */
   .ent-eye {
     fill: #ffd76e; opacity: 0;
-    animation: entBlink 260ms ease-out both calc(var(--cover) * 0.42);
+    transform-box: fill-box; transform-origin: center;
+    animation:
+      entEyeOn 300ms ease-out both calc(var(--cover) * 0.5),
+      entBlink 3.6s ease-in-out both infinite calc(var(--cover) + 300ms);
   }
-  @keyframes entBlink { 30% { opacity: 1; } 100% { opacity: 0; } }
+  @keyframes entEyeOn { to { opacity: 1; } }
+  @keyframes entBlink { 0%, 90%, 100% { transform: scaleY(1); } 95% { transform: scaleY(0.08); } }
 
   /* 블라인드 — 가로 띠가 차례로 닫힌다 */
   .ent-blind {
@@ -319,12 +328,14 @@
     // 연출이 없거나 «움직임 줄이기»면 0이라 예전과 똑같이 바로 나타난다.
     // 기다리는 시간은 모든 화면이 똑같이 잡는다 — 화면마다 내용이 다른 때에 뜨면
     // 여러 대를 쓰는 사람에게는 그게 더 어수선하다.
-    const wait = window.nunsEnter.coverMs(p.enter || 'fade', p.enterAsset);
+    // 연출 길이는 휴식 길이를 따라간다 (절반쯤). durationSec 을 못 받으면 20초로 본다.
+    const breakSec = Number(p.durationSec) > 0 ? Number(p.durationSec) : 20;
+    const wait = window.nunsEnter.coverMs(p.enter || 'fade', p.enterAsset, breakSec);
     document.documentElement.style.setProperty('--enter-delay', `${wait}ms`);
     // 연출을 그리는 건 마우스가 있는 화면 하나뿐. 나머지는 그동안 어두운 채로 있다가
     // 같은 시각에 내용을 보여준다.
     if (p.enterOn == null || String(p.enterOn) === String(displayId)) {
-      window.nunsEnter.play(p.enter || 'fade', document.getElementById('curtain'), p.enterAsset);
+      window.nunsEnter.play(p.enter || 'fade', document.getElementById('curtain'), p.enterAsset, breakSec);
     }
 
     tick();

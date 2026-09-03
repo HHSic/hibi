@@ -28,6 +28,7 @@ app.whenReady().then(async () => {
   fs.copyFileSync(path.join(FIX, 'cat-alpha.webm'), path.join(dir, 'a.webm'));
   const list = store.addEnter({ name: '고양이', file: 'a.webm', kind: 'video', ms: 900 });
   store.setSettings({ overlayEnter: `my:${list[0].id}` });
+  store.setReminder('eye', { durationSec: 6 });   // 연출은 휴식의 절반 — 짧게 잡아 빨리 끝낸다
 
   ipcMain.emit('widget:break-now', {}, 'eye');
   const ws = await until(async () => { const w = winsBy('overlay'); return w.length >= n ? w : null; }) || winsBy('overlay');
@@ -42,7 +43,9 @@ app.whenReady().then(async () => {
   const live = st.filter(Boolean);
   ok(live.length === n, `창이 ${n}대에 다 떴다`, live.length);
   ok(live.filter((x) => x.vid).length === 1, '영상을 그리는 화면은 하나뿐', live.map((x) => x.vid));
-  ok(new Set(live.map((x) => x.delay)).size === 1 && live[0].delay === '960ms',
+  // 값은 휴식 길이·enter.js 공식에 달렸으니 숫자를 박지 않는다 — 셋이 «같은가»만 본다.
+  const ms = parseInt(live[0].delay, 10);
+  ok(new Set(live.map((x) => x.delay)).size === 1 && ms > 1000,
     '기다리는 시간은 모든 화면이 같다', live.map((x) => x.delay));
 
   const cur = String(screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).id);

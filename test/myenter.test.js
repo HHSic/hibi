@@ -32,6 +32,7 @@ app.whenReady().then(async () => {
   await sleep(2500);
   hide = true;
   await winBy('widget.html').webContents.executeJavaScript(`window.nunsseom.setApp({ idlePauseSec: 36000, dndEnabled: false })`);
+  store.setReminder('eye', { durationSec: 6 });   // 연출은 휴식의 절반 — 짧게 잡아 빨리 끝낸다
 
   PICK = path.join(FIX, 'cat-alpha.webm');
   ipcMain.emit('widget:open-settings', {}, 'app');
@@ -86,13 +87,17 @@ app.whenReady().then(async () => {
   console.log('  덮는 중', JSON.stringify(mid));
   ok(/ent-media/.test(mid.cls) && mid.veil && mid.vid, '내 영상이 화면을 덮는다', mid.cls);
   ok(mid.playing && mid.w === 640, '영상이 실제로 돌아간다', [mid.playing, mid.w]);
-  ok(mid.delay === '960ms', '휴식 내용은 영상 길이만큼 기다린다', mid.delay);
+  // 기대 지연은 enter.js 가 직접 계산하게 한다 (휴식 6초 → 절반의 덮는 시간).
+  const want = await ov.webContents.executeJavaScript(
+    `window.nunsseom.getBreakPayload().then(p =>
+       window.nunsEnter.coverMs(p.enter, p.enterAsset, p.durationSec) + 'ms')`);
+  ok(mid.delay === want, '휴식 내용은 덮는 시간만큼 기다린다', { 실제: mid.delay, 기대: want });
   ok(Number(mid.stage) < 0.5, '덮인 동안은 휴식 내용이 아직 안 보인다', mid.stage);
 
   // 휴식 창은 시간이 되면 스스로 닫힌다 — 고정 대기로는 늦어서 놓친다.
   // 연출이 다 걷힌 상태를 기다리되, 창이 사라지면 마지막으로 본 것을 쓴다.
   let after = null;
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < 80; i++) {
     if (ov.isDestroyed()) break;
     const st = await ov.webContents.executeJavaScript(`(() => ({
       on: document.getElementById('curtain').classList.contains('on'),

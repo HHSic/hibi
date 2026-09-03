@@ -25,6 +25,8 @@ app.whenReady().then(async () => {
   hide = true;
   const wc = winBy('widget.html').webContents;
   await wc.executeJavaScript(`window.nunsseom.setApp({ idlePauseSec: 36000, dndEnabled: false })`);
+  // 연출 길이는 휴식의 절반이라, 시험은 짧은 휴식으로 돌려 빨리 끝낸다.
+  store.setReminder('eye', { durationSec: 6 });
 
   for (const kind of ['cat', 'fade']) {
     store.setSettings({ overlayEnter: kind });
@@ -44,15 +46,20 @@ app.whenReady().then(async () => {
     })()`);
     ok(kind === 'fade' ? !mid.on : mid.on, `${kind}: 덮는 중 커튼 상태`, mid);
 
-    // 다 걷힌 뒤: 커튼은 사라지고 휴식 내용이 보여야 한다
-    await sleep(1400);
-    const after = await owc.executeJavaScript(`(() => {
-      const c = document.getElementById('curtain');
-      const h = document.getElementById('headline');
-      return { on: c.classList.contains('on'), kids: c.children.length,
-               head: (h.textContent || '').trim().slice(0, 12),
-               stageOpacity: getComputedStyle(document.querySelector('.stage')).opacity };
-    })()`);
+    // 다 걷힌 뒤: 커튼은 사라지고 휴식 내용이 보여야 한다.
+    // 연출 길이가 휴식을 따라 늘었으므로 고정 대기 대신 걷힐 때까지 기다린다.
+    let after = null;
+    for (let i = 0; i < 90; i++) {
+      after = await owc.executeJavaScript(`(() => {
+        const c = document.getElementById('curtain');
+        const h = document.getElementById('headline');
+        return { on: c.classList.contains('on'), kids: c.children.length,
+                 head: (h.textContent || '').trim().slice(0, 12),
+                 stageOpacity: getComputedStyle(document.querySelector('.stage')).opacity };
+      })()`).catch(() => null);
+      if (after && !after.on && after.kids === 0 && Number(after.stageOpacity) > 0.9) break;
+      await sleep(100);
+    }
     ok(!after.on && after.kids === 0, `${kind}: 커튼이 깨끗이 걷혔다`, { on: after.on, kids: after.kids });
     ok(after.head.length > 0 && Number(after.stageOpacity) > 0.9, `${kind}: 휴식 내용이 떴다`, after);
     ipcMain.emit('overlay:done');

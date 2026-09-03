@@ -37,6 +37,7 @@ app.whenReady().then(async () => {
   await sleep(2500);
   hide = true;
   await winsBy('widget.html')[0].webContents.executeJavaScript(`window.nunsseom.setApp({ idlePauseSec: 36000, dndEnabled: false })`);
+  store.setReminder('eye', { durationSec: 6 });   // 연출은 휴식의 절반 — 짧게 잡아 빨리 끝낸다
   const dir = path.join(app.getPath('userData'), 'enters');
   fs.mkdirSync(dir, { recursive: true });
   makePng(path.join(dir, 'dot.png'));
@@ -59,7 +60,10 @@ app.whenReady().then(async () => {
   console.log('  그림', JSON.stringify(st));
   ok(st.tag === 'IMG' && st.loaded === 240, '누끼 PNG 가 뜬다', [st.tag, st.loaded]);
   ok(st.fit === 'contain', '잘리지 않게 통째로 보인다', st.fit);
-  ok(st.delay === '760ms', '그림도 제 길이만큼 덮는다', st.delay);
+  const wantImg = await ov.webContents.executeJavaScript(
+    `window.nunsseom.getBreakPayload().then(p =>
+       window.nunsEnter.coverMs(p.enter, p.enterAsset, p.durationSec) + 'ms')`);
+  ok(st.delay === wantImg, '그림도 덮는 시간만큼 기다린다', { 실제: st.delay, 기대: wantImg });
   await until(async () => winsBy('overlay').length === 0, 120);
 
   // ── 그때그때 ──

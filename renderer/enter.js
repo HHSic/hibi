@@ -9,12 +9,38 @@
  * 그림 파일을 쓰지 않는다. 전부 SVG·CSS로 그린다 — 배포 크기도 안 늘고,
  * 화면 크기·비율(세로 모니터 포함)에 맞춰 그때그때 그릴 수 있다.
  *
- * 연출은 짧아야 한다. 20초 휴식에서 1초를 쓰면 5%다. 덮기 380 + 멈춤 60 + 걷기 300 ≈ 0.74초.
+ * 연출은 눈에 담길 만큼은 길어야 한다. 처음엔 0.74초로 뒀는데 «시작하자마자 끝난다»는
+ * 말이 나왔다 — 고양이가 채 올라오기도 전에 걷혔다. 그렇다고 길면 방해가 되니,
+ * 20초 휴식의 7% 안쪽인 1.36초로 잡는다 (덮기 780 + 멈춤 180 + 걷기 400).
  * 덮기 안에서 그림이 «다 그려져야» 한다 — 안 그러면 그리다 만 채로 걷힌다 (실제로 그랬다).
  */
 
-const MS = { cover: 380, hold: 60, lift: 300 };
-const TOTAL = MS.cover + MS.hold + MS.lift;
+// cover = 화면을 덮는 «도착» 시간(자연스러운 빠르기). hold = 최소 머무름. lift = 걷기.
+const MS = { cover: 900, hold: 260, lift: 460 };
+
+// 총 길이는 휴식의 절반쯤 — «20초면 10초는 돼야지». 다만 짧아도 최소, 길어도 상한을 둔다.
+// 덮고 나면 나머지는 화면을 점유한 채 머문다(눈 깜빡임 같은 잔 움직임). 걷히면 휴식 내용.
+const RATIO = 0.5;
+const MIN_TOTAL = 2600;
+const MAX_TOTAL = 12_000;
+const TOTAL = MS.cover + MS.hold + MS.lift;   // 휴식 길이를 모를 때의 기본
+
+/** 이 연출이 화면을 덮는 데 걸리는 «도착» 시간 */
+function arrivalMs(id, asset) {
+  if (isMine(id)) return (asset && asset.ms) ? asset.ms : MS.cover;
+  return MS.cover;
+}
+
+/** 연출 전체가 차지할 시간 — 휴식 길이의 절반(상·하한 안에서) */
+function targetTotal(breakSec) {
+  const b = Number(breakSec) > 0 ? Number(breakSec) : 20;
+  return Math.max(MIN_TOTAL, Math.min(MAX_TOTAL, Math.round(b * 1000 * RATIO)));
+}
+
+/** 도착 뒤 얼마나 머무는가 — 남는 시간을 여기에 몰아준다 */
+function lingerMs(id, asset, breakSec) {
+  return Math.max(MS.hold, targetTotal(breakSec) - arrivalMs(id, asset) - MS.lift);
+}
 
 /** 직접 넣은 연출인가 — 'my:<id>' 꼴 */
 function isMine(id) { return typeof id === 'string' && id.startsWith('my:'); }
@@ -37,14 +63,12 @@ const el = (n, at) => {
 };
 
 /**
- * 이 연출이 «화면을 다 덮는 데» 걸리는 시간 — 휴식 내용은 그 뒤에 나타난다.
- * 직접 넣은 파일은 제 길이만큼 보여준다. 0.38초짜리 손그림 기준으로 잘라 버리면
- * 2초짜리 고양이가 시작하자마자 걷힌다.
+ * 화면이 덮여 있는 총 시간(도착 + 머무름) — 휴식 내용은 그 뒤에 걷히며 나타난다.
+ * fade·none 은 덮지 않으므로 0.
  */
-function coverMs(id, asset) {
+function coverMs(id, asset, breakSec) {
   if (id === 'none' || id === 'fade') return 0;
-  if (isMine(id)) return (asset && asset.ms ? asset.ms : 900) + MS.hold;
-  return MS.cover + MS.hold;
+  return arrivalMs(id, asset) + lingerMs(id, asset, breakSec);
 }
 
 // ── 거미줄 ──────────────────────────────────────────────
@@ -146,6 +170,7 @@ function media(host, asset) {
     m.muted = true;               // 소리는 알림음이 따로 낸다
     m.playsInline = true;
     m.autoplay = true;
+    m.loop = true;                // 머무는 동안 멈춰 있지 않게 되풀이한다
   }
   m.src = asset.url;
   host.append(m);
@@ -160,7 +185,7 @@ const MAKERS = { web, cat, blinds };
  * 움직임을 줄여 달라는 설정이면 아무것도 안 하고 바로 끝낸다 — 그 설정을 켠 사람에게
  * 화면을 뒤덮는 애니메이션은 정확히 원치 않는 것이다.
  */
-function play(id, host, asset) {
+function play(id, host, asset, breakSec) {
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
   let pick = id;
   // 'random' 은 보통 main 이 미리 정해서 넘긴다 — 모니터마다 다른 게 나오면 안 되니까.
@@ -172,10 +197,13 @@ function play(id, host, asset) {
   const mine = isMine(pick) && asset && asset.url;
   if (reduce || (!mine && !MAKERS[pick])) return Promise.resolve(0);
 
-  const cover = mine ? coverMs(pick, asset) - MS.hold : MS.cover;
+  // 도착(덮기) → 머무름(화면 점유) → 걷기. 머무는 시간이 휴식 길이를 따라 늘어난다.
+  const arrival = arrivalMs(pick, asset);
+  const linger = lingerMs(pick, asset, breakSec);
   host.textContent = '';
   host.className = `curtain on ent-${mine ? 'media' : pick}`;
-  host.style.setProperty('--cover', `${cover}ms`);
+  // --cover 는 덮는 동작에 걸리는 시간(도착). 머무는 동안 CSS는 마지막 상태를 유지한다.
+  host.style.setProperty('--cover', `${arrival}ms`);
   host.style.setProperty('--lift', `${MS.lift}ms`);
   // 연출을 그리다 실패해도 휴식 화면은 떠야 한다. 여기서 새어 나가면 부르는 쪽의
   // 다음 줄(휴식 내용 그리기)이 통째로 건너뛰어져 빈 화면만 남는다 — 실제로 그랬다.
@@ -188,9 +216,9 @@ function play(id, host, asset) {
     return Promise.resolve(0);
   }
 
-  const total = cover + MS.hold + MS.lift;
+  const total = arrival + linger + MS.lift;
   return new Promise((done) => {
-    setTimeout(() => host.classList.add('lift'), cover + MS.hold);
+    setTimeout(() => host.classList.add('lift'), arrival + linger);
     setTimeout(() => {
       host.className = 'curtain';
       host.textContent = '';
