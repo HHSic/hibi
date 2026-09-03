@@ -15,6 +15,10 @@ const { PRELOAD, page, PAD, clamp, glassQuery, maxSize } = require('./win');
 const stockState = { rows: [], at: 0, fetchedAt: 0, lagSec: null, failed: 0, error: null, loading: false };
 
 let stocksWin = null;
+// 우리가 정한 창 크기. 드래그 기준을 여기서 준다 — getBounds 로 되읽으면 DPI 배율에서
+// 요청보다 1px 크게 나와, 다음 드래그가 그 부푼 값을 기준으로 삼아 잡을 때마다 커진다
+// (사용자가 «반올림 오류로 계속 커진다»고 한 것). 위젯이 겪던 것과 같은 병.
+let stockSize = null;
 const STOCK_POLL_MS = 60_000;
 let stockTimer = null;
 
@@ -71,6 +75,7 @@ function openStocks() {
   const cap = maxSize(null);
   const width = Math.round(clamp((saved && saved.width) || 380 + PAD, 300, cap.width));
   const height = Math.round(clamp((saved && saved.height) || 520 + PAD, 260, cap.height));
+  stockSize = { width, height };
 
   stocksWin = new BrowserWindow({
     width, height, minWidth: 300, minHeight: 260,
@@ -94,6 +99,7 @@ function openStocks() {
   }, 15_000);
   stocksWin.on('closed', () => {
     stocksWin = null;
+    stockSize = null;
     if (stockTimer) { clearInterval(stockTimer); stockTimer = null; }
   });
 }
@@ -149,16 +155,21 @@ ipcMain.handle('stocks:import', async (_e, root) => {
 ipcMain.handle('stocks:bounds', () => {
   if (!stocksWin || stocksWin.isDestroyed()) return null;
   const cap = maxSize(stocksWin);
-  // 상한은 이름을 달리 붙인다 — 그냥 펼치면 width/height가 창의 실제 크기를 덮어쓴다
-  return { ...stocksWin.getBounds(), maxWidth: cap.width, maxHeight: cap.height };
+  const b = stocksWin.getBounds();
+  // 위치(x,y)는 실제에서, 크기(width,height)는 «우리가 정한 값»에서 준다.
+  // getBounds 의 크기는 DPI 배율에서 1px 부풀어 있어, 그걸 기준 삼으면 누적된다.
+  const size = stockSize || { width: b.width, height: b.height };
+  return { x: b.x, y: b.y, width: size.width, height: size.height,
+           maxWidth: cap.width, maxHeight: cap.height };
 });
 ipcMain.on('stocks:set-bounds', (_e, b) => {
   if (!stocksWin || stocksWin.isDestroyed() || !b) return;
-  stocksWin.setBounds({
-    x: Math.round(b.x), y: Math.round(b.y),
-    width: Math.round(b.width), height: Math.round(b.height)
-  });
-  store.setSettings({ stocksSize: { width: Math.round(b.width), height: Math.round(b.height) } });
+  const w = Math.round(b.width);
+  const h = Math.round(b.height);
+  stocksWin.setBounds({ x: Math.round(b.x), y: Math.round(b.y), width: w, height: h });
+  // 다음 드래그가 기준으로 삼을 값은 «우리가 방금 요청한 정수»다 (getBounds 아님)
+  stockSize = { width: w, height: h };
+  store.setSettings({ stocksSize: { width: w, height: h } });
 });
 ipcMain.on('stocks:move', (_e, pos) => {
   if (!stocksWin || stocksWin.isDestroyed() || !pos) return;
