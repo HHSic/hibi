@@ -604,6 +604,16 @@
   .controls button.primary:hover { filter: brightness(1.12); }
   .controls button.primary span { font-family: inherit; font-size: 0.6875rem; font-weight: 650; letter-spacing: -0.01em; }
   .controls svg { width: 0.8125rem; height: 0.8125rem; display: block; }
+  /* 아이콘마다 그려지는 크기가 제각각이라(톱니는 상자를 꽉 채우고 메일은 절반뿐)
+     줄이 들쭉날쭉해 보였다. 획 두께는 그대로 두고(non-scaling-stroke) 글리프만
+     제 중심에서 조금 키우거나 줄여 잉크 높이를 한 폭으로 모은다.
+     세로 중심은 이미 맞아 있으므로 크기만 손댄다. */
+  .controls svg { transform-box: fill-box; transform-origin: center; overflow: visible; }
+  .controls svg path { vector-effect: non-scaling-stroke; }
+  #btn-now svg { transform: scale(1.06); }
+  #btn-cal svg { transform: scale(0.94); }
+  #btn-mail svg { transform: scale(1.16); }
+  #btn-set svg { transform: scale(0.74); }
   .controls button:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--tint) 70%, transparent); }
 
   /* ── 업데이트 알림 칩 ──
