@@ -27,6 +27,10 @@ let mode = 'auto';          // 'auto' | 'line' | 'candle'
 let krwRate = null;         // 원화 보기가 켜졌을 때의 환율
 let prevClose = null;       // 전일 종가 — 1일 차트의 기준선
 let tooDense = false;       // 봉을 그리기엔 점이 촘촘해 선으로 넘긴 상태
+// 확대는 «받아온 점 배열 안에서 보이는 구간»을 좁히는 것이다 — 다시 받아오지 않는다.
+// Yahoo 는 기간마다 간격이 고정이라(1년이면 일봉) 더 잘게 받을 방법도 없다.
+let zoom = null;            // { i0, i1 } — 전체를 볼 때는 null
+let panning = false;
 /** 마지막으로 그린 점들 — 창 크기가 바뀌면 이것으로 다시 그린다 */
 let last = [];
 let again = 0;
@@ -46,6 +50,19 @@ const MODES = [
   { id: 'candle', name: '봉' }
 ];
 
+const MIN_SPAN = 6;         // 이보다 적게 남기면 «차트»가 아니라 점 몇 개다
+
+/** 지금 보이는 구간 [처음, 끝] — 늘 배열 안으로 눌러 담는다 */
+function span(n) {
+  if (!zoom || n <= MIN_SPAN) return [0, n - 1];
+  let i0 = Math.round(zoom.i0);
+  let i1 = Math.round(zoom.i1);
+  if (i1 - i0 + 1 < MIN_SPAN) i1 = i0 + MIN_SPAN - 1;
+  if (i1 > n - 1) { i1 = n - 1; i0 = Math.max(0, i1 - (zoom.i1 - zoom.i0)); }
+  if (i0 < 0) { i0 = 0; i1 = Math.min(n - 1, MIN_SPAN - 1 + i0); }
+  return [Math.max(0, i0), Math.min(n - 1, Math.max(i0 + MIN_SPAN - 1, i1))];
+}
+
 function head() {
   $('name').textContent = cur.name || cur.ticker;
   $('ticker').textContent = cur.ticker;
@@ -62,6 +79,7 @@ function ranges() {
     b.onclick = () => {
       if (range === r.id) return;
       range = r.id;
+      zoom = null;      // 다른 자료로 갈아타므로 구간 번호가 뜻을 잃는다
       window.nunsseom.chartSetRange(range);
       ranges();
       load();
@@ -215,9 +233,14 @@ function draw(pts) {
   last = pts || [];
   if (!pts || !pts.length) { summary(null); modes(); return; }
 
+  // 확대 중이면 그 구간만 그린다. 자료는 그대로 두고 «보는 창»만 좁힌다.
+  const [zi0, zi1] = span(pts.length);
+  const win = pts.slice(zi0, zi1 + 1);
+  const zoomed = win.length < pts.length;
+
   // 원화 보기면 값에 환율을 곱한다. 거래량은 주식 «수»라 그대로 둔다.
   const k = krwRate;
-  const view0 = k ? pts.map((p) => ({ ...p, o: p.o * k, h: p.h * k, l: p.l * k, c: p.c * k })) : pts;
+  const view0 = k ? win.map((p) => ({ ...p, o: p.o * k, h: p.h * k, l: p.l * k, c: p.c * k })) : win;
 
   const svg = el('svg', { preserveAspectRatio: 'none' });
   plot.append(svg);
@@ -234,7 +257,8 @@ function draw(pts) {
   const priceH = bodyH - volH - (showVol ? VOL_GAP : 0);
 
   // 봉은 솎으면 뜻이 깨진다(시·고·저·종이 섞인다) — 대신 너무 촘촘하면 선으로 넘긴다.
-  const candleFit = plotW / pts.length >= CANDLE_MIN;
+  // 보이는 개수로 잰다 — 1년이라도 확대해 들어가면 봉이 다시 그려진다
+  const candleFit = plotW / win.length >= CANDLE_MIN;
   const candle = wantCandle() && candleFit;
   tooDense = wantCandle() && !candleFit;
   const view = candle ? view0 : thin(view0, plotW);
@@ -360,6 +384,7 @@ function draw(pts) {
   svg.append(mark);
 
   svg.addEventListener('pointermove', (e) => {
+    if (panning) return;
     const box = svg.getBoundingClientRect();
     if (!box.width) return;
     const mx = ((e.clientX - box.left) / box.width) * W;
@@ -383,6 +408,74 @@ function draw(pts) {
     mark.setAttribute('visibility', 'hidden');
     summary(view);
   });
+
+  // ── 확대·이동 ──
+  // 다시 그리기는 다음 프레임에 한 번만 한다 — 휠 한 번에 여러 번 다시 그리면 버벅인다.
+  const redraw = () => {
+    cancelAnimationFrame(again);
+    again = requestAnimationFrame(() => draw(last));
+  };
+  /** 화면 x → 지금 보이는 구간 안에서 몇 번째쯤인가 (0~1) */
+  const fracAt = (clientX) => {
+    const box = svg.getBoundingClientRect();
+    if (!box.width) return 0.5;
+    return Math.min(1, Math.max(0, (((clientX - box.left) / box.width) * W) / plotW));
+  };
+
+  svg.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const n = last.length;
+    if (n <= MIN_SPAN) return;
+    // 구간은 «지금» 값을 다시 읽는다. 그릴 때 잡아둔 값을 쓰면, 한 프레임에 몰려 들어온
+    // 휠들이 전부 같은 자리에서 계산해 한 번만 먹는다 (10번 굴려도 한 칸, 실측).
+    const [a0, a1] = span(n);
+    const cnt = a1 - a0 + 1;
+    // 커서 아래 있던 자리는 제자리에 두고 나머지를 당긴다 — 그래야 «그 지점을 판다»는 느낌이 난다
+    const f = fracAt(e.clientX);
+    const anchor = a0 + (cnt - 1) * f;
+    const want = Math.max(MIN_SPAN, Math.min(n, Math.round(cnt * (e.deltaY < 0 ? 0.82 : 1 / 0.82))));
+    if (want >= n) { zoom = null; redraw(); return; }
+    let a = Math.round(anchor - (want - 1) * f);
+    a = Math.max(0, Math.min(n - want, a));
+    zoom = { i0: a, i1: a + want - 1 };
+    redraw();
+  }, { passive: false });
+
+  // 끌어서 좌우로 옮긴다. 누르고 있는 동안에는 십자선을 숨긴다 — 둘 다 보이면 어수선하다.
+  svg.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || !zoomed) return;
+    const n = last.length;
+    const cnt = zi1 - zi0 + 1;
+    const box = svg.getBoundingClientRect();
+    const from = { x: e.clientX, i0: zi0 };
+    panning = true;
+    mark.setAttribute('visibility', 'hidden');
+    svg.setPointerCapture(e.pointerId);
+    const move = (ev) => {
+      const dx = ((ev.clientX - from.x) / (box.width || 1)) * W;
+      const di = Math.round((-dx / plotW) * cnt);
+      const a = Math.max(0, Math.min(n - cnt, from.i0 + di));
+      if (a === zoom.i0) return;
+      zoom = { i0: a, i1: a + cnt - 1 };
+      redraw();
+    };
+    const up = () => {
+      panning = false;
+      svg.removeEventListener('pointermove', move);
+      svg.removeEventListener('pointerup', up);
+      svg.removeEventListener('pointercancel', up);
+    };
+    svg.addEventListener('pointermove', move);
+    svg.addEventListener('pointerup', up);
+    svg.addEventListener('pointercancel', up);
+  });
+
+  svg.addEventListener('dblclick', () => { zoom = null; redraw(); });
+
+  // 확대 중임을 알리고, 되돌리는 법을 적어 둔다 — 안 그러면 «왜 일부만 보이지»가 된다
+  $('foot').textContent = zoomed
+    ? `확대 중 · ${win.length}/${pts.length}개 · 휠로 조절, 끌어서 이동, 두 번 눌러 되돌리기`
+    : '휠로 확대 · 끌어서 이동';
 
   summary(view);
   modes();
@@ -433,6 +526,7 @@ new ResizeObserver(() => {
 // 다른 종목을 누르면 창은 그대로 두고 내용만 바꾼다
 window.nunsseom.onChartShow((item) => {
   cur = { ticker: item.ticker, name: item.name, market: item.market, currency: null };
+  zoom = null;      // 다른 종목이면 보던 구간은 뜻이 없다
   head();
   load();
 });
