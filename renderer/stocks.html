@@ -115,6 +115,7 @@
   .row .pc.dn { color: var(--dn); }
   .row .pc.flat { color: var(--tertiary); }
   .row .pc.bad { color: var(--tertiary); font-weight: 400; font-size: 10.5px; }
+  .row.tap:hover { background: var(--fill); }
   .row.stale .px, .row.stale .nm { opacity: 0.5; }
   /* 지우기는 그 줄에 마우스를 올렸을 때만 — 늘 보이면 목록이 시끄럽다 */
   .row .del {
@@ -190,6 +191,7 @@
     <button class="seg" data-mk="KR">국내</button>
     <button class="seg" data-mk="oversea" title="미국·일본·홍콩">해외</button>
     <span class="sp"></span>
+    <button class="seg" id="krw" title="달러·엔·홍콩달러 시세를 원화로 환산해 보여줍니다">원화</button>
     <button class="seg" id="idx" title="코스피·코스닥·나스닥·S&amp;P 500">지수</button>
   </div>
   <div class="list" id="list"></div>

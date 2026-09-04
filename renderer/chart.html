@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src file: 'unsafe-inline'; style-src file: 'unsafe-inline'; font-src file:;">
+<title>차트</title>
+<link rel="stylesheet" href="../assets/font/pretendard.css">
+<script src="icons.js"></script>
+<style>
+  :root {
+    --accent: #4fc3a8;
+    --scrim-a: 0.88;
+    --scrim: rgba(22, 22, 26, var(--scrim-a));
+    --label: rgba(255, 255, 255, 0.96);
+    --secondary: rgba(235, 235, 245, 0.62);
+    --tertiary: rgba(235, 235, 245, 0.36);
+    --hairline: rgba(255, 255, 255, 0.10);
+    --fill: rgba(255, 255, 255, 0.07);
+    --fill-hi: rgba(255, 255, 255, 0.13);
+    --up: #ff5f56;      /* 한국식 — 오르면 빨강 */
+    --dn: #4a90ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: Pretendard, -apple-system, system-ui, sans-serif;
+    color: var(--label);
+    background: var(--scrim);
+    border-radius: var(--radius, 16px);
+    overflow: hidden;
+    display: flex; flex-direction: column;
+    user-select: none; cursor: default;
+  }
+
+  /* 끌어 옮기는 머리 — 창에 테두리가 없으므로 여기를 잡는다 */
+  .head {
+    flex: none; display: flex; align-items: center; gap: 8px;
+    padding: 11px 12px 9px 14px;
+    -webkit-app-region: drag;
+  }
+  .head .who { min-width: 0; display: flex; align-items: baseline; gap: 7px; }
+  .head b { font-size: 14px; font-weight: 650; letter-spacing: -0.01em;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .head i { font-style: normal; font-size: 11px; color: var(--tertiary); }
+  .head .sp { flex: 1; }
+  .ic {
+    all: unset; -webkit-app-region: no-drag;
+    cursor: default; display: grid; place-items: center;
+    width: 22px; height: 22px; border-radius: 50%;
+    color: var(--secondary); background: var(--fill);
+  }
+  .ic:hover { background: var(--fill-hi); color: var(--label); }
+  .ic svg { width: 12px; height: 12px; display: block; }
+
+  /* 기간 고르기 */
+  .ranges { flex: none; display: flex; gap: 5px; padding: 0 14px 9px; -webkit-app-region: no-drag; }
+  .seg {
+    all: unset; cursor: default;
+    font-family: inherit; font-size: 11px; font-weight: 600;
+    color: var(--secondary); padding: 4px 9px; border-radius: 999px; background: var(--fill);
+  }
+  .seg:hover { background: var(--fill-hi); color: var(--label); }
+  .seg.on { background: color-mix(in srgb, var(--accent) 82%, black); color: #fff; }
+
+  /* 값 요약 */
+  .sum { flex: none; display: flex; align-items: baseline; gap: 10px; padding: 0 14px 8px; }
+  .sum .px { font-size: 26px; font-weight: 300; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .sum .pc { font-size: 13px; font-weight: 620; font-variant-numeric: tabular-nums; }
+  .sum .pc.up { color: var(--up); }
+  .sum .pc.dn { color: var(--dn); }
+  .sum .pc.flat { color: var(--tertiary); }
+
+  /* 차트가 그려질 자리 — renderer/chart.js 가 채운다 */
+  .plot { flex: 1 1 auto; min-height: 0; position: relative; padding: 0 8px 6px; }
+  .plot svg { width: 100%; height: 100%; display: block; }
+  .note {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    font-size: 12px; color: var(--tertiary);
+  }
+
+  .foot { flex: none; padding: 6px 14px 12px; font-size: 10.5px; color: var(--tertiary); }
+
+  /* 오른쪽 아래 크기 조절 잡이 */
+  .grip {
+    position: fixed; right: 2px; bottom: 2px; width: 16px; height: 16px;
+    cursor: nwse-resize; -webkit-app-region: no-drag; opacity: 0;
+  }
+  body:hover .grip { opacity: 0.4; }
+  .grip svg { width: 100%; height: 100%; color: var(--label); }
+</style>
+</head>
+<body>
+  <div class="head">
+    <span class="who"><b id="name">—</b><i id="ticker"></i></span>
+    <span class="sp"></span>
+    <button class="ic" id="refresh" title="다시 불러오기"></button>
+    <button class="ic" id="close" title="닫기"></button>
+  </div>
+
+  <div class="ranges" id="ranges"></div>
+
+  <div class="sum">
+    <span class="px" id="px">—</span>
+    <span class="pc flat" id="pc"></span>
+  </div>
+
+  <div class="plot" id="plot">
+    <div class="note" id="note">불러오는 중…</div>
+  </div>
+
+  <div class="foot" id="foot"></div>
+
+  <div class="grip" id="grip">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+      <path d="M13 6.5 6.5 13M13 11l-2 2"/>
+    </svg>
+  </div>
+
+<script src="chart.js"></script>
+</body>
+</html>

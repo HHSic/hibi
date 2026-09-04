@@ -81,6 +81,16 @@ contextBridge.exposeInMainWorld('nunsseom', {
   stocksBounds: () => ipcRenderer.invoke('stocks:bounds'),
   stocksSetBounds: (b) => ipcRenderer.send('stocks:set-bounds', b),
   stocksMove: (p) => ipcRenderer.send('stocks:move', p),
+
+  // 차트 창 — 주식 목록에서 종목을 누르면 열린다
+  chartOpen: (item) => ipcRenderer.send('chart:open', item),
+  chartClose: () => ipcRenderer.send('chart:close'),
+  chartData: (q) => ipcRenderer.invoke('chart:data', q),
+  chartSetRange: (r) => ipcRenderer.send('chart:set-range', r),
+  chartBounds: () => ipcRenderer.invoke('chart:bounds'),
+  chartSetBounds: (b) => ipcRenderer.send('chart:set-bounds', b),
+  chartMove: (p) => ipcRenderer.send('chart:move', p),
+  onChartShow: (cb) => ipcRenderer.on('chart:show', (_e, i) => cb(i)),
   onCalChanged: (cb) => ipcRenderer.on('cal:changed', () => cb()),
   calOpenHelp: (which) => ipcRenderer.invoke('cal:open-help', which),
   calPickFile: () => ipcRenderer.invoke('cal:pick-file'),

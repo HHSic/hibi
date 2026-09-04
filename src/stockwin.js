@@ -9,6 +9,8 @@ const store = require('./store');
 const glass = require('./glass');
 const evlog = require('./evlog');
 const stocks = require('./stocks');
+const fx = require('./fx');
+const chartwin = require('./chartwin');
 const { PRELOAD, page, PAD, clamp, glassQuery, maxSize } = require('./win');
 
 // 시세와 마지막으로 받은 시각. 화면에는 이 값을 그대로 실어 보낸다.
@@ -33,7 +35,9 @@ async function refreshStocks() {
       withIndexes: store.settings.stocksIndexes !== false,
       market: store.settings.stocksMarket || 'all'
     });
-    stockState.rows = r.rows;
+    // 원화 보기를 켰으면 환산가를 붙인다. fx 가 환율을 못 구하면 조용히 그대로 —
+    // 화면 쪽은 krwPrice 가 없으면 원래 통화로 그린다.
+    stockState.rows = store.settings.stocksKrw ? await fx.attach(r.rows) : r.rows;
     stockState.at = r.at;
     stockState.lagSec = r.lagSec;
     stockState.failed = r.failed;
@@ -59,7 +63,8 @@ function sendStocks() {
     error: stockState.error,
     loading: stockState.loading,
     market: store.settings.stocksMarket || 'all',
-    indexes: store.settings.stocksIndexes !== false
+    indexes: store.settings.stocksIndexes !== false,
+    krw: !!store.settings.stocksKrw
   });
 }
 
@@ -105,7 +110,10 @@ function openStocks() {
 }
 
 ipcMain.on('stocks:open', openStocks);
-ipcMain.on('stocks:close', () => stocksWin && !stocksWin.isDestroyed() && stocksWin.close());
+ipcMain.on('stocks:close', () => {
+  chartwin.closeChart();
+  if (stocksWin && !stocksWin.isDestroyed()) stocksWin.close();
+});
 ipcMain.handle('stocks:refresh', async () => { await refreshStocks(); return true; });
 
 ipcMain.handle('stocks:search', (_e, q) => stocks.search(q, 8).catch(() => []));
@@ -178,6 +186,7 @@ ipcMain.on('stocks:move', (_e, pos) => {
 
 /** 설정에서 주식을 끄면 열려 있던 창도 닫는다 */
 function closeStocks() {
+  chartwin.closeChart();     // 주식 기능을 끄면 차트 창도 같이 치운다
   if (stocksWin && !stocksWin.isDestroyed()) stocksWin.close();
 }
 

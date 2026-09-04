@@ -22,10 +22,14 @@ $('close').append(window.nunsIcon('close'));
 $('refresh').textContent = '↻';
 
 function fmtPrice(r) {
-  if (r.price == null) return '—';
+  // 원화 보기를 켰고 환산가가 붙어 있으면 그것을 보여준다 (src/fx.js 가 붙인다).
+  // 환율을 못 구했으면 krwPrice 가 없으므로 원래 통화 그대로 — 조용히 넘어간다.
+  const krw = r.krwPrice != null;
+  const v = krw ? r.krwPrice : r.price;
+  if (v == null) return '—';
   // 원·엔은 소수점을 안 쓰는 게 보통이다. 다만 161.5처럼 오는 종목이 있어 한 자리는 살린다.
-  const whole = r.currency === 'KRW' || r.currency === 'JPY';
-  return r.price.toLocaleString('en-US', {
+  const whole = krw || r.currency === 'KRW' || r.currency === 'JPY';
+  return v.toLocaleString('en-US', {
     minimumFractionDigits: whole ? 0 : 2,
     maximumFractionDigits: whole ? 1 : 2
   });
@@ -55,6 +59,7 @@ function paint() {
     b.classList.toggle('on', b.dataset.mk === box.market);
   }
   $('idx').classList.toggle('on', !!box.indexes);
+  $('krw').classList.toggle('on', !!box.krw);
   $('note').textContent = fmtLag(box);
   $('refresh').classList.toggle('spin', !!box.loading);
 
@@ -88,7 +93,12 @@ function paint() {
     const row = document.createElement('div');
     row.className = 'row' + (r.index ? ' idx' : '') + (r.stale ? ' stale' : '');
     row.title = [r.name, r.symbol || r.ticker, r.session,
-      r.stale ? '오늘 거래 없음' : null].filter(Boolean).join(' · ');
+      r.stale ? '오늘 거래 없음' : null, r.index ? null : '눌러서 차트'].filter(Boolean).join(' · ');
+    // 눌러서 큰 차트 — 지수는 아직 뺀다
+    if (!r.index) {
+      row.classList.add('tap');
+      row.onclick = () => window.nunsseom.chartOpen({ ticker: r.ticker, name: r.name, market: r.market });
+    }
 
     const nm = document.createElement('span');
     nm.className = 'nm';
@@ -167,6 +177,7 @@ for (const b of document.querySelectorAll('.seg[data-mk]')) {
   b.onclick = () => window.nunsseom.stocksSetApp({ stocksMarket: b.dataset.mk });
 }
 $('idx').onclick = () => window.nunsseom.stocksSetApp({ stocksIndexes: !(data && data.indexes) });
+$('krw').onclick = () => window.nunsseom.stocksSetApp({ stocksKrw: !(data && data.krw) });
 
 let busy = false;
 $('refresh').onclick = async () => {
