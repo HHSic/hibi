@@ -102,6 +102,7 @@ const DEFAULT_SETTINGS = {
   stocksKrw: false,        // 외화 시세를 원화로 환산해 보여줄지 (src/fx.js)
   chartSize: null,         // 차트 창을 마지막으로 조절한 크기
   chartRange: '1mo',       // 차트 기본 기간
+  chartMode: 'auto',       // 차트 보기 — 'auto'(1일은 선, 그 위는 봉) | 'line' | 'candle'
 
   // 위젯 칸 세로 길이. null 이면 «알아서» — 쉬는 칸은 내용만큼, 메일은 내용만큼(300px까지),
   // 달력은 남는 만큼. 사람이 칸 사이를 끌면 그 칸의 픽셀 값이 여기 박힌다.

@@ -188,6 +188,88 @@ async function quoteOf(item) {
   return null;
 }
 
+// ── 지난 시세 (차트) ────────────────────────────────────
+
+/**
+ * 기간별 봉 간격.
+ * 1일을 1분봉으로 받으면 380개가 넘어오는데 폭 700픽셀짜리 창에서는 다 보이지도 않고,
+ * 야후가 1분봉은 최근 7일치만 준다. 5분봉이면 하루가 78개라 넉넉하다.
+ * 6개월·1년을 주봉으로 받으면 계단이 눈에 띄어서 일봉 그대로 둔다 (1년 = 250개쯤).
+ */
+const CHART_INTERVAL = { '1d': '5m', '5d': '30m', '1mo': '1d', '6mo': '1d', '1y': '1d' };
+
+/**
+ * 한 기호의 지난 시세. 못 받거나 쓸 만한 점이 하나도 없으면 null.
+ * 시세를 받는 곳이 fetchQuote() 하나였는데 이제 둘이다 — KIS로 갈 때 같이 봐야 한다.
+ */
+async function fetchHistory(symbol, range, interval) {
+  const url = `https://${HOST}/v8/finance/chart/${encodeURIComponent(symbol)}`
+    + `?range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}`;
+  const j = await getJson(url);
+  const r = j && j.chart && j.chart.result && j.chart.result[0];
+  const ts = r && r.timestamp;
+  const q = r && r.indicators && r.indicators.quote && r.indicators.quote[0];
+  const close = q && q.close;
+  if (!Array.isArray(ts) || !Array.isArray(close)) return null;
+  // 봉차트와 거래량 막대를 그리려면 종가만으로는 모자란다 — 같은 응답에 다 들어 있으니
+  // 같이 뽑는다(요청은 그대로 한 번이다). 없는 값은 종가로 메워 봉이 깨지지 않게 한다.
+  const num = (a, i, dflt) => {
+    const v = Array.isArray(a) ? a[i] : null;
+    return v == null || !Number.isFinite(v) ? dflt : v;
+  };
+  const points = [];
+  for (let i = 0; i < ts.length; i++) {
+    const c = close[i];
+    // 장중에는 아직 체결이 없는 자리가 null로 온다. 그대로 그리면 선이 0으로 떨어진다.
+    if (c == null || !Number.isFinite(c) || ts[i] == null) continue;
+    const o = num(q.open, i, c);
+    const h = num(q.high, i, Math.max(o, c));
+    const l = num(q.low, i, Math.min(o, c));
+    points.push({
+      t: ts[i] * 1000, c, o,
+      // 고가가 저가보다 낮게 오는 자리가 드물게 있다(메워 넣은 값 탓) — 뒤집어 바로잡는다
+      h: Math.max(h, l, o, c),
+      l: Math.min(l, h, o, c),
+      v: Math.max(0, num(q.volume, i, 0))
+    });
+  }
+  if (!points.length) return null;
+  // 전일 종가 — 1일 차트의 기준선. meta 에 있을 때만 준다.
+  const prev = r.meta && Number.isFinite(r.meta.chartPreviousClose)
+    ? r.meta.chartPreviousClose
+    : (r.meta && Number.isFinite(r.meta.previousClose) ? r.meta.previousClose : null);
+  return { points, range, currency: (r.meta && r.meta.currency) || null, prevClose: prev };
+}
+
+/**
+ * 차트용 지난 시세. 실패하면 던지지 않고 null을 준다 —
+ * 부르는 쪽(chartwin)이 빈 차트를 보여주면 되는 일이지, 창이 깨질 일은 아니다.
+ */
+async function history(item, range = '1mo') {
+  if (!item || !item.ticker) return null;
+  const rg = CHART_INTERVAL[range] ? range : '1mo';
+  const ticker = String(item.ticker).trim();
+  // 지수 줄도 눌러서 차트를 볼 수 있는데, 창에서 넘어오는 것은 { ticker, market }뿐이라
+  // index 표시가 없다. 그대로 candidates()에 넘기면 «^KS11.KS»를 물어보고 다 실패한다.
+  const want = {
+    ticker,
+    market: toMarket(item.market),
+    index: item.index != null ? !!item.index : ticker.startsWith('^')
+  };
+  for (const sym of candidates(want)) {
+    try {
+      const h = await fetchHistory(sym, rg, CHART_INTERVAL[rg]);
+      if (h) {
+        if (!want.index) solved.set(want.ticker, sym);   // 통한 꼬리표는 시세 쪽과 같이 쓴다
+        return h;
+      }
+    } catch {
+      // 다음 후보로 (국내는 .KS가 안 되면 .KQ)
+    }
+  }
+  return null;
+}
+
 /** 여러 개를 몇 개씩 나눠 받는다 — 하나씩 줄 세우면 21개에 3.5초가 걸린다 */
 async function pooled(items, work, lanes = LANES) {
   const out = new Array(items.length);
@@ -421,6 +503,6 @@ function importFrom(file) {
 }
 
 module.exports = {
-  build, lookup, search, importFrom, readWatchlist, toMarket, MARKETS, defaultWatchPath, session, localParts,
-  INDEXES, HOURS, _fetchQuote: fetchQuote
+  build, lookup, search, history, importFrom, readWatchlist, toMarket, MARKETS, defaultWatchPath,
+  session, localParts, INDEXES, HOURS, _fetchQuote: fetchQuote
 };

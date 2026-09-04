@@ -52,9 +52,14 @@
   }
   .ic:hover { background: var(--fill-hi); color: var(--label); }
   .ic svg { width: 12px; height: 12px; display: block; }
+  #refresh { font-size: 13px; line-height: 1; }
 
   /* 기간 고르기 */
-  .ranges { flex: none; display: flex; gap: 5px; padding: 0 14px 9px; -webkit-app-region: no-drag; }
+  .ranges { flex: none; display: flex; align-items: center; gap: 5px; padding: 0 14px 9px; -webkit-app-region: no-drag; }
+  .ranges #ranges, .ranges .modes { display: flex; gap: 5px; }
+  .ranges .sp { flex: 1; }
+  /* 봉을 그리기엔 점이 촘촘할 때 — 눌러도 선으로 나온다는 것을 미리 알린다 */
+  .seg[disabled] { opacity: 0.38; }
   .seg {
     all: unset; cursor: default;
     font-family: inherit; font-size: 11px; font-weight: 600;
@@ -70,6 +75,12 @@
   .sum .pc.up { color: var(--up); }
   .sum .pc.dn { color: var(--dn); }
   .sum .pc.flat { color: var(--tertiary); }
+  /* 짚은 자리의 시·고·저·종·거래량. 작은 창에서 말풍선은 차트를 가리므로 여기 고정한다. */
+  .sum .ohlc {
+    margin-left: auto; font-size: 10.5px; color: var(--secondary);
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  .sum .ohlc b { font-weight: 620; color: var(--label); font-size: 10.5px; }
 
   /* 차트가 그려질 자리 — renderer/chart.js 가 채운다 */
   .plot { flex: 1 1 auto; min-height: 0; position: relative; padding: 0 8px 6px; }
@@ -98,11 +109,16 @@
     <button class="ic" id="close" title="닫기"></button>
   </div>
 
-  <div class="ranges" id="ranges"></div>
+  <div class="ranges">
+    <span id="ranges"></span>
+    <span class="sp"></span>
+    <span class="modes" id="modes"></span>
+  </div>
 
   <div class="sum">
     <span class="px" id="px">—</span>
     <span class="pc flat" id="pc"></span>
+    <span class="ohlc" id="ohlc"></span>
   </div>
 
   <div class="plot" id="plot">

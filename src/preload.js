@@ -87,6 +87,7 @@ contextBridge.exposeInMainWorld('nunsseom', {
   chartClose: () => ipcRenderer.send('chart:close'),
   chartData: (q) => ipcRenderer.invoke('chart:data', q),
   chartSetRange: (r) => ipcRenderer.send('chart:set-range', r),
+  chartSetMode: (m) => ipcRenderer.send('chart:set-mode', m),
   chartBounds: () => ipcRenderer.invoke('chart:bounds'),
   chartSetBounds: (b) => ipcRenderer.send('chart:set-bounds', b),
   chartMove: (p) => ipcRenderer.send('chart:move', p),

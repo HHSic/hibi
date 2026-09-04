@@ -10,6 +10,7 @@ const { BrowserWindow, ipcMain, screen } = require('electron');
 const store = require('./store');
 const glass = require('./glass');
 const stocks = require('./stocks');
+const fx = require('./fx');
 const { PRELOAD, page, PAD, clamp, glassQuery, maxSize } = require('./win');
 
 const MIN = { width: 420 + PAD, height: 300 + PAD };
@@ -71,10 +72,23 @@ ipcMain.handle('chart:data', async (_e, { ticker, market, range } = {}) => {
   if (typeof stocks.history !== 'function') return { points: [], range, unsupported: true };
   try {
     const got = await stocks.history({ ticker, market }, range || '1mo');
-    return got || { points: [], range };
+    if (!got) return { points: [], range };
+    // 원화 보기가 켜져 있으면 환율만 같이 보낸다 — 값을 미리 바꿔 두면 토글할 때마다
+    // 다시 받아야 한다. 원 통화 그대로 두고 그릴 때 곱하는 편이 싸다.
+    // 거래량은 주식 «수»라 환산 대상이 아니다.
+    let krwRate = null;
+    if (store.settings.stocksKrw && got.currency && got.currency !== 'KRW') {
+      krwRate = await fx.rate(got.currency);
+    }
+    return { ...got, krwRate, mode: store.settings.chartMode || 'auto' };
   } catch (e) {
     return { points: [], range, error: e.message };
   }
+});
+
+/** 고른 보기(선/봉)를 기억한다 */
+ipcMain.on('chart:set-mode', (_e, mode) => {
+  if (['auto', 'line', 'candle'].includes(mode)) store.setSettings({ chartMode: mode });
 });
 
 /** 고른 기간을 기억한다 — 다음에 열 때 같은 기간으로 */
