@@ -31,6 +31,8 @@ app.whenReady().then(async () => {
   // «확인»이 그것까지 닫는지를 본다.
   await click(wwc, 'btn-now');
   const ov = await until(async () => (visible().length ? visible()[0] : null));
+  // 휴식 창은 화면마다 하나씩 뜬다 — «한 벌»은 1개가 아니라 화면 수만큼이다
+  const n = screen.getAllDisplays().length;
   ok(!!ov, '휴식 창이 떴다');
   const d = screen.getPrimaryDisplay();
   const stray = new BrowserWindow({
@@ -42,7 +44,7 @@ app.whenReady().then(async () => {
   });
   stray.show();
   await sleep(500);
-  ok(visible().length === 2, '두 벌이 된 상태를 만들었다', visible().length);
+  ok(visible().length === n + 1, '두 벌이 된 상태를 만들었다', { 보임: visible().length, 화면: n });
 
   await click(visible()[0].webContents, 'btn-finish');
   await sleep(1500);
@@ -54,7 +56,7 @@ app.whenReady().then(async () => {
   ipcMain.emit('widget:break-now', {}, 'eye');
   ipcMain.emit('widget:break-now', {}, 'stretch');
   await sleep(5000);
-  ok(visible().length <= 1, '두 번 눌러도 창은 한 벌', visible().length);
+  ok(visible().length <= n, '두 번 눌러도 창은 한 벌', { 보임: visible().length, 화면: n });
   await click(visible()[0].webContents, 'btn-skip');
   await sleep(1500);
   ok(visible().length === 0, '«건너뛰기»로 다 닫힌다', visible().length);
