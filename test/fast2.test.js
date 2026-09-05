@@ -122,7 +122,22 @@ app.whenReady().then(async () => {
     // 붙자마자 재면 늘 보임=false 로 잡힌다.
     if (bg && bg.그림 && bg.보임) { console.log(`   배경이 ${((i + 1) * 0.5).toFixed(1)}초 만에 깔림`); break; }
   }
-  ok(bg && bg.그림 && bg.보임, '배경 사진도 제대로 깔린다 (수동 휴식은 그 자리에서 찍는다)', bg);
+  // 배경이 안 깔렸을 때, 우리 잘못인지 OS 가 아무것도 안 준 것인지 갈라야 한다.
+  // 화면이 잠겼거나 원격 세션이면 desktopCapturer 가 «빈 그림»을 준다 — 그때는
+  // 짝짓기가 아무리 맞아도 깔 사진이 없다. 그걸 실패로 세면 기계 상태를 시험하는 꼴이 된다.
+  if (!(bg && bg.그림 && bg.보임)) {
+    const { desktopCapturer } = require('electron');
+    const srcs = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 160, height: 100 } })
+      .catch(() => []);
+    const canShoot = srcs.some((s) => !s.thumbnail.isEmpty());
+    if (!canShoot) {
+      console.log('   건너뜀 — 지금 이 기계가 화면을 못 찍는다(잠김·원격 세션 등). 깔 사진 자체가 없다.');
+    } else {
+      ok(false, '배경 사진도 제대로 깔린다 (수동 휴식은 그 자리에서 찍는다)', bg);
+    }
+  } else {
+    ok(true, '배경 사진도 제대로 깔린다 (수동 휴식은 그 자리에서 찍는다)', bg);
+  }
   ipcMain.emit('overlay:done');
   await sleep(600);
 
