@@ -11,11 +11,12 @@
 // 위젯 창은 main.js 가 들고 있다 — 다시 만들어질 수 있으므로 값이 아니라
 // «지금 것을 가져오는 법»으로 받는다.
 
-const { app, ipcMain, dialog, clipboard, shell } = require('electron');
+const { app, ipcMain, dialog, clipboard } = require('electron');
 
 const store = require('./store');
 const calendar = require('./calendar');
 const calcache = require('./calcache');
+const { openWeb } = require('./win');
 
 let host = {
   widgetWin: () => null,
@@ -126,8 +127,10 @@ ipcMain.on('cal:open', () => showCalendarPanel());
  */
 ipcMain.handle('cal:open-event', (_e, ev) => {
   const link = calendar.eventLink(ev, ev && ev.calUrl);
-  if (!link) return false;
-  shell.openExternal(link);
+  // ev 는 화면 쪽이 IPC 로 보내온 값이다. 보통은 우리가 준 것을 그대로 돌려주지만,
+  // 그 창이 한 번 뚫리면 여기로 무엇이든 보낼 수 있다 — file:, ms-msdt: 같은 것들.
+  // openWeb 이 http/https 만 통과시킨다.
+  if (!openWeb(link)) return false;
   // 고치러 나간 것이다. 돌아왔을 때 옛 내용이 그대로면 안 고쳐진 줄 안다.
   // 구독 주소는 서버 쪽에도 잠깐 캐시가 있어서 한 번만 부르면 놓친다.
   scheduleCalendarCatchUp();
@@ -145,7 +148,7 @@ function scheduleCalendarCatchUp() {
 ipcMain.handle('cal:new-event', (_e, { start, end }) => {
   const hasGoogle = store.calendars.some((c) => calendar.googleCalendarId(c.url));
   if (!hasGoogle) return false;
-  shell.openExternal(calendar.newEventLink(start, end));
+  if (!openWeb(calendar.newEventLink(start, end))) return false;
   scheduleCalendarCatchUp();
   return true;
 });
@@ -206,8 +209,7 @@ ipcMain.handle('cal:open-help', (_e, which) => {
     outlook: 'https://outlook.live.com/calendar/0/options/calendar/SharedCalendars'
   };
   const target = urls[which];
-  if (target) shell.openExternal(target);
-  return !!target;
+  return openWeb(target);
 });
 
 /** 내 PC에 있는 .ics 파일을 캘린더로 쓴다 (인터넷·계정 연동 없이) */

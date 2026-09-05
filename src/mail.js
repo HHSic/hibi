@@ -107,10 +107,18 @@ function senderOf(envelope) {
 }
 
 function connect(account, { timeoutMs = CONNECT_TIMEOUT_MS } = {}) {
+  const secure = account.port === 143 ? false : true;
   const client = new ImapFlow({
     host: account.host,
     port: Number(account.port) || 993,
-    secure: account.port === 143 ? false : true,
+    secure,
+    // 993은 처음부터 TLS. 143은 평문으로 붙었다가 STARTTLS로 올린다.
+    // 이 값을 안 주면 ImapFlow는 «서버가 STARTTLS를 안 알려주면 그냥 평문으로 계속»
+    // 한다 — 비밀번호가 그대로 나간다. 중간에 앉은 사람이 그 알림만 지우면 되니
+    // 사실상 아무 방어가 아니다 (ImapFlow 문서도 downgrade attack이라 적어 두었다).
+    // true면 못 올릴 때 «연결이 실패»한다 — 그게 맞다. 보내는 쪽(send.js)의
+    // requireTLS와 같은 태도다.
+    doSTARTTLS: secure ? undefined : true,
     auth: { user: account.user, pass: account.pass },
     logger: false,
     // 서버가 응답하지 않을 때 앱이 붙잡히지 않게

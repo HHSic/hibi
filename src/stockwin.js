@@ -11,7 +11,7 @@ const evlog = require('./evlog');
 const stocks = require('./stocks');
 const fx = require('./fx');
 const chartwin = require('./chartwin');
-const { PRELOAD, page, PAD, clamp, glassQuery, maxSize } = require('./win');
+const { PRELOAD, page, PAD, clamp, glassQuery, maxSize, lockToOurPage } = require('./win');
 
 // 시세와 마지막으로 받은 시각. 화면에는 이 값을 그대로 실어 보낸다.
 const stockState = { rows: [], at: 0, fetchedAt: 0, lagSec: null, failed: 0, error: null, loading: false };
@@ -93,6 +93,8 @@ function openStocks() {
     ...glass.windowOptions(),
     webPreferences: { preload: PRELOAD }
   });
+  // 우리 페이지 밖으로 못 나가게 (남의 주소로 가면 이 창이 다리를 쥔 브라우저가 된다)
+  lockToOurPage(stocksWin);
   stocksWin.loadFile(page('stocks.html'), { query: glassQuery({ radius: '18' }) });
   stocksWin.webContents.once('did-finish-load', () => {
     sendStocks();

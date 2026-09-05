@@ -35,7 +35,19 @@ function localPath(s) {
 
 // ── 가져오기 ────────────────────────────────────────────
 function fetchText(url, redirects = 0) {
+  // 내 파일을 읽는 건 «내가 직접 고른 주소»일 때만이다.
+  // 리디렉션을 따라간 뒤에도 이걸 허락하면, 구독한 서버가 302로
+  //   Location: file:///C:/…/설정파일
+  // 를 줘서 우리를 내 컴퓨터 안으로 돌려보낼 수 있다. 그러면 그 파일을 읽어
+  // 일정인 척 보여준다. 실제로 뚫렸다 (test/calfetch.test.js 가 고치기 전 코드에서
+  // 재현한다).
+  //   \\서버\공유 로는 못 온다 — new URL 이 역슬래시를 슬래시로 바꿔
+  //   http://서버/공유 인 평범한 주소가 된다 (실측). 그래도 여기서 함께 막는다:
+  //   사용자가 직접 UNC 를 넣는 길은 열어 두되, 남이 그리로 «보내는» 길은 막는다.
   if (isLocalPath(url)) {
+    if (redirects > 0) {
+      return Promise.reject(new Error('리디렉션이 내 컴퓨터 안을 가리킵니다'));
+    }
     return fs.promises.readFile(localPath(url), 'utf8').then((text) => {
       if (text.length > MAX_BYTES) throw new Error('파일이 너무 큽니다');
       return text;

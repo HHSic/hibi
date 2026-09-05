@@ -15,6 +15,7 @@
 <title>메일</title>
 <link rel="stylesheet" href="../assets/font/pretendard.css">
 <script src="icons.js"></script>
+<script src="safehtml.js"></script>
 <style>
   :root {
     --accent: #4fc3a8;
@@ -607,9 +608,16 @@
         + ' (열어본 사실이 보낸 사람에게 전달될 수 있어요)';
     }
     if (m.html) {
-      // 메인에서 위험한 태그를 걷어냈고, 이 창의 CSP가 외부 요청을 한 번 더 막는다
+      // 세 겹으로 막는다.
+      //  1. 메인의 mail.js buildViewHtml — 정규식. 첫 관문이고, 여기서 인터넷 그림도
+      //     막는다. 정규식으로 HTML을 씻는 건 원리적으로 완전할 수 없다.
+      //  2. 여기 safehtml.js — DOM 으로 훑어 «허락한 것만» 남긴다. 이게 주 방어다.
+      //  3. 이 창의 CSP — 외부 요청을 막는다. 다만 script-src 에 'unsafe-inline' 이
+      //     있어 인라인 이벤트 핸들러는 CSP 가 못 막는다. 그래서 2가 필요하다.
+      // innerHTML 로 넣으면 넣는 순간 그림 요청이 나가고 핸들러가 붙는다.
+      // safehtml 은 떼어낸 문서에서 씻은 «노드»를 주므로, 씻기 전에는 아무것도 안 돈다.
       $('body').classList.add('rich');
-      $('body').innerHTML = m.html;
+      $('body').replaceChildren(window.nunsSafeHtml(m.html));
     } else if (m.text) {
       $('body').textContent = m.text;
     } else {

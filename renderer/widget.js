@@ -376,7 +376,10 @@ window.nunsseom.onTick((d) => {
     renderSheet(d.upcoming);
   }
   renderSchedule(d.schedule);
-  window.nunsWMail.renderMail(d.mail);
+  // widget-mail.js 는 이 파일 다음에 오는 별개 <script> 다. tick 은 1초마다 오므로
+  // 그 사이에 낀 첫 tick 하나쯤은 흘려도 된다 — 대신 여기서 터져 아래 줄들이
+  // 통째로 안 도는 일은 없어야 한다 (설정 창에서 실제로 그랬다).
+  window.nunsWMail?.renderMail(d.mail);
   $('btn-stock').style.display = d.stocksOn ? '' : 'none';
   showUpdate(d.update);
   if (d.week) renderWeek(d.week);

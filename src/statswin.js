@@ -7,7 +7,7 @@ const { BrowserWindow, ipcMain } = require('electron');
 const store = require('./store');
 const glass = require('./glass');
 const reminders = require('./reminders');
-const { PRELOAD, page, PAD, clamp, glassQuery } = require('./win');
+const { PRELOAD, page, PAD, clamp, glassQuery, lockToOurPage } = require('./win');
 
 let statsWin = null;
 
@@ -31,6 +31,8 @@ function openStats(focusType) {
     ...glass.windowOptions(),
     webPreferences: { preload: PRELOAD }
   });
+  // 우리 페이지 밖으로 못 나가게 (남의 주소로 가면 이 창이 다리를 쥔 브라우저가 된다)
+  lockToOurPage(statsWin);
   statsWin.loadFile(page('stats.html'), {
     query: glassQuery({ radius: '20', focus: focusType || '' })
   });

@@ -30,6 +30,26 @@ function glassQuery(extra) {
 }
 
 /**
+ * 바깥 주소를 기본 브라우저로 넘긴다 — http/https 만.
+ *
+ * shell.openExternal 은 «주소»가 아니라 «윈도우에게 이걸 열어라»는 명령에 가깝다.
+ * file: 이면 프로그램이 실행되고, \\서버\공유 면 붙는 순간 내 계정 이름과 암호 해시가
+ * 그 서버로 간다. ms-msdt: 같은 프로토콜 처리기도 다 살아 있다.
+ * 그래서 주소는 «어디서 왔든» 여기를 지나야 한다 — 메일 본문이든, 캘린더 파일이든,
+ * 화면 쪽이 IPC 로 보내온 것이든 전부 남이 정할 수 있는 값이다.
+ *
+ * @returns {boolean} 실제로 열었나
+ */
+function openWeb(url) {
+  const t = String(url || '').trim();
+  if (!/^https?:\/\//i.test(t)) return false;
+  // 스킴은 맞는데 호스트가 없는 것(http:///…)은 거른다
+  try { if (!new URL(t).host) return false; } catch { return false; }
+  shell.openExternal(t);
+  return true;
+}
+
+/**
  * 우리 페이지 밖으로 못 나가게 막는다.
  * 메일 본문의 링크를 창 안에서 열면 그 순간 이 창이 브라우저가 된다 —
  * 주소창도 뒤로가기도 없는 브라우저. 바깥 주소는 기본 브라우저에 넘긴다.
@@ -39,10 +59,10 @@ function lockToOurPage(win) {
   win.webContents.on('will-navigate', (e, url) => {
     if (ours(url)) return;
     e.preventDefault();
-    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    openWeb(url);
   });
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    openWeb(url);
     return { action: 'deny' };
   });
   win.webContents.on('will-attach-webview', (e) => e.preventDefault());
@@ -86,5 +106,5 @@ function cascadeFrom(width, height, from) {
 
 module.exports = {
   PRELOAD, page, PAD, PAD_H, clamp,
-  glassQuery, lockToOurPage, maxSize, cascadeFrom
+  glassQuery, lockToOurPage, openWeb, maxSize, cascadeFrom
 };

@@ -19,7 +19,7 @@ const glass = require('./glass');
 // 창을 만들 때 쓰는 것들은 win.js 로 옮겼다.
 // 이름을 풀어서 받는다 — 창을 만드는 함수마다 «win»이라는 지역 변수를 이미 쓰고 있어서
 // 모듈을 그 이름으로 두면 가려진다.
-const { PRELOAD, page, PAD, PAD_H, clamp, glassQuery } = require('./win');
+const { PRELOAD, page, PAD, PAD_H, clamp, glassQuery, openWeb, lockToOurPage } = require('./win');
 
 // 물어보는 창·오른쪽 클릭 메뉴는 popup.js 가 그린다 (윈도우 기본 대화상자를 안 쓴다)
 const { askUser } = require('./popup');
@@ -222,6 +222,8 @@ function createWidget() {
     webPreferences: { preload: PRELOAD }
   });
 
+  // 우리 페이지 밖으로 못 나가게 (남의 주소로 가면 이 창이 다리를 쥔 브라우저가 된다)
+  lockToOurPage(widgetWin);
   widgetWin.loadFile(page('widget.html'), {
     query: glassQuery({
       radius: String(store.settings.radius),
@@ -614,6 +616,8 @@ function openSettings(tab) {
     ...glass.windowOptions(),
     webPreferences: { preload: PRELOAD }
   });
+  // 우리 페이지 밖으로 못 나가게 (남의 주소로 가면 이 창이 다리를 쥔 브라우저가 된다)
+  lockToOurPage(settingsWin);
   settingsWin.loadFile(page('settings.html'), {
     query: glassQuery(want ? { radius: '20', tab: want } : { radius: '20' })
   });
@@ -655,12 +659,8 @@ ipcMain.on('cal:panel', (_e, { on, needed, short, which, pinned }) => {
 /** 기록 창이 그릴 전체 데이터 */
 // ── IPC ──────────────────────────────────────────────────
 /** 화면 쪽이 바깥 주소를 열 때 — https 만 연다 */
-ipcMain.handle('app:open-url', (_e, url) => {
-  const t = String(url || '');
-  if (!/^https:\/\//i.test(t)) return false;
-  shell.openExternal(t);
-  return true;
-});
+/** 화면 쪽이 바깥 주소를 열 때 — http/https 만 (win.openWeb 이 판단한다) */
+ipcMain.handle('app:open-url', (_e, url) => openWeb(url));
 
 ipcMain.on('widget:toggle-pause', togglePause);
 ipcMain.on('widget:open-settings', (_e, tab) => openSettings(tab));

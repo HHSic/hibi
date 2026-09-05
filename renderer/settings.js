@@ -40,6 +40,21 @@ window.nunsSet = {
 };
 
 /**
+ * 문서의 모든 <script> 가 끝난 뒤에 한다.
+ *
+ * 여러 파일로 나눈 화면 코드에서 «다음 파일이 만든 것»을 부를 때 필요하다.
+ * <script> 하나하나는 따로 도는 일감이라, 그 사이에 IPC 답 같은 것이 끼어들 수 있다 —
+ * 그 답 안에서 다음 파일의 전역을 부르면 아직 없다. 실제로 그랬다.
+ */
+function afterScripts(fn) {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', fn, { once: true });
+  } else {
+    fn();
+  }
+}
+
+/**
  * 슬라이더의 «지나온 쪽»만 색이 차게 한다.
  * 막대를 윈도우 기본 모양 대신 직접 그리기 때문에, 얼마나 찼는지를 CSS에 알려줘야 한다.
  * 슬라이더는 세 군데서 따로 만들어져서 한 곳을 빠뜨리기 쉽다 — 그래서 끄는 동안에는
@@ -970,8 +985,15 @@ window.nunsseom.getSettings().then((d) => {
     toValue: (s) => s.mailCount ?? 5,
     toStore: (v) => ({ mailCount: v })
   });
-  window.nunsSetMail.loadMail();
-  window.nunsSetMail.loadBackup();
+  // settings-mail.js 는 이 파일 «다음»에 오는 별개 <script> 다. 우리는 지금
+  // getSettings() 의 답 안에 있고, 그 답은 두 <script> 사이에 끼어들 수 있다 —
+  // 그러면 여기서 nunsSetMail 이 아직 없어 터지고, 아래 bindSwitch 들이 통째로
+  // 안 걸린다 (주식 스위치가 안 먹었다. CSP 를 켜니 매번 그랬다).
+  // DOMContentLoaded 는 문서의 모든 <script> 가 끝난 뒤에 온다 — 순서를 보장받는 자리다.
+  afterScripts(() => {
+    window.nunsSetMail.loadMail();
+    window.nunsSetMail.loadBackup();
+  });
 
   for (const key of ['dndEnabled', 'autoUpdate', 'calendarBusy', 'calendarAllDay',
                      'calendarLead', 'calendarShow', 'soundEnabled', 'breakNoEscape',

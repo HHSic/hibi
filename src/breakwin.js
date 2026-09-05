@@ -18,7 +18,7 @@ const { pathToFileURL } = require('url');
 const store = require('./store');
 const reminders = require('./reminders');
 const statswin = require('./statswin');
-const { PRELOAD, page } = require('./win');
+const { PRELOAD, page, lockToOurPage } = require('./win');
 
 /** 미룰 때 얼마나 미루나 — «5분 뒤에» */
 const SNOOZE_MS = 5 * 60_000;
@@ -230,6 +230,8 @@ function buildOverlayWins() {
     win.setAlwaysOnTop(true, 'screen-saver');
     win.webContents.once('did-finish-load', () => warmReady.add(win));
     // endsAt과 내용은 시작할 때 보낸다 — 미리 만들 때는 아직 정해지지 않았다
+    // 우리 페이지 밖으로 못 나가게 (남의 주소로 가면 이 창이 다리를 쥔 브라우저가 된다)
+    lockToOurPage(win);
     win.loadFile(page('overlay.html'), {
       query: { main: String(disp.id === primaryId), display: String(disp.id) }
     });

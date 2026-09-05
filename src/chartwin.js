@@ -11,7 +11,7 @@ const store = require('./store');
 const glass = require('./glass');
 const stocks = require('./stocks');
 const fx = require('./fx');
-const { PRELOAD, page, PAD, clamp, glassQuery, maxSize } = require('./win');
+const { PRELOAD, page, PAD, clamp, glassQuery, maxSize, lockToOurPage } = require('./win');
 
 const MIN = { width: 420 + PAD, height: 300 + PAD };
 const DEFAULT = { width: 720 + PAD, height: 460 + PAD };
@@ -50,6 +50,8 @@ function openChart(item) {
     ...glass.windowOptions(),
     webPreferences: { preload: PRELOAD }
   });
+  // 우리 페이지 밖으로 못 나가게 (남의 주소로 가면 이 창이 다리를 쥔 브라우저가 된다)
+  lockToOurPage(chartWin);
   chartWin.loadFile(page('chart.html'), {
     query: glassQuery({
       radius: String(store.settings.radius),
