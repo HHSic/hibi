@@ -607,8 +607,17 @@ function buildViewHtml(parsed, { allowRemote = false } = {}) {
       blockedRemote += 1;
       return '';
     });
-    // style="background:url(https://…)" 같은 자리도 바깥을 부른다
-    html = html.replace(/url\(\s*['"]?\s*(https?:)?\/\/[^)]*\)/gi, () => {
+    // style="background:url(https://…)" 같은 자리도 바깥을 부른다.
+    // 스킴을 엔티티로 감출 수 있다 — url(&#104;ttps://…) 는 위 정규식에 안 걸리는데
+    // 브라우저는 엔티티를 풀고 나서 읽으므로 그림은 그대로 나간다. 화면은 «0개 차단»이라
+    // 말하고 추적 픽셀은 이미 갔다. 그래서 안을 펴서 본다.
+    html = html.replace(/url\(([^)]*)\)/gi, (whole, inner) => {
+      const flat = String(inner)
+        .replace(/&#x([0-9a-f]+);?/gi, (_m, h) => String.fromCharCode(parseInt(h, 16)))
+        .replace(/&#(\d+);?/g, (_m, d) => String.fromCharCode(Number(d)))
+        .replace(/[\s'"]/g, '')
+        .toLowerCase();
+      if (!/^(https?:)?\/\//.test(flat)) return whole;
       blockedRemote += 1;
       return 'none';
     });

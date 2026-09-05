@@ -679,13 +679,15 @@ window.nunsseom.onComposeReplace(async (next) => {
 
 // ── 크기 조절 ───────────────────────────────────────
 for (const zone of document.querySelectorAll('.rz')) {
-  zone.addEventListener('pointerdown', async (e) => {
+  // 처리기 거는 순서는 nunsDrag 가 맡는다 — 크기를 물어보는 동안 손을 떼도 안 남게.
+  window.nunsDrag(zone, async (e) => {
     e.preventDefault();
     const dir = zone.dataset.dir;
-    const start = await window.nunsseom.composeBounds();
     const sx = e.screenX;
     const sy = e.screenY;
-    const move = (ev) => {
+    const start = await window.nunsseom.composeBounds();
+    if (!start) return null;
+    return (ev) => {
       const dx = ev.screenX - sx;
       const dy = ev.screenY - sy;
       let { x, y, width, height } = start;
@@ -695,12 +697,6 @@ for (const zone of document.querySelectorAll('.rz')) {
       if (dir.includes('n')) { height = start.height - dy; y = start.y + dy; }
       window.nunsseom.composeSetBounds({ x, y, width, height, dir });
     };
-    const up = () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
   });
 }
 

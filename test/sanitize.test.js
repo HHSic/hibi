@@ -54,6 +54,13 @@ const ATTACKS = [
   ['탭 넣은 onerror', '<img src="x"\tonerror="window.PWNED++">'],
   ['널문자 섞기', '<img src="x" on\u0000error="window.PWNED++">'],
   ['백틱', '<img src=`x`onerror=window.PWNED++>'],
+  // <style> 은 안쪽 CSS 를 씻으려고 따로 다루는데, 그러다 속성 검사를 건너뛰어 뚫렸었다.
+  // 앞 글자가 따옴표라 메인의 정규식도 못 잡는다 — 두 관문이 같은 자리에서 나란히 샜다.
+  ['style 에 붙은 onload', '<style a="b"onload="window.PWNED++">p{color:red}</style>'],
+  ['style 에 붙은 onanimationstart',
+    '<style a="b"onanimationstart="window.PWNED++">style{display:block;animation:z .01s}'
+    + '@keyframes z{from{opacity:1}to{opacity:1}}</style>'],
+  ['style 에 공백으로 붙은 onload', '<style onload="window.PWNED++">p{color:red}</style>'],
 ];
 
 // <style> 안의 것들은 «불렸나»로 못 잰다 — 크로미움에서 CSS 는 코드를 돌리지 않는다
@@ -94,6 +101,18 @@ const KEEP = [
   ['style 안의 그림', '<style>.b{background:url(https://a.com/p.png)}</style><p class="b">x</p>',
     ['a.com/p.png']],
   ['form 안의 글', '<form><p>신청서 안내</p></form>', ['신청서 안내']],
+  // 회사 서명의 전화번호 · 소식지의 noscript 대체 그림 — 다 막고 안 읽히면 소용없다
+  ['전화 링크', '<a href="tel:+821012345678">010-1234-5678</a>', ['tel:+821012345678']],
+  ['noscript 대체 내용', '<noscript><img src="https://a.com/hero.png" alt="상품"></noscript>',
+    ['a.com/hero.png']],
+];
+
+// 메일이 이 창의 요소를 가로채면 안 된다 — 본문은 #body 안에 들어가는데,
+// 창이 쓰는 #saved·#blocked·#lightbox 는 그 뒤에 있어서 앞선 것이 이긴다.
+// 가로채이면 「저장했습니다」 안내와 그림 확대가 조용히 죽는다.
+const CLOBBER = [
+  ['id 가로채기', '<div id="saved">x</div><div id="lightbox">y</div>', /\sid=/i],
+  ['name 가로채기', '<div name="body">x</div>', /\sname=/i],
 ];
 
 app.whenReady().then(async () => {
@@ -156,6 +175,12 @@ app.whenReady().then(async () => {
 
   console.log('\n[4-2] <style> 안의 위험한 규칙은 남지 않나');
   for (const [name, src, re] of CSS_KILL) {
+    const r = await tryIt(gate(src));
+    ok(!re.test(r.html), name, re.test(r.html) ? { 남은것: r.html.slice(0, 90) } : undefined);
+  }
+
+  console.log('\n[4-3] 메일이 창의 요소 이름을 가로채지 못하나');
+  for (const [name, src, re] of CLOBBER) {
     const r = await tryIt(gate(src));
     ok(!re.test(r.html), name, re.test(r.html) ? { 남은것: r.html.slice(0, 90) } : undefined);
   }

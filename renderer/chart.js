@@ -534,28 +534,18 @@ window.nunsseom.onChartShow((item) => {
 
 // 오른쪽 아래를 끌어 크기 조절 (네이티브 리사이즈를 안 쓴다)
 (() => {
-  const grip = $('grip');
-  let start = null;
-  grip.addEventListener('pointerdown', async (e) => {
+  // 처리기 거는 순서는 nunsDrag 가 맡는다 — 크기를 물어보는 동안 손을 떼도 안 남게.
+  window.nunsDrag($('grip'), async (e) => {
     e.preventDefault();
+    const sx = e.screenX;
+    const sy = e.screenY;
     const b = await window.nunsseom.chartBounds();
-    if (!b) return;
-    start = { x: e.screenX, y: e.screenY, b };
-    const move = (ev) => {
-      if (!start) return;
-      window.nunsseom.chartSetBounds({
-        x: start.b.x, y: start.b.y,
-        width: start.b.width + (ev.screenX - start.x),
-        height: start.b.height + (ev.screenY - start.y)
-      });
-    };
-    const up = () => {
-      start = null;
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+    if (!b) return null;
+    return (ev) => window.nunsseom.chartSetBounds({
+      x: b.x, y: b.y,
+      width: b.width + (ev.screenX - sx),
+      height: b.height + (ev.screenY - sy)
+    });
   });
 })();
 

@@ -542,6 +542,8 @@ window.addEventListener('keydown', (e) => {
 // 가만히 있어도 창이 저 혼자 최대치까지 자라는 문제가 있다. 여기서 직접 계산한다.
 // 화면 좌표(screenX/Y) 기준이라 창이 움직여도 값이 흔들리지 않는다.
 let rz = null;
+// 누르기마다 번호를 매긴다 — 늦게 온 IPC 답이 이미 끝난 판을 되살리지 못하게
+let rzSeq = 0;
 
 for (const zone of document.querySelectorAll('.rz')) {
   zone.addEventListener('pointerdown', async (e) => {
@@ -549,7 +551,13 @@ for (const zone of document.querySelectorAll('.rz')) {
     e.preventDefault();
     e.stopPropagation();               // 카드의 이동/토글 로직으로 새지 않게
     try { zone.setPointerCapture(e.pointerId); } catch {}
+    // 크기를 물어보는 동안(IPC) 손을 뗄 수 있다. 그때 endRz 는 rz 가 아직 없어서
+    // 그냥 지나가고, 답이 온 뒤에 rz 가 «켜진 채로» 남는다 — 그 뒤로는 단추를 안
+    // 눌러도 zone 위에서 움직이기만 하면 창이 커진다. 주식 창에서 실제로 그랬다.
+    // 그래서 이 누르기가 아직 살아 있는지 표로 확인하고 넣는다.
+    const token = ++rzSeq;
     const b = await window.nunsseom.getWidgetBounds();
+    if (token !== rzSeq) return;           // 벌써 뗐거나 다시 눌렸다 — 없던 일로
     rz = { dir: zone.dataset.dir, sx: e.screenX, sy: e.screenY, ...b };
     dlog('리사이즈', `down(${rz.dir}) 화면 ${e.screenX},${e.screenY}`
       + ` · 시작 ${b.width}x${b.height} @${b.x},${b.y}`);
@@ -557,6 +565,8 @@ for (const zone of document.querySelectorAll('.rz')) {
 
   zone.addEventListener('pointermove', (e) => {
     if (!rz) return;
+    // 단추를 안 누른 채 오는 움직임은 이미 끝난 것이다 (up 을 놓쳤을 때의 두 번째 문)
+    if (!(e.buttons & 1)) { rz = null; rzSeq++; return; }
     const dx = e.screenX - rz.sx;
     const dy = e.screenY - rz.sy;
     let { x, y, width, height } = rz;
@@ -570,6 +580,7 @@ for (const zone of document.querySelectorAll('.rz')) {
   });
 
   const endRz = (e) => {
+    rzSeq++;                 // 아직 안 온 답이 있어도 이 판은 끝났다
     if (!rz) return;
     dlog('리사이즈', `${e.type}(${rz.dir}) 끝`);
     rz = null;

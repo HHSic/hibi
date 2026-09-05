@@ -300,33 +300,27 @@ $('q').style.userSelect = 'text';
 
 // ── 창 옮기기·크기 조절 ──────────────────────────────────
 // 투명 창에서는 네이티브 리사이즈가 폭주해서 직접 잡는다 (다른 창들과 같은 방식).
-$('head').addEventListener('pointerdown', async (e) => {
-  if (e.button !== 0 || e.target.closest('button')) return;
-  const b = await window.nunsseom.stocksBounds();
-  if (!b) return;
+// 처리기를 거는 순서는 nunsDrag 가 맡는다 — 크기를 물어보는 동안 손을 떼도 안 남게.
+window.nunsDrag($('head'), async (e) => {
+  if (e.target.closest('button')) return null;
   const sx = e.screenX;
   const sy = e.screenY;
+  const b = await window.nunsseom.stocksBounds();
+  if (!b) return null;
   const ox = b.x;
   const oy = b.y;
-  const move = (ev) => window.nunsseom.stocksMove({ x: ox + (ev.screenX - sx), y: oy + (ev.screenY - sy) });
-  const up = () => {
-    window.removeEventListener('pointermove', move);
-    window.removeEventListener('pointerup', up);
-  };
-  window.addEventListener('pointermove', move);
-  window.addEventListener('pointerup', up);
+  return (ev) => window.nunsseom.stocksMove({ x: ox + (ev.screenX - sx), y: oy + (ev.screenY - sy) });
 });
 
 for (const g of document.querySelectorAll('.grip')) {
-  g.addEventListener('pointerdown', async (e) => {
-    if (e.button !== 0) return;
+  window.nunsDrag(g, async (e) => {
     e.preventDefault();
-    const b = await window.nunsseom.stocksBounds();
-    if (!b) return;
     const dir = g.dataset.dir;
     const sx = e.screenX;
     const sy = e.screenY;
-    const move = (ev) => {
+    const b = await window.nunsseom.stocksBounds();
+    if (!b) return null;
+    return (ev) => {
       const w = dir === 's' ? b.width : Math.max(300, b.width + (ev.screenX - sx));
       const h = dir === 'e' ? b.height : Math.max(260, b.height + (ev.screenY - sy));
       window.nunsseom.stocksSetBounds({
@@ -335,11 +329,5 @@ for (const g of document.querySelectorAll('.grip')) {
         height: Math.min(h, b.maxHeight || h)
       });
     };
-    const up = () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
   });
 }

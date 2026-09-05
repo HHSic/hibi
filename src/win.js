@@ -5,6 +5,7 @@
 // (여기서 store·glass 말고 다른 우리 모듈을 부르기 시작하면 그 이점이 사라진다.)
 
 const path = require('path');
+const { pathToFileURL } = require('url');
 const { screen, nativeTheme, shell } = require('electron');
 const store = require('./store');
 const glass = require('./glass');
@@ -49,13 +50,36 @@ function openWeb(url) {
   return true;
 }
 
+// 우리 화면 파일이 놓인 곳. 여기 아래가 아니면 «우리 페이지»가 아니다.
+const OURS = pathToFileURL(path.join(__dirname, '..', 'renderer') + path.sep).href.toLowerCase();
+
+/**
+ * 이 주소가 «우리 화면 파일»인가.
+ *
+ * file:// 로 시작하면 우리 것이라고 보면 안 된다. 메일 본문에 이런 링크가 있으면
+ *   <a href="//남의서버/공유/x.html">
+ * 브라우저가 우리 페이지를 기준으로 풀어서 file://남의서버/공유/x.html 이 된다 (실측).
+ * 그걸 통과시키면 이 창이 남의 페이지가 되는데, 이 창에는 preload 다리가 붙어 있다 —
+ * 즉 남의 글이 메일 보내기와 첨부를 쥔다. 윈도우 공유에 붙는 순간 계정 해시도 나간다.
+ * 그래서 «우리 renderer 폴더 아래»인지까지 본다.
+ */
+function isOurPage(url) {
+  const t = String(url || '');
+  if (!/^file:\/\//i.test(t)) return false;
+  let href;
+  try { href = new URL(t).href.toLowerCase(); } catch { return false; }
+  // file://호스트/... 처럼 호스트가 붙은 것은 남의 공유다
+  try { if (new URL(t).host) return false; } catch { return false; }
+  return href.startsWith(OURS);
+}
+
 /**
  * 우리 페이지 밖으로 못 나가게 막는다.
  * 메일 본문의 링크를 창 안에서 열면 그 순간 이 창이 브라우저가 된다 —
  * 주소창도 뒤로가기도 없는 브라우저. 바깥 주소는 기본 브라우저에 넘긴다.
  */
 function lockToOurPage(win) {
-  const ours = (url) => url.startsWith('file://');
+  const ours = isOurPage;
   win.webContents.on('will-navigate', (e, url) => {
     if (ours(url)) return;
     e.preventDefault();
@@ -106,5 +130,5 @@ function cascadeFrom(width, height, from) {
 
 module.exports = {
   PRELOAD, page, PAD, PAD_H, clamp,
-  glassQuery, lockToOurPage, openWeb, maxSize, cascadeFrom
+  glassQuery, lockToOurPage, openWeb, isOurPage, maxSize, cascadeFrom
 };

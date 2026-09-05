@@ -328,7 +328,15 @@ ipcMain.handle('mail:preview-attachment', async (e, index) => {
 });
 
 /** 저장한 첨부를 탐색기에서 보여준다 */
-ipcMain.on('mail:reveal', (_e, p) => { if (p) shell.showItemInFolder(p); });
+ipcMain.on('mail:reveal', (_e, p) => {
+  // 화면 쪽이 보내온 글자다. 보통은 우리가 방금 저장한 파일의 경로지만,
+  // 그 창이 한 번 뚫리면 무엇이든 올 수 있다. showItemInFolder 는 파일을 실행하진
+  // 않아도 탐색기를 그 자리로 보내는데, \\남의서버\공유 를 주면 붙는 순간
+  // 내 계정 이름과 암호 해시가 그 서버로 간다. 내 컴퓨터의 절대 경로만 받는다.
+  const t = String(p || '');
+  if (!t || /^\\\\/.test(t) || /^\/\//.test(t) || !path.isAbsolute(t)) return;
+  shell.showItemInFolder(t);
+});
 
 /** 메일 보기 창 크기 조절 — 위젯과 같은 방식(기준 크기를 못박아 되먹임을 끊는다) */
 ipcMain.on('mailview:move', (e, { x, y }) => {
