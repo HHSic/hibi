@@ -36,7 +36,7 @@ app.whenReady().then(async () => {
 
   // ── 종목 눌러서 차트 ──
   const tapped = await sw.webContents.executeJavaScript(`(() => {
-    const r = document.querySelector('.row.tap'); if (!r) return null;
+    const r = document.querySelector('.row.tap:not(.idx)'); if (!r) return null;
     r.click(); return r.textContent.slice(0, 12);
   })()`);
   ok(!!tapped, '누를 수 있는 종목 줄이 있다', tapped);
@@ -57,7 +57,7 @@ app.whenReady().then(async () => {
     '자료가 아직 없어도 «불러오는 중»에 안 갇힌다', st.note);
 
   // 같은 창을 돌려 쓰는가
-  await sw.webContents.executeJavaScript(`document.querySelector('.row.tap').click()`);
+  await sw.webContents.executeJavaScript(`document.querySelector('.row.tap:not(.idx)').click()`);
   await sleep(600);
   const n = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed()
     && w.webContents.getURL().includes('chart.html')).length;

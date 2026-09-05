@@ -20,6 +20,7 @@ let cur = {
   ticker: params.get('ticker') || '',
   name: params.get('name') || '',
   market: params.get('market') || 'KR',
+  index: params.get('index') === '1',
   currency: null
 };
 let range = params.get('range') || '1mo';
@@ -489,7 +490,7 @@ async function load() {
   note.style.display = '';
   note.textContent = '불러오는 중…';
   try {
-    const got = await window.nunsseom.chartData({ ticker: cur.ticker, market: cur.market, range });
+    const got = await window.nunsseom.chartData({ ticker: cur.ticker, market: cur.market, index: cur.index, range });
     const pts = (got && got.points) || [];
     cur.currency = (got && got.currency) || null;
     krwRate = (got && got.krwRate) || null;
@@ -525,7 +526,7 @@ new ResizeObserver(() => {
 
 // 다른 종목을 누르면 창은 그대로 두고 내용만 바꾼다
 window.nunsseom.onChartShow((item) => {
-  cur = { ticker: item.ticker, name: item.name, market: item.market, currency: null };
+  cur = { ticker: item.ticker, name: item.name, market: item.market, index: !!item.index, currency: null };
   zoom = null;      // 다른 종목이면 보던 구간은 뜻이 없다
   head();
   load();

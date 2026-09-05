@@ -138,6 +138,14 @@ app.whenReady().then(async () => {
   ok(/15:00/.test(sum) && !/분$/.test(sum.split('·')[0]), '요약이 «시각»으로 나온다', sum);
 
   console.log('\n[위젯에 무엇이 찍히나]');
+  // 일요일을 도로 켠다. 아래에서 «한 바퀴 = 24시간»을 재는데, 일요일이 빠진 채로
+  // 토요일에 걸리면 다음 차례가 월요일이라 48시간이 맞다 — 검사가 요일을 타면 안 된다.
+  ok(await clickText(wc, '.mini.day', '일'), '«일»요일을 도로 켰다');
+  await sleep(800);
+  // 이 앱에서 «매일»은 요일을 하나도 안 고른 상태([])다 — 일곱 개를 다 담지 않는다
+  const backDays = store.custom[id].days;
+  ok(!backDays.length || backDays.length === 7, '매일로 돌아왔다', backDays);
+
   // 다른 알림을 다 끄면 이 알람이 다음 차례가 된다
   for (const t of require(`${ROOT}/src/reminders.js`).TYPES) {
     store.setReminder(t.id, { enabled: false });

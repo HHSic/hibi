@@ -22,7 +22,13 @@ let cur = null;        // 지금 보고 있는 종목 { ticker, name, market }
 /** 주식 창에서 종목을 눌렀을 때 */
 function openChart(item) {
   if (!item || !item.ticker) return;
-  cur = { ticker: String(item.ticker), name: String(item.name || item.ticker), market: item.market || 'KR' };
+  cur = {
+    ticker: String(item.ticker),
+    name: String(item.name || item.ticker),
+    market: item.market || 'KR',
+    // 지수는 심볼에 시장 꼬리표를 붙이면 안 된다 — 창에서 여기까지 들고 와야 한다
+    index: !!item.index
+  };
 
   if (chartWin && !chartWin.isDestroyed()) {
     chartWin.webContents.send('chart:show', cur);   // 창은 그대로, 종목만 바꾼다
@@ -50,6 +56,7 @@ function openChart(item) {
       ticker: cur.ticker,
       name: cur.name,
       market: cur.market,
+      index: cur.index ? '1' : '',
       range: store.settings.chartRange || '1mo'
     })
   });
@@ -68,10 +75,10 @@ ipcMain.on('chart:close', () => closeChart());
  * 지난 시세를 준다. stocks.history() 가 아직 없으면 빈 것을 돌려준다 —
  * 그래야 차트 화면이 «불러오는 중»에 갇히지 않고 «자료 없음»을 보여준다.
  */
-ipcMain.handle('chart:data', async (_e, { ticker, market, range } = {}) => {
+ipcMain.handle('chart:data', async (_e, { ticker, market, range, index } = {}) => {
   if (typeof stocks.history !== 'function') return { points: [], range, unsupported: true };
   try {
-    const got = await stocks.history({ ticker, market }, range || '1mo');
+    const got = await stocks.history({ ticker, market, index: !!index }, range || '1mo');
     if (!got) return { points: [], range };
     // 원화 보기가 켜져 있으면 환율만 같이 보낸다 — 값을 미리 바꿔 두면 토글할 때마다
     // 다시 받아야 한다. 원 통화 그대로 두고 그릴 때 곱하는 편이 싸다.

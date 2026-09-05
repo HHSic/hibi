@@ -37,7 +37,7 @@ app.whenReady().then(async () => {
   ipcMain.emit('stocks:open');
   const sw = await until(async () => winBy('stocks.html'));
   await sleep(3500);
-  await sw.webContents.executeJavaScript(`document.querySelector('.row.tap').click()`);
+  await sw.webContents.executeJavaScript(`document.querySelector('.row.tap:not(.idx)').click()`);
   const cw = await until(async () => winBy('chart.html'));
   ok(!!cw, '차트 창이 열렸다');
   const wc = cw.webContents;

@@ -93,12 +93,13 @@ function paint() {
     const row = document.createElement('div');
     row.className = 'row' + (r.index ? ' idx' : '') + (r.stale ? ' stale' : '');
     row.title = [r.name, r.symbol || r.ticker, r.session,
-      r.stale ? '오늘 거래 없음' : null, r.index ? null : '눌러서 차트'].filter(Boolean).join(' · ');
-    // 눌러서 큰 차트 — 지수는 아직 뺀다
-    if (!r.index) {
-      row.classList.add('tap');
-      row.onclick = () => window.nunsseom.chartOpen({ ticker: r.ticker, name: r.name, market: r.market });
-    }
+      r.stale ? '오늘 거래 없음' : null, '눌러서 차트'].filter(Boolean).join(' · ');
+    // 눌러서 큰 차트. 지수도 연다 — 코스피 흐름을 보는 것이 종목만큼 자주 하는 일이다.
+    // index 를 같이 넘겨야 한다: 지수 심볼(^KS11)에 «.KS»를 붙이면 아무것도 안 나온다.
+    row.classList.add('tap');
+    row.onclick = () => window.nunsseom.chartOpen({
+      ticker: r.ticker, name: r.name, market: r.market, index: !!r.index
+    });
 
     const nm = document.createElement('span');
     nm.className = 'nm';
