@@ -195,6 +195,66 @@ app.whenReady().then(async () => {
   ok(d0.width === d1.width && d0.height === d1.height,
     '잡는 자리를 옮겨도 제자리면 크기는 그대로', { 전: d0, 후: d1, 자란값: { w: d1.width - d0.width, h: d1.height - d0.height } });
 
+  console.log('\n[7-2] 창을 «옮기면» 커지나 — 크기 조절이 아니라 이동');
+  // 처음엔 그립(크기 조절)만 쟀다가 이걸 놓쳤다. 사용자가 겪은 것은 이쪽이었다:
+  // 머리를 잡고 끌어 옮기기만 해도 창이 커졌다.
+  // 까닭은 setPosition 이다 — 배율이 100%가 아니면 부를 때마다 창이 1px 부푼다.
+  // 옮기는 동안 초당 수십 번 부르므로 순식간에 화면만큼 자란다.
+  // (위젯·쓰기·메일 창은 이미 setBounds 로 크기를 못박아 옮기고 있었는데
+  //  주식·차트 창만 빠져 있었다.)
+  const swMove = winBy('stocks.html');
+  const beforeMove = swMove.getBounds();
+  await wcNow.executeJavaScript(`(async () => {
+    const head = document.getElementById('head');
+    const mk = (type, sx, sy) => new PointerEvent(type, {
+      bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerup' ? 0 : 1,
+      screenX: sx, screenY: sy, clientX: 40, clientY: 10
+    });
+    head.dispatchEvent(mk('pointerdown', 500, 500));
+    await new Promise((r) => setTimeout(r, 350));
+    // 오른쪽 아래로 조금씩 60번 — 진짜 끌기처럼 잘게 나눠 보낸다
+    for (let i = 1; i <= 60; i++) {
+      window.dispatchEvent(mk('pointermove', 500 + i, 500 + i));
+      await new Promise((r) => setTimeout(r, 8));
+    }
+    window.dispatchEvent(mk('pointerup', 560, 560));
+    await new Promise((r) => setTimeout(r, 300));
+  })()`);
+  const afterMove = swMove.getBounds();
+  console.log(`   옮기기 전 ${beforeMove.width}x${beforeMove.height} @${beforeMove.x},${beforeMove.y}`);
+  console.log(`   옮긴 뒤   ${afterMove.width}x${afterMove.height} @${afterMove.x},${afterMove.y}`);
+  ok(Math.abs(afterMove.width - beforeMove.width) <= 1
+    && Math.abs(afterMove.height - beforeMove.height) <= 1,
+  '60번 옮겨도 크기가 그대로 (고치기 전엔 부를 때마다 1px 씩 부풀었다)',
+  { 자란값: { w: afterMove.width - beforeMove.width, h: afterMove.height - beforeMove.height } });
+  ok(Math.abs(afterMove.x - beforeMove.x - 60) <= 3 && Math.abs(afterMove.y - beforeMove.y - 60) <= 3,
+    '옮긴 만큼 실제로 옮겨졌다 (안 커진 대신 안 움직이면 안 된다)',
+    { dx: afterMove.x - beforeMove.x, dy: afterMove.y - beforeMove.y });
+
+  console.log('\n[7-3] 차트 창도 — 잡았다 놓기를 되풀이하면 자라나');
+  // 차트 창은 머리를 네이티브(-webkit-app-region: drag)로 옮기므로 이동은 문제가 없다.
+  // 대신 크기 기준을 getSize 로 되읽고 있었다 — 배율에서 부푼 값이라, 끌 때마다
+  // 그만큼 더 커진 자리에서 시작한다. 이제 «우리가 정한 값»을 준다.
+  ipcMain.emit('chart:open', {}, { ticker: '005930', name: '삼성전자', market: 'KR' });
+  for (let i = 0; i < 40 && !winBy('chart.html'); i++) await sleep(200);
+  const chw = winBy('chart.html');
+  if (!chw) {
+    console.log('   건너뜀 — 차트 창이 안 열렸다');
+  } else {
+    await sleep(1500);
+    const c0 = chw.getBounds();
+    // 그립을 제자리에서 여러 번 잡았다 놓는다 (크기가 그대로여야 한다)
+    await grabRelease(chw.webContents, 'se', 8, 0).catch(() => null);
+    await sleep(400);
+    const c1 = chw.getBounds();
+    console.log(`   ${c0.width}x${c0.height}  →  ${c1.width}x${c1.height}`);
+    ok(Math.abs(c1.width - c0.width) <= 1 && Math.abs(c1.height - c0.height) <= 1,
+      '제자리로 8번 잡았다 놔도 차트 창 크기가 그대로',
+      { 자란값: { w: c1.width - c0.width, h: c1.height - c0.height } });
+    chw.close();
+    await sleep(500);
+  }
+
   console.log('\n[8] 그립을 «톡» 눌렀다 떼면 — 처리기가 남아 붙어 있나');
   // 그립 처리기는 창 크기를 IPC 로 물어보고 «그 답이 온 뒤에» pointermove/pointerup 을 건다.
   // 그보다 먼저 손을 떼면, 떼는 것을 들을 처리기가 아직 없다 — 그래서 안 지워지고 남는다.

@@ -18,6 +18,9 @@ const DEFAULT = { width: 720 + PAD, height: 460 + PAD };
 
 let chartWin = null;
 let cur = null;        // 지금 보고 있는 종목 { ticker, name, market }
+// 우리가 정한 창 크기. 옮기고 키우는 기준을 여기서 준다 — getSize 로 되읽으면
+// 배율에서 부푼 값이 들어와 부를 때마다 조금씩 자란다 (주식 창과 같은 이유).
+let chartSize = null;
 
 /** 주식 창에서 종목을 눌렀을 때 */
 function openChart(item) {
@@ -38,9 +41,12 @@ function openChart(item) {
 
   const size = store.settings.chartSize || DEFAULT;
   const max = maxSize(screen.getPrimaryDisplay());
+  const width = Math.round(clamp(size.width, MIN.width, max.width));
+  const height = Math.round(clamp(size.height, MIN.height, max.height));
+  chartSize = { width, height };   // 처음부터 기준을 잡아 둔다 (getSize 를 안 믿는다)
   chartWin = new BrowserWindow({
-    width: Math.round(clamp(size.width, MIN.width, max.width)),
-    height: Math.round(clamp(size.height, MIN.height, max.height)),
+    width,
+    height,
     minWidth: MIN.width,
     minHeight: MIN.height,
     frame: false,
@@ -62,7 +68,7 @@ function openChart(item) {
       range: store.settings.chartRange || '1mo'
     })
   });
-  chartWin.on('closed', () => { chartWin = null; cur = null; });
+  chartWin.on('closed', () => { chartWin = null; cur = null; chartSize = null; });
 }
 
 function closeChart() {
@@ -107,9 +113,12 @@ ipcMain.on('chart:set-range', (_e, range) => {
 
 ipcMain.handle('chart:bounds', () => {
   if (!chartWin || chartWin.isDestroyed()) return null;
-  const [width, height] = chartWin.getSize();
   const [x, y] = chartWin.getPosition();
-  return { x, y, width, height };
+  // 자리는 실제에서, 크기는 «우리가 정한 값»에서. getSize 는 배율에서 부풀어 있어
+  // 그걸 끌기 기준으로 삼으면 한 번 끌 때마다 그만큼 더 커진다.
+  const [w, h] = chartWin.getSize();
+  const size = chartSize || { width: w, height: h };
+  return { x, y, width: size.width, height: size.height };
 });
 
 ipcMain.on('chart:set-bounds', (_e, b) => {
@@ -118,13 +127,13 @@ ipcMain.on('chart:set-bounds', (_e, b) => {
   const width = Math.round(clamp(b.width, MIN.width, max.width));
   const height = Math.round(clamp(b.height, MIN.height, max.height));
   chartWin.setBounds({ x: Math.round(b.x), y: Math.round(b.y), width, height });
+  chartSize = { width, height };   // 다음 끌기가 삼을 기준은 방금 «요청한» 정수다
   store.setSettings({ chartSize: { width, height } });
 });
 
-ipcMain.on('chart:move', (_e, pos) => {
-  if (!chartWin || chartWin.isDestroyed() || !pos) return;
-  chartWin.setPosition(Math.round(pos.x), Math.round(pos.y));
-});
+// chart:move 는 없앴다. 이 창은 머리에 -webkit-app-region: drag 를 써서 크로미움이
+// 직접 옮긴다 — 우리 IPC 를 부르는 데가 한 곳도 없었다. 다리(preload)에 안 쓰는 문을
+// 남겨 두면 뚫렸을 때 쓸 수 있는 자리만 늘어난다.
 
 /** 주식 기능을 끄면 이 창도 같이 닫는다 */
 function win() { return chartWin && !chartWin.isDestroyed() ? chartWin : null; }

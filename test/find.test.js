@@ -73,7 +73,14 @@ app.whenReady().then(async () => {
 
   console.log('\n[없는 이름]');
   await type(wc, 'ㅋㅋㅋㅋㅋ');
-  const s3 = await wc.executeJavaScript(`document.getElementById('sug').textContent.trim()`);
+  // 후보는 네이버에 물어보고 오는 것이라, 정해진 시간만큼 자면 느린 날 헛짚는다.
+  // «글자가 찰 때까지» 기다린다 (실제로 900ms 로는 빈 칸을 읽고 실패했다).
+  let s3 = '';
+  for (let i = 0; i < 40; i++) {
+    s3 = await wc.executeJavaScript(`document.getElementById('sug').textContent.trim()`);
+    if (s3) break;
+    await sleep(250);
+  }
   ok(/없습니다/.test(s3), '없으면 없다고 알려준다', s3);
 
   await sleep(3000);

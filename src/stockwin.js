@@ -183,7 +183,12 @@ ipcMain.on('stocks:set-bounds', (_e, b) => {
 });
 ipcMain.on('stocks:move', (_e, pos) => {
   if (!stocksWin || stocksWin.isDestroyed() || !pos) return;
-  stocksWin.setPosition(Math.round(pos.x), Math.round(pos.y));
+  // setPosition 을 쓰면 안 된다 — 배율 150%에서 부를 때마다 창이 1px 씩 부푼다(실측).
+  // 옮기는 동안에는 초당 수십 번 부르므로 순식간에 화면만큼 커진다.
+  // 크기를 함께 못박되 «우리가 정한 값»이어야 한다 — getBounds 로 되읽어 넣으면
+  // 부푼 값이 도로 들어가 똑같이 자란다. (위젯·쓰기·메일 창은 이미 이렇게 한다.)
+  const size = stockSize || (() => { const b = stocksWin.getBounds(); return { width: b.width, height: b.height }; })();
+  stocksWin.setBounds({ x: Math.round(pos.x), y: Math.round(pos.y), ...size });
 });
 
 /** 설정에서 주식을 끄면 열려 있던 창도 닫는다 */

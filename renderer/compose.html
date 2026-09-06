@@ -216,6 +216,19 @@
     padding: 0 2px; border-radius: 4px;
   }
   .file button:hover { color: var(--danger); }
+  /* 한도를 넘었을 때 — 보내기를 누르기 «전에» 보여준다 */
+  .file.over { background: transparent; color: var(--danger); padding-left: 2px; }
+
+  /* 끌어다 놓는 중 — 놓아도 되는 자리라는 것만 조용히 알린다.
+     덮개를 씌우면 그 밑의 글이 안 보여 «어디에 놓이는지»가 되레 불안해진다. */
+  .card.dropping { outline: 2px dashed var(--accent); outline-offset: -6px; }
+  .card.dropping::after {
+    content: '놓으면 첨부됩니다';
+    position: absolute; left: 50%; bottom: 54px; transform: translateX(-50%);
+    font-size: 12px; color: var(--label);
+    background: var(--fill); border-radius: 8px; padding: 6px 12px;
+    pointer-events: none;
+  }
 
   .foot {
     flex: none; padding: 10px 14px 12px;

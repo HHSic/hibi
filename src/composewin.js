@@ -312,7 +312,30 @@ ipcMain.handle('compose:attach', async () => {
   });
 });
 
+/**
+ * 끌어다 놓은 파일. 경로는 preload 가 진짜 File 객체에서 뽑아 보낸 것이다
+ * (화면이 지어낸 글자로는 여기 못 온다 — preload.js composeDropFiles 참고).
+ * 그래도 폴더나 없는 파일은 여기서 거른다.
+ */
+ipcMain.handle('compose:attach-dropped', (_e, paths) => {
+  const out = [];
+  const skipped = [];
+  for (const raw of Array.isArray(paths) ? paths.slice(0, 20) : []) {
+    const p = String(raw || '');
+    if (!p || !path.isAbsolute(p)) continue;
+    let st;
+    try { st = fs.statSync(p); } catch { skipped.push({ name: path.basename(p), why: '파일을 못 읽었습니다' }); continue; }
+    if (st.isDirectory()) { skipped.push({ name: path.basename(p), why: '폴더는 붙일 수 없습니다' }); continue; }
+    attachOk.add(p);
+    out.push({ path: p, filename: path.basename(p), size: st.size });
+  }
+  return { files: out, skipped };
+});
+
 const ATTACH_MAX = 25 * 1024 * 1024;   // 대부분의 메일 서버가 이쯤에서 거절한다
+
+/** 화면이 «얼마까지 되는지»를 미리 알려줄 수 있게 */
+ipcMain.handle('compose:limits', () => ({ attachMax: ATTACH_MAX }));
 
 ipcMain.handle('compose:send', async (_e, msg) => {
   // 화면 쪽 잠금이 풀린 틈에 두 번 들어와도 두 번 나가지 않게 한다

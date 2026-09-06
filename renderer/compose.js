@@ -16,6 +16,16 @@ function say(kind, text) {
   $('msg').textContent = text || '';
 }
 
+const fmtSize = (n) => (n > 1048576
+  ? `${(n / 1048576).toFixed(1)}MB`
+  : `${Math.max(1, Math.round(n / 1024))}KB`);
+
+// 메인이 알려준다 (compose:limits). 못 받으면 서버들이 대체로 거절하는 25MB로 둔다.
+let attachMax = 25 * 1024 * 1024;
+window.nunsseom.composeLimits?.().then((l) => {
+  if (l && l.attachMax) { attachMax = l.attachMax; renderFiles(); }
+}).catch(() => {});
+
 function renderFiles() {
   const host = $('files');
   host.textContent = '';
@@ -25,9 +35,7 @@ function renderFiles() {
     const nm = document.createElement('b');
     nm.textContent = a.filename;
     const sz = document.createElement('span');
-    sz.textContent = a.size > 1048576
-      ? `${(a.size / 1048576).toFixed(1)}MB`
-      : `${Math.max(1, Math.round(a.size / 1024))}KB`;
+    sz.textContent = fmtSize(a.size);
     const del = document.createElement('button');
     del.textContent = '✕';
     del.title = '빼기';
@@ -35,6 +43,27 @@ function renderFiles() {
     chip.append(nm, sz, del);
     host.append(chip);
   }
+  // 합계는 넘쳤을 때만 보여준다 — 평소엔 칩만으로 충분하다.
+  // 보내기를 누른 «뒤에» 알려주면, 다 쓰고 나서 되돌리게 된다.
+  const total = attachments.reduce((n, a) => n + (a.size || 0), 0);
+  if (attachments.length && total > attachMax) {
+    const warn = document.createElement('span');
+    warn.className = 'file over';
+    warn.textContent = `모두 ${fmtSize(total)} — ${fmtSize(attachMax)}까지만 보낼 수 있습니다`;
+    host.append(warn);
+  }
+}
+
+/** 이미 있는 것은 빼고 넣는다 (같은 파일을 두 번 끌어다 놔도 하나) */
+function addFiles(list) {
+  let added = 0;
+  for (const f of list || []) {
+    if (attachments.some((a) => a.path === f.path)) continue;
+    attachments.push(f);
+    added++;
+  }
+  if (added) renderFiles();
+  return added;
 }
 
 // ── 서식 막대 ───────────────────────────────────────
@@ -477,12 +506,59 @@ $('btn-cc').onclick = () => {
 };
 
 $('attach').onclick = async () => {
-  const picked = await window.nunsseom.composeAttach();
-  for (const f of picked || []) {
-    if (!attachments.some((a) => a.path === f.path)) attachments.push(f);
-  }
-  renderFiles();
+  addFiles(await window.nunsseom.composeAttach());
 };
+
+// ── 끌어다 놓기 ────────────────────────────
+// 창 어디에 놓아도 첨부가 된다. 본문(contenteditable)에 놓으면 크로미움이 제멋대로
+// file:// 그림을 끼워 넣으려 하므로, 창 전체에서 기본 동작을 먼저 막는다.
+//
+// 경로는 화면이 만지지 않는다 — preload 가 진짜 File 객체에서 뽑아 메인으로 바로
+// 보낸다. 그래야 «대화상자로 고른 것만 보낸다»는 잠금이 그대로 산다.
+(() => {
+  const card = document.querySelector('.card');
+  let depth = 0;   // dragenter/leave 는 자식 위를 지날 때마다 오간다 — 세어야 안 깜빡인다
+
+  const hasFiles = (e) => Array.from((e.dataTransfer && e.dataTransfer.types) || [])
+    .includes('Files');
+
+  window.addEventListener('dragenter', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    depth++;
+    card.classList.add('dropping');
+  });
+  window.addEventListener('dragover', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  });
+  window.addEventListener('dragleave', (e) => {
+    if (!hasFiles(e)) return;
+    depth = Math.max(0, depth - 1);
+    if (!depth) card.classList.remove('dropping');
+  });
+  window.addEventListener('drop', async (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    depth = 0;
+    card.classList.remove('dropping');
+    // FileList 를 그대로 넘기면 다리(contextBridge)를 건너다 빈 껍데기가 된다 —
+    // 파일은 하나도 안 붙는데 오류도 안 난다 (실측). 배열로 바꿔 넘겨야 File 이 살아간다.
+    const files = Array.from(e.dataTransfer.files || []);
+    if (!files.length) return;
+    const r = await window.nunsseom.composeDropFiles(files).catch(() => null);
+    if (!r) { say('bad', '첨부하지 못했습니다'); return; }
+    const added = addFiles(r.files);
+    if (r.skipped && r.skipped.length) {
+      say('bad', r.skipped.map((s) => `${s.name} — ${s.why}`).join(' · '));
+    } else if (added) {
+      say('', `${added}개 붙였습니다`);
+    } else if (r.files && r.files.length) {
+      say('', '이미 붙어 있습니다');
+    }
+  });
+})();
 
 // ── 임시 저장 ─────────────────────────────
 // 긴 메일을 쓰다 창을 닫거나 앱이 죽으면 그것으로 끝이었다.

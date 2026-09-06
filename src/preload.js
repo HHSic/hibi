@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('nunsseom', {
   // 위젯
@@ -90,7 +90,6 @@ contextBridge.exposeInMainWorld('nunsseom', {
   chartSetMode: (m) => ipcRenderer.send('chart:set-mode', m),
   chartBounds: () => ipcRenderer.invoke('chart:bounds'),
   chartSetBounds: (b) => ipcRenderer.send('chart:set-bounds', b),
-  chartMove: (p) => ipcRenderer.send('chart:move', p),
   onChartShow: (cb) => ipcRenderer.on('chart:show', (_e, i) => cb(i)),
   onCalChanged: (cb) => ipcRenderer.on('cal:changed', () => cb()),
   calOpenHelp: (which) => ipcRenderer.invoke('cal:open-help', which),
@@ -109,7 +108,26 @@ contextBridge.exposeInMainWorld('nunsseom', {
   composeData: () => ipcRenderer.invoke('compose:data'),
   composeSend: (msg) => ipcRenderer.invoke('compose:send', msg),
   composeAttach: () => ipcRenderer.invoke('compose:attach'),
+  /**
+   * 끌어다 놓은 파일을 첨부한다.
+   *
+   * 경로는 화면이 아니라 «여기»에서 뽑는다. 화면이 준 글자를 그대로 믿으면, 그 창이
+   * 한 번 뚫렸을 때 이 PC의 아무 파일이나 메일에 실어 보낼 수 있다 (그래서 메인이
+   * attachOk 목록을 둔다). webUtils.getPathForFile 은 «진짜 File 객체»에서만 경로를
+   * 내주므로, 지어낸 값으로는 아무것도 못 얻는다.
+   */
+  composeDropFiles: (files) => {
+    const paths = [];
+    for (const f of Array.from(files || [])) {
+      try {
+        const p = webUtils.getPathForFile(f);
+        if (p) paths.push(p);
+      } catch { /* File 이 아니면 경로가 없다 — 그냥 버린다 */ }
+    }
+    return ipcRenderer.invoke('compose:attach-dropped', paths);
+  },
   composePickImage: () => ipcRenderer.invoke('compose:pick-image'),
+  composeLimits: () => ipcRenderer.invoke('compose:limits'),
   mailRowMenu: (m) => ipcRenderer.invoke('mail:row-menu', m),
   mailSent: () => ipcRenderer.invoke('mail:sent'),
   mailMore: (folder) => ipcRenderer.invoke('mail:more', folder || 'in'),
