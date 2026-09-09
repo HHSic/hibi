@@ -202,24 +202,18 @@ app.whenReady().then(async () => {
   // 옮기는 동안 초당 수십 번 부르므로 순식간에 화면만큼 자란다.
   // (위젯·쓰기·메일 창은 이미 setBounds 로 크기를 못박아 옮기고 있었는데
   //  주식·차트 창만 빠져 있었다.)
+  //
+  // 화면에서 합성 끌기로 몰지 않는다. 그렇게 하면 진짜 마우스가 창 위에 있을 때
+  // 크로미움이 끼워 넣는 «단추 안 눌린» pointermove 가 섞여 들어와 끌기가 도중에
+  // 끝난다 (drag.js 가 그때 처리기를 거둔다 — 실사용에서는 옳은 동작이다).
+  // 실제로 그 탓에 dx 가 1~44 로 널뛰었다. 여기서 볼 것은 «메인이 옮길 때 부푸는가»
+  // 이므로, 끌기가 보내는 것과 똑같은 IPC 를 그 횟수만큼 직접 보낸다.
   const swMove = winBy('stocks.html');
   const beforeMove = swMove.getBounds();
-  await wcNow.executeJavaScript(`(async () => {
-    const head = document.getElementById('head');
-    const mk = (type, sx, sy) => new PointerEvent(type, {
-      bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerup' ? 0 : 1,
-      screenX: sx, screenY: sy, clientX: 40, clientY: 10
-    });
-    head.dispatchEvent(mk('pointerdown', 500, 500));
-    await new Promise((r) => setTimeout(r, 350));
-    // 오른쪽 아래로 조금씩 60번 — 진짜 끌기처럼 잘게 나눠 보낸다
-    for (let i = 1; i <= 60; i++) {
-      window.dispatchEvent(mk('pointermove', 500 + i, 500 + i));
-      await new Promise((r) => setTimeout(r, 8));
-    }
-    window.dispatchEvent(mk('pointerup', 560, 560));
-    await new Promise((r) => setTimeout(r, 300));
-  })()`);
+  for (let i = 1; i <= 60; i++) {
+    ipcMain.emit('stocks:move', {}, { x: beforeMove.x + i, y: beforeMove.y + i });
+  }
+  await sleep(800);
   const afterMove = swMove.getBounds();
   console.log(`   옮기기 전 ${beforeMove.width}x${beforeMove.height} @${beforeMove.x},${beforeMove.y}`);
   console.log(`   옮긴 뒤   ${afterMove.width}x${afterMove.height} @${afterMove.x},${afterMove.y}`);
@@ -227,9 +221,10 @@ app.whenReady().then(async () => {
     && Math.abs(afterMove.height - beforeMove.height) <= 1,
   '60번 옮겨도 크기가 그대로 (고치기 전엔 부를 때마다 1px 씩 부풀었다)',
   { 자란값: { w: afterMove.width - beforeMove.width, h: afterMove.height - beforeMove.height } });
-  ok(Math.abs(afterMove.x - beforeMove.x - 60) <= 3 && Math.abs(afterMove.y - beforeMove.y - 60) <= 3,
+  ok(Math.abs(afterMove.x - beforeMove.x - 60) <= 2 && Math.abs(afterMove.y - beforeMove.y - 60) <= 2,
     '옮긴 만큼 실제로 옮겨졌다 (안 커진 대신 안 움직이면 안 된다)',
     { dx: afterMove.x - beforeMove.x, dy: afterMove.y - beforeMove.y });
+
 
   console.log('\n[7-3] 차트 창도 — 잡았다 놓기를 되풀이하면 자라나');
   // 차트 창은 머리를 네이티브(-webkit-app-region: drag)로 옮기므로 이동은 문제가 없다.

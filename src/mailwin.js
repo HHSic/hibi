@@ -26,7 +26,12 @@ let host = {
   notice: () => {},
   seenMarks: null
 };
-function init(h) { host = { ...host, ...h }; }
+function init(h) {
+  host = { ...host, ...h };
+  // 지난 실행에서 남은 미리보기 파일을 치운다. 기본 앱으로 연 파일은 그 앱이
+  // 붙들고 있을 수 있어 곧바로 못 지운다 — 다음에 켤 때 하루 지난 것을 걷는다.
+  sweepPreviewDir();
+}
 
 async function doTrash(msg, parent) {
   const acc = host.mailAccountsForUse().find((a) => a.id === msg.accountId);
@@ -252,6 +257,8 @@ ipcMain.handle('mail:save-attachment', async (e, index) => {
  * 열 수 없는 것은 그렇다고 말한다 — 눌렀는데 아무 일도 없는 게 제일 나쁘다.
  */
 const PREVIEW_DIR = () => path.join(app.getPath('userData'), 'preview');
+/** 기본 앱으로 열어 줄 상한 — 임시 폴더에 떨구는 것이라 무한정 받지 않는다 */
+const OPEN_MAX = 100 * 1024 * 1024;
 const pdfWins = new Set();
 
 ipcMain.handle('mail:preview-attachment', async (e, index) => {
@@ -325,6 +332,106 @@ ipcMain.handle('mail:preview-attachment', async (e, index) => {
   win.loadFile(file);
   evlog.log('메일', `첨부 미리보기 · ${a.filename}`);
   return { kind: 'pdf', filename: a.filename };
+});
+
+/**
+ * 인터넷에서 온 파일이라는 표(Mark-of-the-Web).
+ *
+ * 우리가 임시 폴더에 직접 쓴 파일에는 이 표가 없다. 그러면 오피스·한글이 «보호된 보기»
+ * 없이 곧바로 열고, 탐색기의 «차단 해제» 물음도 안 뜬다 — 즉 브라우저로 내려받아
+ * 여는 것보다 위험해진다. NTFS 대체 데이터 스트림에 ZoneId=3 을 적어 그 표를 붙인다.
+ *
+ * 이 표가 무엇을 «안» 하는지도 분명히 해 둔다: 내용을 검사하지 않는다. 악성인지
+ * 아닌지는 아무도 안 본다. 표를 지우는 것도 오른쪽 눌러 한 번이면 된다.
+ * 그래서 이건 «씻었다»가 아니라 «남한테서 온 것이라고 앱에 알려 준다»일 뿐이다.
+ *
+ * 순서가 중요하다: 본문을 «먼저» 쓰고 그 다음에 표를 붙여야 한다. 거꾸로 하면
+ * 본문을 쓸 때 스트림이 지워진다 (실측 — 그러면 아무 보호 없이 열린다).
+ *
+ * 붙였다고 믿지 않고 되읽어 확인한다. 값이 없으면 false 를 준다 —
+ * 그리고 부르는 쪽은 false 면 «열지 않는다».
+ */
+function markFromInternet(file) {
+  const ads = `${file}:Zone.Identifier`;
+  try {
+    fs.writeFileSync(ads, '[ZoneTransfer]\r\nZoneId=3\r\nReferrerUrl=about:internet\r\n');
+    return /ZoneId\s*=\s*3/.test(fs.readFileSync(ads, 'utf8'));
+  } catch {
+    // NTFS 가 아니거나(클라우드 동기 폴더·정책 리다이렉트) 보안 제품이 막은 곳
+    return false;
+  }
+}
+
+/** 지난 실행에서 남은 미리보기 파일을 치운다 (하루 지난 것) */
+function sweepPreviewDir() {
+  const dir = PREVIEW_DIR();
+  let gone = 0;
+  try {
+    for (const name of fs.readdirSync(dir)) {
+      const f = path.join(dir, name);
+      try {
+        if (Date.now() - fs.statSync(f).mtimeMs < 24 * 3600 * 1000) continue;
+        fs.unlinkSync(f);
+        gone++;
+      } catch { /* 다른 앱이 붙들고 있으면 다음에 */ }
+    }
+  } catch { /* 폴더가 없으면 치울 것도 없다 */ }
+  if (gone) evlog.log('메일', `미리보기 임시 파일 ${gone}개 정리`);
+}
+
+/**
+ * 첨부를 기본 앱으로 연다 — 임시 파일로 떨궈서.
+ *
+ * 저장(mail:save-attachment)과는 다른 일이다. 저장은 사용자가 자리를 고르고 남기는
+ * 것이고, 이건 «보기만» 하려는 것이라 임시 폴더에 두고 하루 뒤 치운다.
+ *
+ * 남이 보낸 파일을 셸에 넘기는 일이므로 세 겹으로 좁힌다:
+ *   · 허락한 확장자만 (preview.openable)
+ *   · 파일 이름은 내용 해시로 새로 짓는다 — 보낸 사람이 지은 이름은 안 쓴다
+ *   · 인터넷에서 온 표를 붙인다
+ * 그래도 «열면 그 앱이 그 파일을 처리한다»는 사실은 남는다. 그래서 위험한 형식은
+ * 화면에서 한 번 더 묻고(warn), 모르는 형식은 아예 열지 않는다.
+ */
+ipcMain.handle('mail:open-attachment', async (e, index) => {
+  const slot = slotOf(e);
+  const a = slot && slot.files[index];
+  if (!a || !a.content) return { ok: false, message: '첨부를 찾을 수 없습니다' };
+
+  const can = preview.openable(a);
+  if (!can.ok) return { ok: false, message: can.why };
+  if (a.content.length > OPEN_MAX) {
+    return { ok: false, message: `파일이 너무 큽니다 (${Math.round(a.content.length / 1048576)}MB) — 저장해서 열어주세요` };
+  }
+
+  const dir = PREVIEW_DIR();
+  const file = preview.tempPathFor(dir, a, can.ext);
+  if (!file) return { ok: false, message: '임시 파일을 만들지 못했습니다' };
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(file, a.content);          // 본문 먼저
+  } catch (err) {
+    return { ok: false, message: `임시 파일을 쓰지 못했습니다 — ${err.message}` };
+  }
+  // 표를 못 붙였으면 열지 않는다.
+  // 예전에는 못 붙여도 그냥 열고 메시지만 바꿨다 — 그건 «보호된 보기 없이 남의 문서를
+  // 여는 것»을 조용히 해 주는 것이라, 이 기능을 넣은 이유가 사라진다.
+  // 못 붙는 자리(NTFS 아님·클라우드 동기 폴더·보안 제품)에서는 저장해서 열게 한다.
+  if (!markFromInternet(file)) {
+    try { fs.unlinkSync(file); } catch { /* 못 지워도 하루 뒤 정리된다 */ }
+    evlog.log('메일', `첨부 열기 거절 · ${a.filename} · 인터넷 표를 못 붙였다`);
+    return {
+      ok: false,
+      message: '이 폴더에는 «인터넷에서 온 파일» 표시를 붙일 수 없어 열지 않았습니다 — 저장해서 열어주세요'
+    };
+  }
+
+  const err = await shell.openPath(file);       // 빈 글자면 성공
+  if (err) {
+    evlog.log('메일', `첨부 열기 실패 · ${a.filename} · ${err}`);
+    return { ok: false, message: `열지 못했습니다 — ${err}` };
+  }
+  evlog.log('메일', `첨부를 기본 앱으로 열었다 · ${a.filename} (${can.ext})`);
+  return { ok: true, message: '기본 앱으로 열었습니다' };
 });
 
 /** 저장한 첨부를 탐색기에서 보여준다 */

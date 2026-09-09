@@ -85,8 +85,21 @@ app.whenReady().then(async () => {
   ok(names.includes('닛케이225') && names.includes('항셍'), '일본·홍콩 지수가 따라 나왔다');
   ok(!rows.overflow, '가로로 안 삐져나온다');
   ok(rows.clipped === 0, '이름이 안 잘린다', rows.clipped);
+  // 엔화는 «소수 두 자리»를 안 쓴다 — 다만 2,978.5 처럼 한 자리로 오는 종목이 있어
+  // 제품은 한 자리까지 살린다 (renderer/stocks.js fmtPrice). 예전 검사는 소수점이
+  // 아예 없기를 요구했는데, 그건 그날 값이 정수로 떨어졌을 때만 통과한다 —
+  // 시세에 기대는 검사였다. 여기서는 «서식 규칙»을 잰다.
   const jpRow = rows.out.find((r) => r.nm === '토요타자동차');
-  ok(jpRow && !/\./.test(jpRow.px), '엔화는 소수점 없이', jpRow && jpRow.px);
+  const jpDec = jpRow ? (jpRow.px.split('.')[1] || '').length : -1;
+  ok(jpRow && jpDec <= 1, '엔화는 소수 한 자리까지만', jpRow && jpRow.px);
+  // 달러 종목은 두 자리를 쓴다 — 규칙이 통화에 따라 갈리는지 함께 본다
+  const usRow = rows.out.find((r) => /나스닥|애플|엔비디아/.test(r.title) && !r.idx)
+    || rows.out.find((r) => !r.idx && /\.\d{2}$/.test(r.px));
+  if (usRow) {
+    ok(/\.\d{2}$/.test(usRow.px), '달러 종목은 소수 두 자리', usRow.px);
+  } else {
+    console.log('   (달러 종목이 목록에 없어 두 자리 검사는 건너뜀)');
+  }
 
   fs.writeFileSync(path.join(OUT, 'stock-asia.png'), (await wc.capturePage()).toPNG());
   console.log(bad ? `\n${bad}개 실패` : '\n모두 통과');

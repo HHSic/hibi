@@ -168,6 +168,7 @@ contextBridge.exposeInMainWorld('nunsseom', {
   mailTrash: () => ipcRenderer.invoke('mail:trash'),
   mailSaveAttachment: (i) => ipcRenderer.invoke('mail:save-attachment', i),
   mailPreviewAttachment: (i) => ipcRenderer.invoke('mail:preview-attachment', i),
+  mailOpenAttachment: (i) => ipcRenderer.invoke('mail:open-attachment', i),
   mailReveal: (p) => ipcRenderer.send('mail:reveal', p),
   mailViewBounds: () => ipcRenderer.invoke('mailview:bounds'),
   mailViewSetBounds: (b) => ipcRenderer.send('mailview:set-bounds', b),
