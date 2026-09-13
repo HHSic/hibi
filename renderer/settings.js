@@ -530,14 +530,45 @@ function renderEnter() {
   $('enter-hint').textContent = built ? built.hint
     : own ? `${own.kind === 'video' ? '영상' : '그림'} · ${(own.ms / 1000).toFixed(1)}초 동안 화면을 덮습니다`
       : '';
-  renderEnterPreview(own);
+  renderEnterPreview(own, built);
 }
 
-/** 넣은 파일이 무엇인지 눈으로 확인시켜 준다 — 이름만으로는 알 수 없다 */
-function renderEnterPreview(item) {
+// 캔버스 장면 미리보기 — 떼지 않고 새로 붙이면 안 보이는 캔버스가 뒤에서 계속 그린다
+let enterPrevAnim = null;
+let enterPrevTimer = null;
+
+/**
+ * 고른 연출을 눈으로 보여준다.
+ *   · 넣은 파일 → 그 그림·영상 (이름만으로는 무엇인지 알 수 없다)
+ *   · 고양이·웹스윙 → 휴식 창과 같은 장면을 작게 돌린다. 등장이 제일 볼만한데 한 번 지나면
+ *     끝이라, 몇 초마다 처음부터 다시 튼다.
+ */
+function renderEnterPreview(item, built) {
   const box = $('enter-preview');
+  if (enterPrevAnim) { enterPrevAnim.destroy(); enterPrevAnim = null; }
+  clearInterval(enterPrevTimer);
+  enterPrevTimer = null;
   box.textContent = '';
-  box.hidden = !item;
+  box.classList.remove('scene');
+
+  const scene = !item && built && window.nunsEnter.sceneFor ? window.nunsEnter.sceneFor(built.id) : null;
+  box.hidden = !item && !scene;
+  if (scene) {
+    box.classList.add('scene');
+    // 붙이기 전에 보이게 해야 한다 — 엔진이 칸의 크기를 재서 캔버스를 만든다
+    const run = () => {
+      if (enterPrevAnim) enterPrevAnim.destroy();
+      try {
+        enterPrevAnim = window.nunsAnim.mount(box, scene, { seed: 7 });
+      } catch {
+        enterPrevAnim = null;
+        box.hidden = true;     // 미리보기가 안 되면 조용히 감춘다 — 설정 화면은 멀쩡해야 한다
+      }
+    };
+    run();
+    enterPrevTimer = setInterval(run, 14000);
+    return;
+  }
   if (!item) return;
   const m = document.createElement(item.kind === 'video' ? 'video' : 'img');
   if (item.kind === 'video') { m.muted = true; m.loop = true; m.autoplay = true; m.playsInline = true; }

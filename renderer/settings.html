@@ -21,6 +21,10 @@
 <link rel="stylesheet" href="../assets/font/pretendard.css">
 <script src="icons.js"></script>
 <script src="sound.js"></script>
+<!-- 등장 연출 미리보기 — 휴식 창과 같은 장면 파일을 그대로 쓴다 (enter.js 보다 먼저) -->
+<script src="anim/engine.js"></script>
+<script src="anim/cat.js"></script>
+<script src="anim/swing.js"></script>
 <script src="enter.js"></script>
 <style>
   :root {
@@ -403,6 +407,14 @@
     background-position: 0 0, 6px 6px;
   }
   .entprev > * { width: 100%; height: 100%; object-fit: contain; display: block; }
+  /* 캔버스 장면 미리보기 — 휴식 창처럼 어두운 바탕 위에서 봐야 실제와 같다.
+     168px 로는 고양이 수염·거미줄이 뭉개져서 넓힌다 (16:9). */
+  .entprev.scene {
+    width: 320px; height: 180px;
+    background-image: none;
+    background: linear-gradient(135deg, #2a3140, #141820);
+    box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+  }
   .mini.danger:hover { background: rgba(255, 107, 107, 0.14); }
   .mini.armed { color: #fff; background: #e0453f; }
   /* 요일 고르기 — 일곱 개가 한 줄에 들어가야 해서 «가나다» 알약보다 좁다 */

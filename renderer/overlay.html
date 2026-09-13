@@ -16,6 +16,11 @@
                media-src file: data:">
 <link rel="stylesheet" href="../assets/font/pretendard.css">
 <script src="icons.js"></script>
+<!-- 캐릭터 연출 — 캔버스 엔진과 장면들. enter.js 보다 먼저 실려야 enter.js 가 찾는다.
+     장면 파일 하나가 깨져도 script 태그가 따로라 나머지는 실린다 (enter.js 는 옛 SVG 로 물러난다). -->
+<script src="anim/engine.js"></script>
+<script src="anim/cat.js"></script>
+<script src="anim/swing.js"></script>
 <script src="enter.js"></script>
 <script src="sound.js"></script>
 <style>
@@ -64,6 +69,10 @@
   .curtain { position: fixed; inset: 0; z-index: -1; pointer-events: none; display: none; }
   .curtain.on { display: block; }
   .ent-svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  /* 캔버스 장면 (renderer/anim/) — 옛 SVG 연출에 딸린 막(::before/::after)은 끈다.
+     장면이 제 몫의 어둠과 빛을 스스로 그린다. */
+  .ent-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .curtain.ent-canvas-on::before, .curtain.ent-canvas-on::after { content: none; }
 
   /* 거미줄 — 줄이 날아와 붙고, 살이 뻗고, 실이 감긴다 */
   .ent-shot {
