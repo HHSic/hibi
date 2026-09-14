@@ -147,6 +147,9 @@ function enterList() {
   }));
 }
 
+// 끈 등장 연출 — 소스는 남기고 어디서도 안 보이게 한다 (renderer/enter.js 의 DISABLED 참고)
+const DISABLED_ENTER = new Set(['web']);
+
 /**
  * «그때그때»를 지금 하나로 정한다.
  *
@@ -154,8 +157,12 @@ function enterList() {
  * 오른쪽은 거미줄이 된다. 한 번의 휴식은 어디서 보든 같아야 하므로 여기서 정한다.
  */
 function resolveEnter(id) {
+  // 끈 연출 — 예전에 골라 저장해 둔 사람에게도 안 보이게 «기본»으로 돌린다.
+  // 설정 값 자체는 고치지 않는다(다시 켜면 되살아나게). 화면 쪽 renderer/enter.js 의
+  // DISABLED 와 같은 목록이다 — 둘을 같이 고쳐야 한다.
+  if (DISABLED_ENTER.has(id)) return 'fade';
   if (id !== 'random') return id;
-  const pool = ['web', 'cat', 'blinds', ...store.enterCustom.map((x) => `my:${x.id}`)];
+  const pool = ['cat', 'blinds', ...store.enterCustom.map((x) => `my:${x.id}`)];
   return pool[Math.floor(Math.random() * pool.length)];
 }
 

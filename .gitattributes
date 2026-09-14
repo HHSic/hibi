@@ -1,0 +1,5 @@
+# 영상·그림은 줄바꿈 변환(core.autocrlf)을 절대 거치지 않게 — 바이트가 바뀌면 파일이 깨진다
+*.webm binary
+*.mp4 binary
+*.png binary
+*.ico binary

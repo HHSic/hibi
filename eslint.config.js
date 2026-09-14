@@ -65,6 +65,13 @@ module.exports = [
     rules: catchesRealBugs
   },
   {
+    // 영상 굽기 도구의 화면 쪽 — 보이지 않는 Electron 창에서 돈다 (브라우저 API 와 require 를 같이 쓴다)
+    files: ['scripts/bake-clip/page.js'],
+    languageOptions: {
+      globals: { ...globals.browser, ...globals.node }
+    }
+  },
+  {
     // ── 화면 ─────────────────────────────────────────
     // 여기가 사고가 나던 곳이다. 반드시 검사한다.
     // 큰 화면(설정·위젯·쓰기)의 코드는 .js로 빼두었고, 작은 것은 아직 HTML 안에 있다.

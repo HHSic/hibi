@@ -5,12 +5,12 @@
  * 휴식은 «갑자기 화면을 뺏는» 일이다. 그냥 나타나면 놀라고, 너무 느리면 방해가 된다.
  * 그래서 무언가가 화면에 «도착»하고, 그 위에 휴식 내용이 얹힌다.
  *
- * 그림 파일을 쓰지 않는다 — 배포 크기도 안 늘고, 화면 크기·비율(세로 모니터 포함)에
+ * 대부분은 그림 파일 없이 그린다 — 배포 크기도 안 늘고, 화면 크기·비율(세로 모니터 포함)에
  * 맞춰 그때그때 그릴 수 있다.
  *
- * 고양이·웹스윙은 캔버스 장면(renderer/anim/)으로 그린다. 예전엔 SVG·CSS 키프레임이었는데
- * «조잡하다»는 말을 들었다 — 꼬리가 몸을 늦게 따라 휘거나 줄에 매달린 몸이 진자처럼
- * 흔들리는 것은 키프레임 몇 개로 안 나온다. 장면 파일이 없거나 깨지면 옛 SVG 로 물러난다.
+ * 고양이만 예외로 실제 촬영 영상을 띄운다(renderer/anim/clip.js). SVG 실루엣은 «조잡하다»,
+ * 코드로 그린 캔버스 고양이(anim/cat.js)는 «이상하다»는 말을 들었다 — 진짜 동물은 그림으로
+ * 흉내 낼수록 어색하다. 영상이 안 열리면 옛 그림으로 물러나지 않고 조용히 비워 둔다.
  */
 
 // 연출은 휴식 화면의 «배경»이다 — 도착해 화면을 채우고, 휴식 내내 그 자리에서 논다.
@@ -18,11 +18,35 @@
 const MS = { cover: 900, hold: 260 };
 const TOTAL = MS.cover + MS.hold;   // 휴식 길이를 모를 때의 기본
 
-/** 설정 id → 캔버스 장면 이름. 설정에 저장된 id 는 그대로 두고 그리는 것만 바꾼다. */
-const SCENE_OF = { cat: 'cat', web: 'swing' };
+/**
+ * 끈 연출. 소스(renderer/anim/swing.js, 아래 web())는 남겨 두고 어디서도 안 보이게 한다:
+ * 고르는 목록에서 빠지고, «그때그때»에도 안 뽑히고, 예전에 골라 저장해 둔 사람에게는 «기본»으로 뜬다.
+ *
+ * 웹스윙을 끈 까닭: 사용자는 스파이더맨 그대로를 원했는데, 그건 마블·소니의 캐릭터라 공개 배포하는
+ * 이 앱에 넣을 수 없다. 대신 만든 오리지널 곡예사는 원한 것이 아니어서 빼 달라고 했다.
+ * 메인(src/breakwin.js resolveEnter)에도 같은 목록이 있다 — 둘을 같이 고쳐야 한다.
+ */
+const DISABLED = new Set(['web']);
 
-/** 이 id 를 그릴 캔버스 장면 — 없으면 null (엔진·장면 파일이 안 실렸다) */
+/** 설정에 저장된 id 를 실제로 쓸 id 로 — 끈 것은 «기본»으로 */
+function effective(id) { return DISABLED.has(id) ? 'fade' : id; }
+
+/** 이 id 를 띄울 실제 촬영 영상 — 없으면 null. 캔버스 장면보다 먼저 본다. */
+function clipFor(id) {
+  if (DISABLED.has(id)) return null;
+  const c = window.nunsClip;
+  return c && c.CLIPS && c.CLIPS[id] ? c.CLIPS[id] : null;
+}
+
+/**
+ * 설정 id → 캔버스 장면 이름. 설정에 저장된 id 는 그대로 두고 그리는 것만 바꾼다.
+ * 고양이 장면(anim/cat.js)은 영상으로 바꾸면서 싣지 않는다 — 파일은 남겨 둔다.
+ */
+const SCENE_OF = { web: 'swing' };
+
+/** 이 id 를 그릴 캔버스 장면 — 없으면 null (엔진·장면 파일이 안 실렸거나 끈 연출이다) */
 function sceneFor(id) {
+  if (DISABLED.has(id)) return null;
   const name = SCENE_OF[id];
   const a = window.nunsAnim;
   return name && a && a.scenes && a.scenes[name] && typeof a.scenes[name].draw === 'function'
@@ -32,6 +56,8 @@ function sceneFor(id) {
 /** 이 연출이 화면을 채우는 데 걸리는 «도착» 시간 */
 function arrivalMs(id, asset) {
   if (isMine(id)) return (asset && asset.ms) ? asset.ms : MS.cover;
+  const clip = clipFor(id);
+  if (clip) return clip.arrivalMs || MS.cover;
   const scene = sceneFor(id);
   if (scene && scene.arrival > 0) return Math.round(scene.arrival * 1000);
   return MS.cover;
@@ -40,17 +66,18 @@ function arrivalMs(id, asset) {
 /** 직접 넣은 연출인가 — 'my:<id>' 꼴 */
 function isMine(id) { return typeof id === 'string' && id.startsWith('my:'); }
 
-/** 고를 수 있는 것들 — 설정 화면이 이 목록을 그대로 쓴다.
+/** 고를 수 있는 것들 — 설정 화면이 이 목록을 그대로 쓴다. 끈 것은 여기서 빠진다.
  *  직접 넣은 파일은 여기 없다. 설정 화면이 store 의 enterCustom 을 뒤에 붙여 그린다. */
-const LIST = [
+const ALL = [
   { id: 'fade', name: '기본', hint: '조용히 밝아집니다' },
   { id: 'web', name: '웹스윙', hint: '가면 곡예사가 줄을 타고 날아와 거미줄을 치고 매달려 쉽니다' },
-  { id: 'cat', name: '고양이', hint: '고양이가 걸어 들어와 곁에 앉아 함께 쉽니다' },
+  { id: 'cat', name: '고양이', hint: '진짜 고양이가 화면 구석에 앉아 함께 쉽니다' },
   { id: 'blinds', name: '블라인드', hint: '가로 띠가 내려와 배경이 됩니다' },
   { id: 'breathe', name: '호흡', hint: '숨 고르는 원이 계속 커졌다 작아집니다' },
   { id: 'tv', name: '브라운관', hint: '옛 TV처럼 켜져 배경이 됩니다' },
   { id: 'random', name: '그때그때', hint: '올 때마다 다른 연출' }
 ];
+const LIST = ALL.filter((m) => !DISABLED.has(m.id));
 
 const NS = 'http://www.w3.org/2000/svg';
 const el = (n, at) => {
@@ -64,14 +91,15 @@ const el = (n, at) => {
  * 연출은 배경이라 내용을 가리지 않으니, 내용은 도착 직후 뜨면 된다.
  * fade·none 은 채우지 않으므로 0.
  */
-function coverMs(id, asset) {
+function coverMs(id0, asset) {
+  const id = effective(id0);
   if (id === 'none' || id === 'fade') return 0;
   return arrivalMs(id, asset) + MS.hold;
 }
 
 // ── 옛 SVG 연출 (장면 파일이 없을 때 물러날 자리) ─────────────────
 
-// 거미줄 — 모서리 밖에서 줄이 날아와 한 점에 붙고, 거기서 거미줄이 화면 끝까지 퍼진다.
+// 거미줄 — 모서리 밖에서 줄이 날아와 한 점에 붙고, 거기서 거미줄이 화면 끝까지 퍼진다. (지금은 끈 연출)
 function web(host, w, h) {
   const svg = el('svg', { viewBox: `0 0 ${w} ${h}`, class: 'ent-svg' });
   const ax = w * 0.82;
@@ -107,7 +135,7 @@ function web(host, w, h) {
   host.append(svg);
 }
 
-// 고양이 — 아래에서 실루엣이 올라와 화면을 가린다.
+// 고양이 — 아래에서 실루엣이 올라와 화면을 가린다. (영상 모듈 clip.js 가 안 실렸을 때만)
 function cat(host, w, h) {
   const svg = el('svg', { viewBox: '0 0 100 100', preserveAspectRatio: 'none', class: 'ent-svg ent-cat' });
   const body = 'M 50 6'
@@ -195,25 +223,31 @@ const MAKERS = { web, cat, blinds, breathe, tv };
  */
 function play(id, host, asset, breakSec) {
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  let pick = id;
+  let pick = effective(id);
   // 'random' 은 보통 main 이 미리 정해서 넘긴다 — 모니터마다 다른 게 나오면 안 되니까.
   if (pick === 'random') {
-    const opts = Object.keys(MAKERS);
+    const opts = Object.keys(MAKERS).filter((k) => !DISABLED.has(k));
     pick = opts[Math.floor(Math.random() * opts.length)];
   }
   const mine = isMine(pick) && asset && asset.url;
   if (reduce || (!mine && !MAKERS[pick])) return Promise.resolve(0);
 
-  const scene = mine ? null : sceneFor(pick);
+  const clip = mine ? null : clipFor(pick);
+  const scene = mine || clip ? null : sceneFor(pick);
   const arrival = arrivalMs(pick, asset);
   host.textContent = '';
-  host.className = `curtain on ent-${mine ? 'media' : pick}${scene ? ' ent-canvas-on' : ''}`;
+  host.className = mine ? 'curtain on ent-media'
+    : clip ? 'curtain on ent-clip-on'
+      : `curtain on ent-${pick}${scene ? ' ent-canvas-on' : ''}`;
   host.style.setProperty('--cover', `${arrival}ms`);
   // 연출을 그리다 실패해도 휴식 화면은 떠야 한다. 여기서 새어 나가면 부르는 쪽의
   // 다음 줄(휴식 내용 그리기)이 통째로 건너뛰어져 빈 화면만 남는다 — 실제로 그랬다.
   try {
     if (mine) {
       media(host, asset);
+    } else if (clip) {
+      // 영상이 안 열리면 커튼을 걷는다 — 휴식 내용은 이미 제때 뜬다
+      window.nunsClip.mount(host, clip, () => { host.className = 'curtain'; });
     } else if (scene) {
       // 휴식마다 조금씩 다르게 — 시드는 여기서 한 번 정한다 (draw 안에서는 무작위를 안 쓴다)
       window.nunsAnim.mount(host, scene, { seed: (Date.now() % 100000) + 1 });
@@ -241,4 +275,4 @@ function play(id, host, asset, breakSec) {
   return Promise.resolve(coverMs(pick, asset));
 }
 
-window.nunsEnter = { LIST, play, coverMs, isMine, sceneFor, TOTAL, MS };
+window.nunsEnter = { LIST, play, coverMs, isMine, sceneFor, clipFor, effective, DISABLED, TOTAL, MS };

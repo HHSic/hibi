@@ -485,7 +485,11 @@ $('btn-custom-add').onclick = async () => {
 function renderEnter() {
   const host = $('enter-pick');
   host.textContent = '';
-  const cur = data.settings.overlayEnter || 'fade';
+  // 끈 연출(웹스윙)을 예전에 골라 둔 사람에게는 «기본»이 켜진 것으로 보인다 — 휴식 창도 기본으로 뜬다.
+  // 저장된 값은 그대로 둔다(다시 켜면 되살아나게).
+  const cur = window.nunsEnter.effective
+    ? window.nunsEnter.effective(data.settings.overlayEnter || 'fade')
+    : (data.settings.overlayEnter || 'fade');
   const mine = data.enterCustom || [];
 
   const pick = (id) => {
@@ -533,15 +537,17 @@ function renderEnter() {
   renderEnterPreview(own, built);
 }
 
-// 캔버스 장면 미리보기 — 떼지 않고 새로 붙이면 안 보이는 캔버스가 뒤에서 계속 그린다
+// 미리보기로 붙인 것(캔버스 장면·영상) — 떼지 않고 새로 붙이면 안 보이는 캔버스가 뒤에서 계속
+// 그리고, 영상은 디코더를 붙잡고 있다
 let enterPrevAnim = null;
 let enterPrevTimer = null;
 
 /**
  * 고른 연출을 눈으로 보여준다.
  *   · 넣은 파일 → 그 그림·영상 (이름만으로는 무엇인지 알 수 없다)
- *   · 고양이·웹스윙 → 휴식 창과 같은 장면을 작게 돌린다. 등장이 제일 볼만한데 한 번 지나면
- *     끝이라, 몇 초마다 처음부터 다시 튼다.
+ *   · 고양이 → 휴식 창과 같은 영상을 어두운 칸에 통째로. 되풀이 영상이라 다시 틀 필요가 없다.
+ *   · 캔버스 장면(지금은 끈 웹스윙뿐) → 같은 장면을 작게 돌린다. 등장이 제일 볼만한데 한 번
+ *     지나면 끝이라, 몇 초마다 처음부터 다시 튼다.
  */
 function renderEnterPreview(item, built) {
   const box = $('enter-preview');
@@ -551,8 +557,21 @@ function renderEnterPreview(item, built) {
   box.textContent = '';
   box.classList.remove('scene');
 
-  const scene = !item && built && window.nunsEnter.sceneFor ? window.nunsEnter.sceneFor(built.id) : null;
-  box.hidden = !item && !scene;
+  const clip = !item && built && window.nunsEnter.clipFor ? window.nunsEnter.clipFor(built.id) : null;
+  const scene = !item && !clip && built && window.nunsEnter.sceneFor ? window.nunsEnter.sceneFor(built.id) : null;
+  box.hidden = !item && !scene && !clip;
+  if (clip) {
+    box.classList.add('scene');
+    const v = document.createElement('video');
+    v.muted = true; v.loop = true; v.autoplay = true; v.playsInline = true;
+    v.addEventListener('error', () => { box.hidden = true; }, { once: true });   // 안 열리면 조용히 감춘다
+    v.src = clip.url;
+    box.append(v);
+    enterPrevAnim = {
+      destroy() { v.pause(); v.removeAttribute('src'); v.load(); v.remove(); }
+    };
+    return;
+  }
   if (scene) {
     box.classList.add('scene');
     // 붙이기 전에 보이게 해야 한다 — 엔진이 칸의 크기를 재서 캔버스를 만든다

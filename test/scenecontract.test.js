@@ -25,6 +25,9 @@ const ok = (c, m, x) => {
   if (!c) bad++;
 };
 
+// 지금은 휴식 창·설정 화면이 어느 장면도 싣지 않는다 — cat(코드로 그린 고양이)은 실제 영상
+// (anim/clip.js, test/catclip.test.js)으로 바꿨고, swing(웹스윙)은 끈 연출이다. 파일은 남겨 두었으니
+// 다시 쓸 때 깨져 있지 않도록 약속 검사는 계속 한다.
 const SCENES = ['cat', 'swing'];
 
 app.whenReady().then(async () => {

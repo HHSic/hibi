@@ -16,11 +16,10 @@
                media-src file: data:">
 <link rel="stylesheet" href="../assets/font/pretendard.css">
 <script src="icons.js"></script>
-<!-- 캐릭터 연출 — 캔버스 엔진과 장면들. enter.js 보다 먼저 실려야 enter.js 가 찾는다.
-     장면 파일 하나가 깨져도 script 태그가 따로라 나머지는 실린다 (enter.js 는 옛 SVG 로 물러난다). -->
-<script src="anim/engine.js"></script>
-<script src="anim/cat.js"></script>
-<script src="anim/swing.js"></script>
+<!-- 고양이 연출 — 누끼 딴 실제 고양이 영상. enter.js 보다 먼저 실려야 enter.js 가 찾는다.
+     캔버스 장면(anim/engine.js · cat.js · swing.js)은 싣지 않는다 — 코드로 그린 고양이는 영상으로
+     바꿨고, 웹스윙은 끈 연출이다. 파일은 남겨 둔다 (enter.js SCENE_OF · DISABLED). -->
+<script src="anim/clip.js"></script>
 <script src="enter.js"></script>
 <script src="sound.js"></script>
 <style>
@@ -73,6 +72,15 @@
      장면이 제 몫의 어둠과 빛을 스스로 그린다. */
   .ent-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
   .curtain.ent-canvas-on::before, .curtain.ent-canvas-on::after { content: none; }
+  /* 실제 고양이 영상 (renderer/anim/clip.js) — 투명 영상이라 바탕 위에 그대로 앉는다.
+     자리(left·top·width·height)는 clip.js 가 화면 크기에 맞춰 준다. 첫 프레임이 준비되면(.in)
+     살짝 올라오며 나타난다 — 빈 네모가 먼저 번쩍이지 않게. */
+  .ent-clip {
+    position: absolute; display: block; object-fit: contain;
+    opacity: 0; transform: translateY(16px);
+    transition: opacity 0.6s ease, transform 0.7s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .ent-clip.in { opacity: 1; transform: none; }
 
   /* 거미줄 — 줄이 날아와 붙고, 살이 뻗고, 실이 감긴다 */
   .ent-shot {

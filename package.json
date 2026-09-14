@@ -45,6 +45,9 @@
       "assets/**/*",
       "package.json"
     ],
+    "asarUnpack": [
+      "assets/enter/**"
+    ],
     "win": {
       "icon": "build/icon.ico",
       "target": [
