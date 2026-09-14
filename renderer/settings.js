@@ -546,6 +546,7 @@ let enterPrevTimer = null;
  * 고른 연출을 눈으로 보여준다.
  *   · 넣은 파일 → 그 그림·영상 (이름만으로는 무엇인지 알 수 없다)
  *   · 고양이 → 휴식 창과 같은 영상을 어두운 칸에 통째로. 되풀이 영상이라 다시 틀 필요가 없다.
+ *     «랜덤 고양이»는 뽑힐 고양이들을 5초마다 바꿔 가며 보여 준다.
  *   · 캔버스 장면(지금은 끈 웹스윙뿐) → 같은 장면을 작게 돌린다. 등장이 제일 볼만한데 한 번
  *     지나면 끝이라, 몇 초마다 처음부터 다시 튼다.
  */
@@ -557,15 +558,39 @@ function renderEnterPreview(item, built) {
   box.textContent = '';
   box.classList.remove('scene');
 
-  const clip = !item && built && window.nunsEnter.clipFor ? window.nunsEnter.clipFor(built.id) : null;
+  const cats = !item && built && built.id === 'cat-random' && window.nunsEnter.catIds
+    ? window.nunsEnter.catIds().map((id) => window.nunsEnter.clipFor(id)).filter(Boolean) : [];
+  const clip = !item && built && window.nunsEnter.clipFor ? (window.nunsEnter.clipFor(built.id) || cats[0] || null) : null;
   const scene = !item && !clip && built && window.nunsEnter.sceneFor ? window.nunsEnter.sceneFor(built.id) : null;
   box.hidden = !item && !scene && !clip;
   if (clip) {
     box.classList.add('scene');
     const v = document.createElement('video');
     v.muted = true; v.loop = true; v.autoplay = true; v.playsInline = true;
-    v.addEventListener('error', () => { box.hidden = true; }, { once: true });   // 안 열리면 조용히 감춘다
-    v.src = clip.url;
+    if (cats.length > 1) {
+      // 5초마다 다음 고양이로. 한 마리 영상이 안 열리면 그 고양이만 건너뛰고, 다 안 열릴 때만 감춘다
+      const bad = new Set();
+      let i = 0;
+      let timer = null;
+      const show = (from) => {
+        for (let k = 0; k < cats.length; k++) {
+          const j = (from + k) % cats.length;
+          // 남은 게 지금 고양이뿐이면 그대로 둔다 — 같은 주소를 다시 넣으면 처음부터 다시 읽는다
+          if (!bad.has(j)) { if (j !== i) { i = j; v.src = cats[j].url; } return; }
+        }
+        clearInterval(timer);
+        box.hidden = true;
+      };
+      // 떼어 낸 뒤(다른 연출을 골랐다)에 늦게 오는 이벤트는 무시한다
+      v.addEventListener('error', () => { if (v.isConnected) { bad.add(i); show(i + 1); } });
+      v.addEventListener('loadeddata', () => { if (v.isConnected) box.hidden = false; });
+      v.src = cats[0].url;
+      timer = setInterval(() => show(i + 1), 5000);
+      enterPrevTimer = timer;
+    } else {
+      v.addEventListener('error', () => { box.hidden = true; }, { once: true });   // 안 열리면 조용히 감춘다
+      v.src = clip.url;
+    }
     box.append(v);
     enterPrevAnim = {
       destroy() { v.pause(); v.removeAttribute('src'); v.load(); v.remove(); }

@@ -151,7 +151,15 @@ function enterList() {
 const DISABLED_ENTER = new Set(['web']);
 
 /**
- * «그때그때»를 지금 하나로 정한다.
+ * 고양이 영상 id — renderer/anim/clip.js 의 CLIPS 와 같아야 한다. 메인은 화면 쪽 파일을 못 읽어 따로 적는다
+ * (test/catrandom.test.js 가 맞춰 본다). «랜덤 고양이»와 «그때그때»가 여기서 뽑는다.
+ */
+const CAT_ENTERS = ['cat', 'cat-loaf', 'cat-lie', 'cat-roll', 'cat-meow', 'cat-rb'];
+// 바로 앞 휴식에 나온 고양이 — «랜덤 고양이»가 같은 고양이를 두 번 연달아 내지 않게
+let lastCat = null;
+
+/**
+ * «그때그때»·«랜덤 고양이»를 지금 하나로 정한다.
  *
  * 화면 쪽에서 고르면 모니터마다 다른 연출이 나온다 — 세 대를 쓰면 왼쪽은 고양이,
  * 오른쪽은 거미줄이 된다. 한 번의 휴식은 어디서 보든 같아야 하므로 여기서 정한다.
@@ -161,9 +169,17 @@ function resolveEnter(id) {
   // 설정 값 자체는 고치지 않는다(다시 켜면 되살아나게). 화면 쪽 renderer/enter.js 의
   // DISABLED 와 같은 목록이다 — 둘을 같이 고쳐야 한다.
   if (DISABLED_ENTER.has(id)) return 'fade';
+  // 끈 고양이가 생기면 뽑지 않는다 — 화면 쪽 catIds() 도 DISABLED 를 뺀다
+  const cats = CAT_ENTERS.filter((c) => !DISABLED_ENTER.has(c));
+  // «랜덤 고양이» — 고양이 영상 가운데 하나. 같은 고양이가 연달아 나오면 «랜덤»이 고장 난 것처럼 보여 바로 앞 것은 뺀다
+  if (id === 'cat-random') {
+    const opts = cats.length > 1 ? cats.filter((c) => c !== lastCat) : cats;
+    lastCat = opts.length ? opts[Math.floor(Math.random() * opts.length)] : null;
+    return lastCat || 'fade';
+  }
   if (id !== 'random') return id;
   // 고양이 종류(renderer/anim/clip.js CLIPS)도 다 넣는다 — 영상 파일이 없으면 화면 쪽이 조용히 비워 둔다
-  const pool = ['cat', 'cat-loaf', 'cat-lie', 'cat-roll', 'cat-meow', 'cat-rb', 'blinds', ...store.enterCustom.map((x) => `my:${x.id}`)];
+  const pool = [...cats, 'blinds', ...store.enterCustom.map((x) => `my:${x.id}`)];
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
@@ -460,5 +476,7 @@ module.exports = {
   // 모니터가 바뀌면 미리 세워 둔 창을 버리도록 앱 시작 때 한 번 건다
   watchDisplays,
   // 설정 화면이 쓰는 «내 연출» 목록 (settings:get 이 실어 보낸다)
-  enterList
+  enterList,
+  // 시험이 쓴다 — «그때그때»·«랜덤 고양이»가 무엇을 뽑는지 (test/catrandom.test.js, charscene.test.js)
+  resolveEnter, CAT_ENTERS, DISABLED_ENTER
 };

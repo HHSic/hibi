@@ -38,6 +38,12 @@ function clipFor(id) {
   return c && c.CLIPS && c.CLIPS[id] ? c.CLIPS[id] : null;
 }
 
+/** «랜덤 고양이»가 뽑는 고양이들 — 실제 영상(anim/clip.js CLIPS)이 있는 id 전부. 메인(src/breakwin.js)의 CAT_ENTERS 와 같아야 한다 */
+function catIds() {
+  const c = window.nunsClip;
+  return c && c.CLIPS ? Object.keys(c.CLIPS).filter((k) => !DISABLED.has(k)) : [];
+}
+
 /**
  * 설정 id → 캔버스 장면 이름. 설정에 저장된 id 는 그대로 두고 그리는 것만 바꾼다.
  * 고양이 장면(anim/cat.js)은 영상으로 바꾸면서 싣지 않는다 — 파일은 남겨 둔다.
@@ -72,6 +78,8 @@ const ALL = [
   { id: 'fade', name: '기본', hint: '조용히 밝아집니다' },
   { id: 'web', name: '웹스윙', hint: '가면 곡예사가 줄을 타고 날아와 거미줄을 치고 매달려 쉽니다' },
   // 고양이는 종류별로 따로 고른다 («종류별로 따로 고르기» 요청). 'cat' 은 예전부터 저장돼 있던 id 라 그대로 둔다.
+  // «랜덤 고양이» — 휴식마다 아래 종류 가운데 하나 («고양이 모드면 저 고양이들 중에 랜덤으로» 요청). 고르는 건 메인이 한다
+  { id: 'cat-random', name: '랜덤 고양이', hint: '휴식마다 고양이 여러 마리 가운데 하나가 무작위로 찾아옵니다' },
   { id: 'cat', name: '앉은 고양이', hint: '진짜 고양이가 화면 구석에 앉아 함께 쉽니다' },
   { id: 'cat-loaf', name: '큰 식빵 고양이', hint: '커다란 고양이가 가운데서 식빵을 굽고, 안내는 오른쪽 아래로 비켜 줍니다' },
   { id: 'cat-lie', name: '엎드린 아기 고양이', hint: '아기 고양이가 구석에 엎드려 두리번거립니다' },
@@ -235,6 +243,11 @@ function play(id, host, asset, breakSec) {
     const opts = Object.keys(MAKERS).filter((k) => !DISABLED.has(k));
     pick = opts[Math.floor(Math.random() * opts.length)];
   }
+  // «랜덤 고양이»도 보통 main 이 정해서 넘긴다 (src/breakwin.js resolveEnter). 그대로 오면 여기서 고른다
+  if (pick === 'cat-random') {
+    const cats = catIds();
+    pick = cats.length ? cats[Math.floor(Math.random() * cats.length)] : 'fade';
+  }
   const mine = isMine(pick) && asset && asset.url;
   const clip = mine ? null : clipFor(pick);
   // 고양이 종류(cat-loaf 등)는 옛 그림(MAKERS)이 없고 영상만 있다 — 영상이 있으면 그걸로 띄운다
@@ -282,4 +295,4 @@ function play(id, host, asset, breakSec) {
   return Promise.resolve(coverMs(pick, asset));
 }
 
-window.nunsEnter = { LIST, play, coverMs, isMine, sceneFor, clipFor, effective, DISABLED, TOTAL, MS };
+window.nunsEnter = { LIST, play, coverMs, isMine, sceneFor, clipFor, catIds, effective, DISABLED, TOTAL, MS };

@@ -240,6 +240,28 @@ app.whenReady().then(async () => {
     ok(e1.hero === (clip.mode === 'hero'), `${tag}: 주인공 자리일 때만 html.ent-hero 가 붙는다`, { hero: e1.hero, mode: clip.mode });
   }
 
+  console.log('\n[랜덤 고양이 — enter.js]');
+  // 보통은 메인이 고양이를 골라 넘긴다 (test/catrandom.test.js). 화면 쪽이 «랜덤 고양이»를 그대로 받아도 고양이 영상 하나로 떠야 한다
+  const e3 = await js(`(async () => {
+    const host = document.getElementById('curtain');
+    const E = window.nunsEnter;
+    const urls = new Set(Object.values(window.nunsClip.CLIPS).map((c) => new URL(c.url, document.baseURI).href));
+    const seen = new Set();
+    let wrong = 0;
+    for (let i = 0; i < 30; i++) {
+      host.textContent = '';
+      document.documentElement.classList.remove('ent-hero');
+      await E.play('cat-random', host, null, 20);
+      const vids = host.querySelectorAll('video.ent-clip');
+      if (vids.length !== 1 || !urls.has(vids[0].src)) wrong++; else seen.add(vids[0].src);
+    }
+    host.textContent = '';
+    document.documentElement.classList.remove('ent-hero');
+    return { wrong, seen: seen.size, total: urls.size, ids: E.catIds(), inList: E.LIST.some((m) => m.id === 'cat-random') };
+  })()`);
+  ok(e3.wrong === 0 && e3.inList, '«랜덤 고양이»를 화면 쪽에서 받아도 고양이 영상 하나로 띄운다', e3);
+  ok(e3.seen >= Math.min(3, e3.total) && e3.ids.length === e3.total, '30번에 여러 고양이가 나온다', e3);
+
   console.log('\n[영상이 안 열리면]');
   const e2 = await js(`(async () => {
     const host = document.getElementById('curtain');
