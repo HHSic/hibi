@@ -12,6 +12,8 @@
  *   cat-lie.webm   Pixabay 117331 — 줄무늬 아기 고양이, 2.5~5.2초 구간 (엎드려 두리번)
  *   cat-roll.webm  Pixabay 117331 — 같은 고양이, 0~2.2초 구간 (옆으로 늘어져 올려다봄)
  *   cat-loaf.webm  Pexels 5335454 «Adorable Cat Looking Around» — 식빵 자세 브리티시 숏헤어, 검은 바탕
+ *   cat-rb.webm    Pexels 29758643 «Relaxed Russian Blue Cat Lounging Indoors» — 의자 위에 동그랗게 누운 러시안블루,
+ *                  12~20초 구간. 방 안에서 찍어 배경 색으로는 못 가른다 — AI 누끼(BiRefNet-matting, MIT)로 땄다
  * 원본 mp4 는 싣지 않고, scripts/bake-clip 이 바꾼 결과만 싣는다:
  *   · 배경을 걷어 투명하게 (VP9 알파) — 초록 바탕은 초록 우세도로, 검은 바탕은 밝기 + 구멍 메운 실루엣으로
  *   · 고양이 자리만 잘라 내고, 앉은 받침(밝은 초록 띠)을 잘라 발이 창 아래 끝에 닿게
@@ -78,6 +80,18 @@
       height: 426,
       fps: 25,
       place: { mode: 'corner', anchor: 'right', side: 0.035, bottom: 0, height: 0.46 },
+      arrivalMs: 700
+    },
+    'cat-rb': {
+      // Pexels 29758643 의 12~20초 — 러시안블루가 의자 위에 동그랗게 누워 초록 눈으로 바라본다. 가까이서 찍어 몸이
+      // 원본 왼쪽·오른쪽·아래 끝에 잘렸다 — 오른쪽 끝은 창 오른쪽에 딱 붙이고(side 0), 왼쪽·아래 끝은 구울 때 흐리게 지웠다.
+      // 아래까지 지운 까닭: 세로 화면에서는 단추 줄 위로 올라가는데, 잘린 아랫면이 공중에 뜨면 어색하다
+      url: '../assets/enter/cat-rb.webm',
+      width: 1402,
+      height: 760,
+      fps: 30,
+      cut: { right: true },
+      place: { mode: 'corner', anchor: 'right', side: 0, bottom: 0, height: 0.46 },
       arrivalMs: 700
     }
   };

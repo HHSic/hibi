@@ -180,9 +180,34 @@ function paint(ctx, x, y, w, h, kind) {
   ctx.fillStyle = g; ctx.fillRect(x, y, w, h);
   ctx.fillStyle = 'rgba(16,16,20,0.56)'; ctx.fillRect(x, y, w, h);
 }
+// 비교 그림 — 한 줄에 [전체(절반) 어두운 바탕][왼쪽 위 2배][왼쪽 가운데 2배 회색][전체(절반) 회색]
+function makeSheet(ow, oh) {
+  const zoomA = [Math.round(ow * 0.04), 0, Math.round(ow * 0.36), Math.round(oh * 0.3)];
+  const zoomB = [0, Math.round(oh * 0.36), Math.round(ow * 0.32), Math.round(oh * 0.32)];
+  return function sheet(rows) {
+    const Z = 2, hw = Math.round(ow / 2), hh = Math.round(oh / 2);
+    const rowH = Math.max(hh, zoomA[3] * Z, zoomB[3] * Z);
+    const SW = hw * 2 + zoomA[2] * Z + zoomB[2] * Z + 30, SH = rows.length * rowH + (rows.length - 1) * 10;
+    const [sc, s] = canvas2d(SW, SH);
+    s.fillStyle = '#000'; s.fillRect(0, 0, SW, SH);
+    rows.forEach((src, ri) => {
+      const y = ri * (rowH + 10);
+      let x = 0;
+      paint(s, x, y, hw, hh, 'dark'); s.drawImage(src, 0, 0, ow, oh, x, y, hw, hh); x += hw + 10;
+      s.imageSmoothingEnabled = false;
+      paint(s, x, y, zoomA[2] * Z, zoomA[3] * Z, 'dark'); s.drawImage(src, ...zoomA, x, y, zoomA[2] * Z, zoomA[3] * Z); x += zoomA[2] * Z + 10;
+      paint(s, x, y, zoomB[2] * Z, zoomB[3] * Z, 'gray'); s.drawImage(src, ...zoomB, x, y, zoomB[2] * Z, zoomB[3] * Z); x += zoomB[2] * Z + 10;
+      s.imageSmoothingEnabled = true;
+      paint(s, x, y, hw, hh, 'gray'); s.drawImage(src, 0, 0, ow, oh, x, y, hw, hh);
+    });
+    return sc.toDataURL('image/png');
+  };
+}
+
 const median = (a) => { const s = a.slice().sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
 
 async function main() {
+  if (P.framesDir) return mainFrames();
   const A = await openVideo(P.src);
   const B = await openVideo(P.src);
   const W = A.videoWidth, H = A.videoHeight;
@@ -348,26 +373,7 @@ async function main() {
   const keyed = async (v, i, k = key) => { await seek(v, frameT(i)); K.draw(v, k, box, W, H, holeMask(v, k)); return glc; };
 
   const shots = {};
-  const zoomA = [Math.round(ow * 0.04), 0, Math.round(ow * 0.36), Math.round(oh * 0.3)];
-  const zoomB = [0, Math.round(oh * 0.36), Math.round(ow * 0.32), Math.round(oh * 0.32)];
-  function sheet(rows) {
-    const Z = 2, hw = Math.round(ow / 2), hh = Math.round(oh / 2);
-    const rowH = Math.max(hh, zoomA[3] * Z, zoomB[3] * Z);
-    const SW = hw * 2 + zoomA[2] * Z + zoomB[2] * Z + 30, SH = rows.length * rowH + (rows.length - 1) * 10;
-    const [sc, s] = canvas2d(SW, SH);
-    s.fillStyle = '#000'; s.fillRect(0, 0, SW, SH);
-    rows.forEach((src, ri) => {
-      const y = ri * (rowH + 10);
-      let x = 0;
-      paint(s, x, y, hw, hh, 'dark'); s.drawImage(src, 0, 0, ow, oh, x, y, hw, hh); x += hw + 10;
-      s.imageSmoothingEnabled = false;
-      paint(s, x, y, zoomA[2] * Z, zoomA[3] * Z, 'dark'); s.drawImage(src, ...zoomA, x, y, zoomA[2] * Z, zoomA[3] * Z); x += zoomA[2] * Z + 10;
-      paint(s, x, y, zoomB[2] * Z, zoomB[3] * Z, 'gray'); s.drawImage(src, ...zoomB, x, y, zoomB[2] * Z, zoomB[3] * Z); x += zoomB[2] * Z + 10;
-      s.imageSmoothingEnabled = true;
-      paint(s, x, y, hw, hh, 'gray'); s.drawImage(src, 0, 0, ow, oh, x, y, hw, hh);
-    });
-    return sc.toDataURL('image/png');
-  }
+  const sheet = makeSheet(ow, oh);
   const snap = (src) => { const [c, x] = canvas2d(ow, oh); x.drawImage(src, 0, 0); return c; };
 
   if (P.mode === 'tune') {
@@ -383,7 +389,37 @@ async function main() {
     return;
   }
 
-  // ── 반복 방법 고르기 ──
+  return bakeLoop({ SRC, keyed, A, B, glc, ow, oh, sheet, shots, key, box, cut });
+}
+
+// ── 밖에서 만든 투명 프레임 묶음 (AI 누끼 등) ──────────────────────
+// P.framesDir 의 PNG 들을 이름 순서대로 쓴다. 이미 투명하고 고양이 자리로 잘려 있다고 본다 — 누끼·자리 찾기는 안 한다.
+async function mainFrames() {
+  const fs = require('fs');
+  const path = require('path');
+  const names = fs.readdirSync(P.framesDir).filter((n) => /[.]png$/i.test(n)).sort();
+  if (!names.length) throw new Error('프레임 PNG 가 없다: ' + P.framesDir);
+  const blobs = names.map((n) => new Blob([fs.readFileSync(path.join(P.framesDir, n))], { type: 'image/png' }));
+  const first = await createImageBitmap(blobs[0]);
+  const W = first.width, H = first.height;
+  first.close();
+  const scale = Math.min(1, P.maxH / H);
+  const ow = Math.round((W * scale) / 2) * 2, oh = Math.round((H * scale) / 2) * 2;
+  const [glc, gx] = canvas2d(ow, oh);
+  const keyed = async (_v, i) => {
+    const b = await createImageBitmap(blobs[i]);
+    gx.clearRect(0, 0, ow, oh);
+    gx.drawImage(b, 0, 0, ow, oh);
+    b.close();
+    return glc;
+  };
+  say(`프레임 묶음 ${names.length}장 · ${W}x${H} → ${ow}x${oh} · ${FPS}fps`);
+  return bakeLoop({ SRC: names.map((_n, i) => i), keyed, A: null, B: null, glc, ow, oh, sheet: makeSheet(ow, oh), shots: {},
+    key: { framesDir: P.framesDir }, box: [0, 0, W, H], cut: { left: false, right: false } });
+}
+
+// ── 반복 고르기 · 프레임 만들기 · 녹화 · 검사 — 영상에서 누끼 딴 프레임이든 밖에서 만든 PNG 묶음이든 같다 ──
+async function bakeLoop({ SRC, keyed, A, B, glc, ow, oh, sheet, shots, key, box, cut }) {
   const TW = 48, TH = Math.max(8, Math.round((TW * oh) / ow));
   const [, tx] = canvas2d(TW, TH);
   const STEP = 2;

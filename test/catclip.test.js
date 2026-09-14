@@ -87,7 +87,7 @@ app.whenReady().then(async () => {
   await win.loadFile(page);
   const js = (code) => win.webContents.executeJavaScript(code);
 
-  const clips = await js(`Object.entries(window.nunsClip.CLIPS).map(([id, c]) => ({ id, url: c.url, width: c.width, height: c.height, fps: c.fps || 30, mode: (c.place && c.place.mode) || 'corner', arrivalMs: c.arrivalMs }))`);
+  const clips = await js(`Object.entries(window.nunsClip.CLIPS).map(([id, c]) => ({ id, url: c.url, width: c.width, height: c.height, fps: c.fps || 30, mode: (c.place && c.place.mode) || 'corner', arrivalMs: c.arrivalMs, cut: c.cut || null }))`);
   ok(clips.length > 0, 'clip.js 에 영상이 적혀 있다', clips.map((c) => c.id));
 
   for (const clip of clips) {
@@ -126,12 +126,14 @@ app.whenReady().then(async () => {
       const seek = (t) => new Promise((res) => { v.onseeked = res; v.currentTime = t; });
       const grab = async (t) => { await seek(t); x.clearRect(0, 0, W, H); x.drawImage(v, 0, 0); return x.getImageData(0, 0, W, H).data; };
       const out = { W, H, D, shots: [] };
+      // 몸이 원본 화면 끝에 잘린 영상(clip.cut)은 그 쪽 가장자리가 불투명한 게 맞다 — 그 쪽은 안 본다
+      const cut = clip.cut || {};
       for (const t of [0.2, D / 2, D - 0.2]) {
         const d = await grab(t);
         let clear = 0, n = 0, top = 0, side = 0, seen = 0, solid = 0;
         for (let i = 3; i < d.length; i += 4 * 7) { n++; if (d[i] < 10) clear++; if (d[i] > 16) { seen++; if (d[i] > 240) solid++; } }
-        for (let xx = 0; xx < W; xx++) top = Math.max(top, d[xx * 4 + 3]);
-        for (let yy = 0; yy < H * 0.5; yy++) side = Math.max(side, d[yy * W * 4 + 3], d[(yy * W + W - 1) * 4 + 3]);
+        if (!cut.top) for (let xx = 0; xx < W; xx++) top = Math.max(top, d[xx * 4 + 3]);
+        for (let yy = 0; yy < H * 0.5; yy++) side = Math.max(side, cut.left ? 0 : d[yy * W * 4 + 3], cut.right ? 0 : d[(yy * W + W - 1) * 4 + 3]);
         out.shots.push({ t: +t.toFixed(2), clear: +(clear / n).toFixed(3), top, side, body: +(solid / Math.max(1, seen)).toFixed(3) });
       }
       const N = Math.round(D * FPS);
@@ -178,7 +180,9 @@ app.whenReady().then(async () => {
     } else {
       ok(v.W === clip.width && v.H === clip.height, `${tag}: clip.js 에 적은 크기와 영상 크기가 같다`, { video: [v.W, v.H], clipJs: [clip.width, clip.height] });
       ok(v.shots.every((q) => q.top <= 16 && q.side <= 16), `${tag}: 윗줄·양옆은 투명하다 (배경이 남지 않았다)`, v.shots.map((q) => [q.top, q.side]));
-      ok(v.shots.every((q) => q.clear >= 0.2 && q.clear <= 0.8), `${tag}: 투명한 곳이 적당하다 (통째 네모도, 빈 영상도 아니다)`, v.shots.map((q) => q.clear));
+      // 화면 끝에 잘린 클로즈업은 고양이가 칸을 거의 채운다 — 투명한 곳이 적어도 된다
+      const minClear = clip.cut ? 0.05 : 0.2;
+      ok(v.shots.every((q) => q.clear >= minClear && q.clear <= 0.8), `${tag}: 투명한 곳이 적당하다 (통째 네모도, 빈 영상도 아니다)`, v.shots.map((q) => q.clear));
       // 앉았든 누웠든 — 보이는 점(알파 16 초과) 가운데 꽉 찬 점(240 초과)이 대부분이어야 한다. 누끼가 뭉개져 몸이 비치면 여기서 떨어진다
       ok(v.shots.every((q) => q.body >= 0.7), `${tag}: 몸은 비치지 않는다 (보이는 점의 70% 이상이 꽉 참)`, v.shots.map((q) => q.body));
       ok(v.seam <= Math.max(...v.adj) * 2.5 + 1, `${tag}: 끝→처음 이음새가 옆 프레임 차이만큼만 튄다`, { seam: v.seam, adj: v.adj });

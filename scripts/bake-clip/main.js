@@ -7,6 +7,7 @@
 //   BAKE_SRCFPS=30 BAKE_DROP=3/6  원본 컨테이너가 30fps 인데 25fps 를 늘려 6장마다 3번째를 되풀이했을 때 그 장을 뺀다
 //   BAKE_RANGE=0.4,6.5 원본에서 이 구간(초)만 쓴다 — 고양이가 일어나 걸어 나가는 영상에서 자세가 유지되는 곳만
 //   BAKE_ROI=0,40,1850,1080  원본에서 이 사각형(px) 밖은 버린다 — 검은 천의 밝은 주름이 몸과 붙어 잡힐 때
+//   BAKE_FRAMES=폴더    이미 투명한 PNG 묶음(이름 순서)을 굽는다 — 초록·검은 바탕이 아닌 영상을 AI 로 누끼 딴 경우
 //   BAKE_FLIP=1        좌우를 뒤집어 굽는다 (화면 끝에 잘린 몸을 휴식 창 오른쪽 끝에 붙이려고)
 //   BAKE_KEY='{"blackScreen":1,"low":0.1,"high":0.2}'  검은 바탕에서 찍은 영상 — 밝기로 가른다
 //   BAKE_KEY='{"despillAll":1}'  회색 털이 초록빛에 물든 영상 — 몸 안쪽까지 초록을 누른다
@@ -32,7 +33,7 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 
 const E = process.env;
 // 빠진 값은 창을 띄우기 전에 알린다 — 메인 프로세스에서 던지면 오류 대화상자가 화면에 뜨고 멈춘다
-if (!E.BAKE_SRC || ((E.BAKE_MODE || 'bake') !== 'tune' && !E.BAKE_OUT)) {
+if ((!E.BAKE_SRC && !E.BAKE_FRAMES) || ((E.BAKE_MODE || 'bake') !== 'tune' && !E.BAKE_OUT)) {
   console.error('BAKE_SRC(원본 영상)와 BAKE_OUT(출력 webm, tune 이 아니면)을 환경 변수로 주세요.');
   process.exit(1);
 }
@@ -40,7 +41,9 @@ const fileUrl = (p) => 'file:///' + p.split(path.sep).join('/');
 const DIR = path.resolve(E.BAKE_DIR || path.join(require('os').tmpdir(), 'bake-clip'));
 const OUT = E.BAKE_OUT ? path.resolve(E.BAKE_OUT) : null;
 const P = {
-  src: fileUrl(path.resolve(E.BAKE_SRC)),
+  src: E.BAKE_SRC ? fileUrl(path.resolve(E.BAKE_SRC)) : null,
+  // 밖에서 만든 투명 PNG 묶음 (AI 누끼 등) — 주면 BAKE_SRC 대신 이걸 굽는다
+  framesDir: E.BAKE_FRAMES ? path.resolve(E.BAKE_FRAMES) : null,
   mode: E.BAKE_MODE || 'bake',
   maxH: Number(E.BAKE_MAXH || 760),
   bps: Number(E.BAKE_BPS || 3.5e6),

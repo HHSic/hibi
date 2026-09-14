@@ -163,7 +163,7 @@ function resolveEnter(id) {
   if (DISABLED_ENTER.has(id)) return 'fade';
   if (id !== 'random') return id;
   // 고양이 종류(renderer/anim/clip.js CLIPS)도 다 넣는다 — 영상 파일이 없으면 화면 쪽이 조용히 비워 둔다
-  const pool = ['cat', 'cat-loaf', 'cat-lie', 'cat-roll', 'cat-meow', 'blinds', ...store.enterCustom.map((x) => `my:${x.id}`)];
+  const pool = ['cat', 'cat-loaf', 'cat-lie', 'cat-roll', 'cat-meow', 'cat-rb', 'blinds', ...store.enterCustom.map((x) => `my:${x.id}`)];
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
