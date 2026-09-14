@@ -1,12 +1,13 @@
-// 고양이 연출(누끼 딴 실제 촬영 영상, renderer/anim/clip.js + assets/enter/cat.webm)이 약속을 지키는가.
+// 고양이 연출(누끼 딴 실제 촬영 영상, renderer/anim/clip.js + assets/enter/*.webm)이 약속을 지키는가.
 //
-// 영상은 눈으로 다듬었다(프레임을 뽑아 테두리·이음새를 봤다). 다음에 누가 다시 굽거나 고쳐도
-// 조용히 망가뜨리지 못하게, 잴 수 있는 것들을 여기 못 박는다:
+// 영상은 눈으로 다듬었다(프레임을 뽑아 테두리·이음새를 봤다). 다음에 누가 다시 굽거나 새 고양이를
+// 넣어도 조용히 망가뜨리지 못하게, clip.js 의 CLIPS 에 적힌 영상마다 잴 수 있는 것들을 못 박는다:
 //   · 파일이 VP9 + 알파이고, 길이가 적혀 있고, 프레임이 빠짐없이 고르게 들어 있다
 //   · 배경은 정말 투명하고(윗줄·양옆), 몸은 불투명하다
 //   · 끝에서 처음으로 넘어가는 이음새가 옆 프레임끼리의 차이만큼만 튄다 — 되풀이가 안 보인다
 //   · loop 재생이 실제로 처음으로 돌아간다
-//   · 어떤 화면 크기에서도 글 자리를 안 덮고 화면 밖으로 안 나간다
+//   · 구석 자리는 어떤 화면 크기에서도 글 자리를 안 덮고 화면 밖으로 안 나간다
+//     (주인공 자리는 test/herolayout.test.js 가 진짜 휴식 창으로 잰다)
 //   · enter.js 가 영상으로 띄우고, 영상이 안 열리면 옛 그림 없이 조용히 걷는다
 // 이 시험은 앱을 띄우지 않는다 — 보이지 않는 창 하나에 clip.js 와 enter.js 만 싣는다.
 const path = require('path');
@@ -15,11 +16,13 @@ const os = require('os');
 const { app, BrowserWindow } = require('electron');
 
 process.on('uncaughtException', (e) => { console.error('LAB 터짐:', (e && e.stack) || e); process.exit(1); });
-setTimeout(() => { console.error('LAB 시간 초과'); process.exit(1); }, 150_000).unref();
+setTimeout(() => { console.error('LAB 시간 초과'); process.exit(1); }, 300_000).unref();
 
 const ROOT = path.join(__dirname, '..');
+const RENDERER = path.join(ROOT, 'renderer');
 const URL_OF = (p) => 'file:///' + p.split(path.sep).join('/');
-const FILE = path.join(ROOT, 'assets', 'enter', 'cat.webm');
+// 설치 파일이 이만큼씩 커진다 — 휴식 연출 하나에 넉넉히 준 몫
+const MAX_MB = 6;
 
 let bad = 0;
 const ok = (c, m, x) => {
@@ -64,38 +67,15 @@ function scanWebm(buf) {
 }
 
 app.whenReady().then(async () => {
-  console.log('\n[파일]');
-  const exists = fs.existsSync(FILE);
-  ok(exists, 'assets/enter/cat.webm 이 있다');
-  if (!exists) { app.exit(1); return; }
-  const buf = fs.readFileSync(FILE);
-  const mb = buf.length / 1048576;
-  // 설치 파일이 이만큼 커진다 — 휴식 연출 하나에 넉넉히 준 몫
-  ok(mb <= 6, '크기 6MB 이하', +mb.toFixed(2));
-  const s = scanWebm(buf);
-  const ms = s.tcScale / 1e6;
-  const steps = [];
-  const ts = s.times.slice().sort((a, b) => a - b);
-  for (let i = 1; i < ts.length; i++) steps.push((ts[i] - ts[i - 1]) * ms);
-  const durMs = s.duration != null ? s.duration * ms : null;
-  console.log('  ', JSON.stringify({ codec: s.codec, alphaMode: s.alphaMode, w: s.w, h: s.h, frames: ts.length, durMs,
-    stepMin: Math.min(...steps), stepMax: Math.max(...steps) }));
-  ok(s.codec === 'V_VP9', 'VP9 로 구웠다', s.codec);
-  ok(s.alphaMode === 1, '알파(투명) 트랙이 있다', s.alphaMode);
-  ok(durMs != null && durMs > 5000, '길이(Duration)가 적혀 있다 — 없으면 되풀이 재생이 흔들린다', durMs);
-  ok(durMs != null && Math.abs(ts.length - durMs / (1000 / 30)) <= 2, '프레임 수가 길이×30 과 맞다 (빠진 프레임 없음)', { frames: ts.length, durMs });
-  ok(steps.length > 0 && Math.max(...steps) <= 50, '프레임 사이가 고르다 (50ms 넘게 빈 곳 없음)', Math.max(...steps));
-
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'catclip-'));
   const page = path.join(dir, 'page.html');
-  // base 를 renderer/ 로 — clip.js 의 '../assets/enter/cat.webm' 이 휴식 창에서와 똑같이 풀린다
-  fs.writeFileSync(page, `<!doctype html><meta charset="utf-8"><base href="${URL_OF(path.join(ROOT, 'renderer'))}/">
+  // base 를 renderer/ 로 — clip.js 의 '../assets/enter/…' 주소가 휴식 창에서와 똑같이 풀린다
+  fs.writeFileSync(page, `<!doctype html><meta charset="utf-8"><base href="${URL_OF(RENDERER)}/">
 <body style="margin:0"><div id="curtain" class="curtain" style="position:fixed;inset:0"></div>
 <script src="anim/clip.js"></script>
 <script src="enter.js"></script>
 </body>`);
-  const win = new BrowserWindow({ show: false, width: 1280, height: 720,
-    webPreferences: { backgroundThrottling: false } });
+  const win = new BrowserWindow({ show: false, width: 1280, height: 720, webPreferences: { backgroundThrottling: false } });
   const errs = [];
   win.webContents.on('console-message', (...a) => {
     const d = typeof a[0] === 'object' && a[0] && 'message' in a[0] ? a[0] : null;
@@ -107,95 +87,156 @@ app.whenReady().then(async () => {
   await win.loadFile(page);
   const js = (code) => win.webContents.executeJavaScript(code);
 
-  console.log('\n[영상]');
-  const v = await js(`(async () => {
-    const clip = window.nunsClip.CLIPS.cat;
-    const v = document.createElement('video');
-    v.muted = true; v.preload = 'auto'; v.src = new URL(clip.url, document.baseURI).href;
-    await new Promise((res, rej) => { v.onloadeddata = res; v.onerror = () => rej(new Error('영상을 못 열었다')); });
-    const W = v.videoWidth, H = v.videoHeight, D = v.duration, FPS = 30;
-    const c = document.createElement('canvas'); c.width = W; c.height = H;
-    const x = c.getContext('2d', { willReadFrequently: true });
-    const seek = (t) => new Promise((res) => { v.onseeked = res; v.currentTime = t; });
-    const grab = async (t) => { await seek(t); x.clearRect(0, 0, W, H); x.drawImage(v, 0, 0); return x.getImageData(0, 0, W, H).data; };
-    const out = { W, H, D, dims: [clip.width, clip.height], shots: [] };
-    for (const t of [0.2, D / 2, D - 0.2]) {
-      const d = await grab(t);
-      let clear = 0, n = 0, top = 0, side = 0, body = 0, bn = 0;
-      for (let i = 3; i < d.length; i += 4 * 7) { n++; if (d[i] < 10) clear++; }
-      for (let xx = 0; xx < W; xx++) top = Math.max(top, d[xx * 4 + 3]);
-      for (let yy = 0; yy < H * 0.5; yy++) side = Math.max(side, d[yy * W * 4 + 3], d[(yy * W + W - 1) * 4 + 3]);
-      for (let yy = Math.floor(H * 0.75); yy < H * 0.95; yy += 3) {
-        for (let xx = Math.floor(W * 0.4); xx < W * 0.6; xx += 3) { bn++; if (d[(yy * W + xx) * 4 + 3] > 245) body++; }
+  const clips = await js(`Object.entries(window.nunsClip.CLIPS).map(([id, c]) => ({ id, url: c.url, width: c.width, height: c.height, fps: c.fps || 30, mode: (c.place && c.place.mode) || 'corner', arrivalMs: c.arrivalMs }))`);
+  ok(clips.length > 0, 'clip.js 에 영상이 적혀 있다', clips.map((c) => c.id));
+
+  for (const clip of clips) {
+    const tag = clip.id;
+    console.log(`\n[${tag} — 파일]`);
+    const file = path.resolve(RENDERER, clip.url);
+    const exists = fs.existsSync(file);
+    ok(exists, `${tag}: ${path.relative(ROOT, file)} 이 있다`);
+    if (!exists) continue;
+    const buf = fs.readFileSync(file);
+    const mb = buf.length / 1048576;
+    ok(mb <= MAX_MB, `${tag}: 크기 ${MAX_MB}MB 이하`, +mb.toFixed(2));
+    const s = scanWebm(buf);
+    const unit = s.tcScale / 1e6;
+    const ts = s.times.slice().sort((a, b) => a - b);
+    const steps = [];
+    for (let i = 1; i < ts.length; i++) steps.push((ts[i] - ts[i - 1]) * unit);
+    const durMs = s.duration != null ? s.duration * unit : null;
+    console.log('  ', JSON.stringify({ codec: s.codec, alphaMode: s.alphaMode, w: s.w, h: s.h, frames: ts.length, durMs,
+      stepMin: Math.min(...steps), stepMax: Math.max(...steps) }));
+    ok(s.codec === 'V_VP9', `${tag}: VP9 로 구웠다`, s.codec);
+    ok(s.alphaMode === 1, `${tag}: 알파(투명) 트랙이 있다`, s.alphaMode);
+    ok(durMs != null && durMs > 2000, `${tag}: 길이(Duration)가 적혀 있다 — 없으면 되풀이 재생이 흔들린다`, durMs);
+    ok(durMs != null && Math.abs(ts.length - durMs / (1000 / clip.fps)) <= 2, `${tag}: 프레임 수가 길이×${clip.fps} 과 맞다 (빠진 프레임 없음)`, { frames: ts.length, durMs, fps: clip.fps });
+    ok(steps.length > 0 && Math.max(...steps) <= (1000 / clip.fps) * 1.5, `${tag}: 프레임 사이가 고르다 (한 프레임의 1.5배 넘게 빈 곳 없음)`, Math.max(...steps));
+
+    console.log(`\n[${tag} — 영상]`);
+    const v = await js(`(async () => {
+      const clip = window.nunsClip.CLIPS[${JSON.stringify(tag)}];
+      const v = document.createElement('video');
+      v.muted = true; v.preload = 'auto'; v.src = new URL(clip.url, document.baseURI).href;
+      await new Promise((res, rej) => { v.onloadeddata = res; v.onerror = () => rej(new Error('영상을 못 열었다')); });
+      const W = v.videoWidth, H = v.videoHeight, D = v.duration, FPS = ${clip.fps};
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const x = c.getContext('2d', { willReadFrequently: true });
+      const seek = (t) => new Promise((res) => { v.onseeked = res; v.currentTime = t; });
+      const grab = async (t) => { await seek(t); x.clearRect(0, 0, W, H); x.drawImage(v, 0, 0); return x.getImageData(0, 0, W, H).data; };
+      const out = { W, H, D, shots: [] };
+      for (const t of [0.2, D / 2, D - 0.2]) {
+        const d = await grab(t);
+        let clear = 0, n = 0, top = 0, side = 0, seen = 0, solid = 0;
+        for (let i = 3; i < d.length; i += 4 * 7) { n++; if (d[i] < 10) clear++; if (d[i] > 16) { seen++; if (d[i] > 240) solid++; } }
+        for (let xx = 0; xx < W; xx++) top = Math.max(top, d[xx * 4 + 3]);
+        for (let yy = 0; yy < H * 0.5; yy++) side = Math.max(side, d[yy * W * 4 + 3], d[(yy * W + W - 1) * 4 + 3]);
+        out.shots.push({ t: +t.toFixed(2), clear: +(clear / n).toFixed(3), top, side, body: +(solid / Math.max(1, seen)).toFixed(3) });
       }
-      out.shots.push({ t: +t.toFixed(2), clear: +(clear / n).toFixed(3), top, side, body: +(body / bn).toFixed(3) });
+      const N = Math.round(D * FPS);
+      const dif = (a, b) => { let sum = 0, k = 0; for (let i = 0; i < a.length; i += 4 * 5) { for (let ch = 0; ch < 4; ch++) sum += Math.abs(a[i + ch] - b[i + ch]); k += 4; } return sum / k; };
+      out.adj = [];
+      for (const n of [30, Math.floor(N * 0.35), Math.floor(N * 0.65), N - 30]) out.adj.push(+dif(await grab((n + 0.5) / FPS), await grab((n + 1.5) / FPS)).toFixed(2));
+      out.seam = +dif(await grab((N - 0.5) / FPS), await grab(0.5 / FPS)).toFixed(2);
+      // 되풀이 프레임 — 25fps 를 30fps 로 늘린 원본은 6장마다 같은 장이 끼어 1초에 5번 멈칫한다.
+      // 연속 60장을 작게 풀어 바로 앞 장과 거의 같은 장을 찾고, 그 자리가 6장 간격으로 몰렸는지 본다
+      // (가만히 있는 순간·핑퐁이 돌아서는 곳에서도 같은 장은 생기지만 간격이 규칙적이지 않다)
+      {
+        const sc = document.createElement('canvas'); sc.width = 160; sc.height = Math.max(1, Math.round(160 * H / W));
+        const sx = sc.getContext('2d', { willReadFrequently: true });
+        const M = Math.min(60, N - 1);
+        const diffs = [];
+        let prev = null;
+        for (let n = 0; n <= M; n++) {
+          await seek((n + 0.5) / FPS);
+          sx.clearRect(0, 0, sc.width, sc.height); sx.drawImage(v, 0, 0, sc.width, sc.height);
+          const cur = sx.getImageData(0, 0, sc.width, sc.height).data;
+          if (prev) diffs.push(dif(prev, cur));
+          prev = cur;
+        }
+        const med = diffs.slice().sort((a, b) => a - b)[Math.floor(diffs.length / 2)];
+        const dups = [];
+        diffs.forEach((d, i) => { if (d < med * 0.15) dups.push(i + 1); });
+        const byMod = [0, 0, 0, 0, 0, 0];
+        for (const i of dups) byMod[i % 6]++;
+        out.dups = { count: dups.length, byMod, median: +med.toFixed(3) };
+      }
+      v.loop = true;
+      await seek(Math.max(0, D - 0.4));
+      out.wraps = await new Promise((res) => {
+        const to = setTimeout(() => res(false), 4000);
+        v.ontimeupdate = () => { if (v.currentTime < 0.5) { clearTimeout(to); res(true); } };
+        v.play().catch((e) => { clearTimeout(to); res('play: ' + e.message); });
+      });
+      v.pause();
+      return out;
+    })()`).catch((e) => ({ err: e.message }));
+    console.log('  ', JSON.stringify(v));
+    if (v.err) {
+      ok(false, `${tag}: 영상을 연다`, v.err);
+    } else {
+      ok(v.W === clip.width && v.H === clip.height, `${tag}: clip.js 에 적은 크기와 영상 크기가 같다`, { video: [v.W, v.H], clipJs: [clip.width, clip.height] });
+      ok(v.shots.every((q) => q.top <= 16 && q.side <= 16), `${tag}: 윗줄·양옆은 투명하다 (배경이 남지 않았다)`, v.shots.map((q) => [q.top, q.side]));
+      ok(v.shots.every((q) => q.clear >= 0.2 && q.clear <= 0.8), `${tag}: 투명한 곳이 적당하다 (통째 네모도, 빈 영상도 아니다)`, v.shots.map((q) => q.clear));
+      // 앉았든 누웠든 — 보이는 점(알파 16 초과) 가운데 꽉 찬 점(240 초과)이 대부분이어야 한다. 누끼가 뭉개져 몸이 비치면 여기서 떨어진다
+      ok(v.shots.every((q) => q.body >= 0.7), `${tag}: 몸은 비치지 않는다 (보이는 점의 70% 이상이 꽉 참)`, v.shots.map((q) => q.body));
+      ok(v.seam <= Math.max(...v.adj) * 2.5 + 1, `${tag}: 끝→처음 이음새가 옆 프레임 차이만큼만 튄다`, { seam: v.seam, adj: v.adj });
+      ok(v.wraps === true, `${tag}: loop 재생이 처음으로 돌아간다`, v.wraps);
+      ok(!(v.dups.count >= 6 && Math.max(...v.dups.byMod) >= v.dups.count * 0.8), `${tag}: 6장마다 같은 프레임이 끼어 있지 않다 (멈칫거림)`, v.dups);
     }
-    const N = Math.round(D * FPS);
-    const dif = (a, b) => { let sum = 0, k = 0; for (let i = 0; i < a.length; i += 4 * 5) { for (let ch = 0; ch < 4; ch++) sum += Math.abs(a[i + ch] - b[i + ch]); k += 4; } return sum / k; };
-    out.adj = [];
-    for (const n of [30, 120, 210, N - 30]) out.adj.push(+dif(await grab((n + 0.5) / FPS), await grab((n + 1.5) / FPS)).toFixed(2));
-    out.seam = +dif(await grab((N - 0.5) / FPS), await grab(0.5 / FPS)).toFixed(2);
-    v.loop = true;
-    await seek(Math.max(0, D - 0.4));
-    out.wraps = await new Promise((res) => {
-      const to = setTimeout(() => res(false), 4000);
-      v.ontimeupdate = () => { if (v.currentTime < 0.5) { clearTimeout(to); res(true); } };
-      v.play().catch((e) => { clearTimeout(to); res('play: ' + e.message); });
-    });
-    v.pause();
-    return out;
-  })()`).catch((e) => ({ err: e.message }));
-  console.log('  ', JSON.stringify(v));
-  if (v.err) {
-    ok(false, '영상을 연다', v.err);
-  } else {
-    ok(v.W === v.dims[0] && v.H === v.dims[1], 'clip.js 에 적은 크기와 영상 크기가 같다', { video: [v.W, v.H], clipJs: v.dims });
-    ok(v.shots.every((q) => q.top <= 16 && q.side <= 16), '윗줄·양옆은 투명하다 (배경이 남지 않았다)', v.shots.map((q) => [q.top, q.side]));
-    ok(v.shots.every((q) => q.clear >= 0.2 && q.clear <= 0.8), '투명한 곳이 적당하다 (통째 네모도, 빈 영상도 아니다)', v.shots.map((q) => q.clear));
-    ok(v.shots.every((q) => q.body >= 0.9), '앉은 몸(아래 가운데)은 불투명하다', v.shots.map((q) => q.body));
-    const adjMax = Math.max(...v.adj);
-    ok(v.seam <= adjMax * 2.5 + 1, '끝→처음 이음새가 옆 프레임 차이만큼만 튄다', { seam: v.seam, adj: v.adj });
-    ok(v.wraps === true, 'loop 재생이 처음으로 돌아간다', v.wraps);
+
+    if (clip.mode === 'corner') {
+      console.log(`\n[${tag} — 자리]`);
+      const lay = await js(`(() => {
+        const { layout, CLIPS } = window.nunsClip;
+        const c = CLIPS[${JSON.stringify(tag)}];
+        const sizes = [[1920, 1080], [1366, 768], [1280, 720], [1280, 1024], [1440, 900], [1536, 864], [2560, 1440], [3840, 2160], [3440, 1440], [1920, 1920], [1080, 1920], [768, 1366], [720, 1280], [320, 180]];
+        return sizes.map(([w, h]) => {
+          const b = layout(w, h, c);
+          const hit = b.x < w * 0.59 && b.x + b.w > w * 0.41 && b.y < h * 0.62 && b.y + b.h > h * 0.30;
+          // 단추 줄 — 가운데 아래, 폭 ±180px·높이 95px (실제 세 단추 «다 했어요 (0/7)»·«5분 뒤에»·«건너뛰기» + 여백)
+          const btn = w >= 600 && b.x < w / 2 + 180 && b.x + b.w > w / 2 - 180 && b.y + b.h > h - 95;
+          const inside = b.x >= -0.5 && b.y >= -0.5 && b.x + b.w <= w + 0.5 && b.y + b.h <= h + 0.5;
+          return { size: w + 'x' + h, hit, btn, inside, big: +Math.max(b.h / Math.min(w, h), b.w / w).toFixed(3),
+            aspect: Math.abs(b.w / b.h - c.width / c.height) < 0.01 };
+        });
+      })()`);
+      ok(lay.every((q) => !q.hit), `${tag}: 어떤 화면 크기에서도 글 자리(가로 41~59%·세로 30~62%)를 안 덮는다`, lay.filter((q) => q.hit));
+      ok(lay.every((q) => !q.btn), `${tag}: 가운데 아래 단추 줄을 가리지 않는다 (옆으로 긴 아기 고양이가 단추 뒤에 깔렸다)`, lay.filter((q) => q.btn));
+      ok(lay.every((q) => q.inside), `${tag}: 화면 밖으로 안 나간다`, lay.filter((q) => !q.inside));
+      ok(lay.every((q) => q.aspect), `${tag}: 영상 비율을 지킨다 (찌그러지지 않는다)`, lay.filter((q) => !q.aspect));
+      ok(lay.every((q) => q.big >= 0.3), `${tag}: 짧은 변의 30% 이상 높이나 화면 폭의 30% 이상 폭으로 보인다`, lay.map((q) => q.big));
+    }
+
+    console.log(`\n[${tag} — enter.js]`);
+    const e1 = await js(`(async () => {
+      const host = document.getElementById('curtain');
+      host.textContent = '';
+      document.documentElement.classList.remove('ent-hero');
+      const E = window.nunsEnter;
+      const id = ${JSON.stringify(tag)};
+      const ms = await E.play(id, host, null, 20);
+      const v = host.querySelector('video.ent-clip');
+      const loaded = v ? await new Promise((res) => {
+        if (v.readyState >= 2) { res(true); return; }
+        v.addEventListener('loadeddata', () => res(true), { once: true });
+        setTimeout(() => res(false), 5000);
+      }) : false;
+      await new Promise((r) => setTimeout(r, 50));
+      return { ms, cover: E.coverMs(id), cls: host.className, video: host.querySelectorAll('video').length, loaded,
+        vcls: v ? v.className : null, svg: !!host.querySelector('svg'), canvas: !!host.querySelector('canvas'),
+        scene: !!E.sceneFor(id), clip: !!E.clipFor(id), inList: E.LIST.some((m) => m.id === id),
+        hero: document.documentElement.classList.contains('ent-hero') };
+    })()`);
+    ok(e1.cls === 'curtain on ent-clip-on' && e1.video === 1 && !e1.svg && !e1.canvas, `${tag}: 영상 하나로 띄운다 (옛 SVG·캔버스 없음)`, e1);
+    ok(e1.loaded && /\bin\b/.test(e1.vcls || ''), `${tag}: 첫 프레임이 준비되면 나타난다`, e1.vcls);
+    ok(e1.ms === clip.arrivalMs + 260 && e1.cover === e1.ms, `${tag}: 휴식 내용은 도착+잠깐 뒤에 뜬다`, { ms: e1.ms, arrivalMs: clip.arrivalMs });
+    ok(e1.clip && !e1.scene && e1.inList, `${tag}: 고르는 목록에 있고, 캔버스 장면이 아니라 영상으로 잡힌다`, e1);
+    ok(e1.hero === (clip.mode === 'hero'), `${tag}: 주인공 자리일 때만 html.ent-hero 가 붙는다`, { hero: e1.hero, mode: clip.mode });
   }
 
-  console.log('\n[자리]');
-  const lay = await js(`(() => {
-    const { layout, CLIPS } = window.nunsClip;
-    const sizes = [[1920, 1080], [1366, 768], [1280, 1024], [2560, 1440], [3840, 2160], [3440, 1440], [1080, 1920], [768, 1366], [320, 180]];
-    return sizes.map(([w, h]) => {
-      const b = layout(w, h, CLIPS.cat);
-      const hit = b.x < w * 0.59 && b.x + b.w > w * 0.41 && b.y < h * 0.62 && b.y + b.h > h * 0.30;
-      const inside = b.x >= -0.5 && b.y >= -0.5 && b.x + b.w <= w + 0.5 && b.y + b.h <= h + 0.5;
-      return { size: w + 'x' + h, hit, inside, big: +(b.h / Math.min(w, h)).toFixed(3),
-        aspect: Math.abs(b.w / b.h - CLIPS.cat.width / CLIPS.cat.height) < 0.01 };
-    });
-  })()`);
-  ok(lay.every((q) => !q.hit), '어떤 화면 크기에서도 글 자리(가로 41~59%·세로 30~62%)를 안 덮는다', lay.filter((q) => q.hit));
-  ok(lay.every((q) => q.inside), '화면 밖으로 안 나간다', lay.filter((q) => !q.inside));
-  ok(lay.every((q) => q.aspect), '영상 비율을 지킨다 (찌그러지지 않는다)', lay.filter((q) => !q.aspect));
-  ok(lay.every((q) => q.big >= 0.3), '짧은 변의 30% 이상 크기로 보인다', lay.map((q) => q.big));
-
-  console.log('\n[enter.js]');
-  const e1 = await js(`(async () => {
-    const host = document.getElementById('curtain');
-    const E = window.nunsEnter;
-    const ms = await E.play('cat', host, null, 20);
-    const v = host.querySelector('video.ent-clip');
-    const loaded = v ? await new Promise((res) => {
-      if (v.readyState >= 2) { res(true); return; }
-      v.addEventListener('loadeddata', () => res(true), { once: true });
-      setTimeout(() => res(false), 5000);
-    }) : false;
-    await new Promise((r) => setTimeout(r, 50));
-    return { ms, cover: E.coverMs('cat'), cls: host.className, video: host.querySelectorAll('video').length, loaded,
-      vcls: v ? v.className : null, svg: !!host.querySelector('svg'), canvas: !!host.querySelector('canvas'),
-      scene: !!E.sceneFor('cat'), clip: !!E.clipFor('cat'), inList: E.LIST.some((m) => m.id === 'cat') };
-  })()`);
-  ok(e1.cls === 'curtain on ent-clip-on' && e1.video === 1 && !e1.svg && !e1.canvas, '«고양이»는 영상 하나로 띄운다 (옛 SVG·캔버스 없음)', e1);
-  ok(e1.loaded && /\bin\b/.test(e1.vcls || ''), '첫 프레임이 준비되면 나타난다', e1.vcls);
-  ok(e1.ms === 700 + 260 && e1.cover === e1.ms, '휴식 내용은 도착(0.7초)+잠깐 뒤에 뜬다', e1.ms);
-  ok(e1.clip && !e1.scene && e1.inList, '고르는 목록에 있고, 캔버스 장면이 아니라 영상으로 잡힌다', e1);
-
+  console.log('\n[영상이 안 열리면]');
   const e2 = await js(`(async () => {
     const host = document.getElementById('curtain');
     host.textContent = '';

@@ -29,7 +29,7 @@ app.whenReady().then(async () => {
     '기본 연출들 끝에 «＋ 내 파일»', st.names);
   ok(st.on.length === 1 && st.on[0] === '기본', '지금 고른 것이 하나만 켜져 있다', st.on);
   // 골라보기
-  await wc.executeJavaScript(`[...document.querySelectorAll('#enter-pick .mini')].find(b=>b.textContent==='고양이').click()`);
+  await wc.executeJavaScript(`[...document.querySelectorAll('#enter-pick .mini')].find(b=>b.textContent==='앉은 고양이').click()`);
   await sleep(600);
   ok(store.settings.overlayEnter === 'cat', '고르면 저장된다', store.settings.overlayEnter);
   const h2 = await wc.executeJavaScript(`document.getElementById('enter-hint').textContent`);

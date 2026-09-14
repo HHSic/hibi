@@ -266,8 +266,8 @@ app.whenReady().then(async () => {
     ok(!!p3, '보여 줄 것이 없는 연출이면 미리보기를 걷는다', p3);
 
     // 다시 고양이로 — 영상이 쌓이면 안 보이는 쪽이 디코더를 붙잡고 계속 돈다
-    ok(await clickChip('고양이'), '«고양이»를 다시 누를 수 있다');
-    await clickChip('고양이');
+    ok(await clickChip('앉은 고양이'), '«고양이»를 다시 누를 수 있다');
+    await clickChip('앉은 고양이');
     const p2 = await until(async () => {
       const p = await swc.executeJavaScript(prev);
       return p && p.videos >= 1 && p.ready >= 2 ? p : null;

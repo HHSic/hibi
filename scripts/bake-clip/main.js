@@ -3,6 +3,14 @@
 //
 //   BAKE_SRC=원본.mp4 BAKE_DIR=작업폴더 BAKE_OUT=assets/enter/cat.webm npx electron scripts/bake-clip/main.js
 //   BAKE_MODE=tune BAKE_KEYS='[{"choke":2},{"choke":3}]' … 로 키 값 여럿을 한 장씩 비교해 볼 수 있다
+//   BAKE_FPS=25        구울 초당 프레임 (기본 30) — 원본의 진짜 초당 프레임과 같게
+//   BAKE_SRCFPS=30 BAKE_DROP=3/6  원본 컨테이너가 30fps 인데 25fps 를 늘려 6장마다 3번째를 되풀이했을 때 그 장을 뺀다
+//   BAKE_RANGE=0.4,6.5 원본에서 이 구간(초)만 쓴다 — 고양이가 일어나 걸어 나가는 영상에서 자세가 유지되는 곳만
+//   BAKE_ROI=0,40,1850,1080  원본에서 이 사각형(px) 밖은 버린다 — 검은 천의 밝은 주름이 몸과 붙어 잡힐 때
+//   BAKE_FLIP=1        좌우를 뒤집어 굽는다 (화면 끝에 잘린 몸을 휴식 창 오른쪽 끝에 붙이려고)
+//   BAKE_KEY='{"blackScreen":1,"low":0.1,"high":0.2}'  검은 바탕에서 찍은 영상 — 밝기로 가른다
+//   BAKE_KEY='{"despillAll":1}'  회색 털이 초록빛에 물든 영상 — 몸 안쪽까지 초록을 누른다
+//   BAKE_KEY='{"fadeBottom":0.12}'  아래 12% 를 서서히 투명하게 — 화면 아래 끝에 앉는 큰 고양이의 배 밑
 //
 // 원본: Pixabay 영상 116648 «Cat, Pet, Green Screen»의 1920x1080 파일
 //   (https://pixabay.com/videos/cat-pet-green-screen-green-nature-116648/). 원본은 저장소에 넣지 않는다.
@@ -36,6 +44,12 @@ const P = {
   mode: E.BAKE_MODE || 'bake',
   maxH: Number(E.BAKE_MAXH || 760),
   bps: Number(E.BAKE_BPS || 3.5e6),
+  fps: Number(E.BAKE_FPS || 30),
+  srcFps: E.BAKE_SRCFPS ? Number(E.BAKE_SRCFPS) : null,
+  drop: E.BAKE_DROP ? E.BAKE_DROP.split('/').map(Number) : null,
+  flip: E.BAKE_FLIP === '1',
+  range: E.BAKE_RANGE ? E.BAKE_RANGE.split(',').map(Number) : null,
+  roi: E.BAKE_ROI ? E.BAKE_ROI.split(',').map(Number) : null,
   kfi: Number(E.BAKE_KFI || 150),
   warm: Number(E.BAKE_WARM || 30),
   loop: E.BAKE_LOOP || 'auto',
@@ -202,7 +216,7 @@ app.whenReady().then(async () => {
     let from = vids.findIndex((b, i) => i >= P.warm && b.key && i + loopFrames <= vids.length);
     const fallback = from < 0;
     if (fallback) from = 0;
-    const out = remuxRange(raw, from, loopFrames, 1000 / 30);
+    const out = remuxRange(raw, from, loopFrames, 1000 / P.fps);
     fs.writeFileSync(OUT, out);
     console.log('  구움:', OUT, (out.length / 1048576).toFixed(2) + 'MB', JSON.stringify({ from, fallback, ...stats(out) }));
     e.sender.send('verify', { url: fileUrl(OUT), from, fallback });

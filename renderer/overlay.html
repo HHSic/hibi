@@ -81,6 +81,37 @@
     transition: opacity 0.6s ease, transform 0.7s cubic-bezier(0.2, 0.8, 0.2, 1);
   }
   .ent-clip.in { opacity: 1; transform: none; }
+  /* 큰 고양이(주인공)가 화면 가운데에 나올 때 — 휴식 안내·단추는 오른쪽 아래 구석으로 비켜 준다.
+     연출을 그리는 이 화면에서만 clip.js 가 html.ent-hero 를 붙인다 (다른 모니터는 가운데 그대로).
+     폭 min(460px, 32vw) 과 오른쪽 여백 24px 은 clip.js heroPanelWidth 와 같아야 한다 —
+     고양이가 그 칸을 피해 앉는다. */
+  html.ent-hero body { align-items: flex-end; justify-content: flex-end; }
+  /* 칸은 오른쪽 줄의 높이를 다 쓰고 내용만 아래로 붙인다. 칸 높이를 내용에 딱 맞추면
+     목록 줄이 올라오는 애니(translateY 18px)만으로도 «넘친다»고 재서 글자를 괜히 줄였다.
+     위 여백 72px 은 오른쪽 위 구석의 남은 시간(.breath)을 피하는 자리다.
+     아래 여백 24px — 내용이 아래에 붙어 있어서, 올라오기 전(translateY 18px) 줄이 칸 밑으로 삐져
+     «넘친다»고 재졌다. 그 18px 이 여백 안에 들어가게 둔다. */
+  html.ent-hero .stage {
+    flex: 1 1 auto; width: min(460px, 32vw); margin-right: 24px;
+    padding: 72px 4px 24px;
+    align-items: flex-end; text-align: right; justify-content: safe flex-end;
+  }
+  html.ent-hero .kicker { margin-bottom: 14px; }
+  html.ent-hero .list .item { min-width: 0; }
+  html.ent-hero .actions {
+    width: min(460px, 32vw); margin-right: 24px; padding: 12px 4px 34px;
+    justify-content: flex-end; flex-wrap: wrap;
+  }
+  /* 세로 화면은 옆에 비킬 자리가 없다 — 휴식 안내를 위로 올리고 고양이는 아래 절반에 앉는다 */
+  @media (orientation: portrait) {
+    html.ent-hero body { align-items: center; justify-content: flex-start; }
+    /* 위 38% 를 고정 칸으로 — 고양이는 아래 55% 에 앉으니 사이가 남는다 */
+    html.ent-hero .stage {
+      flex: 0 0 38vh; width: 100%; margin-right: 0; padding-top: 72px;
+      align-items: center; text-align: center; justify-content: safe center;
+    }
+    html.ent-hero .actions { width: 100%; margin-right: 0; justify-content: center; }
+  }
 
   /* 거미줄 — 줄이 날아와 붙고, 살이 뻗고, 실이 감긴다 */
   .ent-shot {

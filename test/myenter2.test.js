@@ -73,7 +73,9 @@ app.whenReady().then(async () => {
   // 페이로드를 직접 읽는다. 여기 담긴 enter 가 곧 그 휴식의 연출이다.
   store.setSettings({ overlayEnter: 'random' });
   const seen = new Set();
-  for (let n = 0; n < 12; n++) {
+  // 뽑는 후보가 고양이 다섯·블라인드·내 파일로 7개다 — 12번이면 내 파일이 한 번도 안 나올 확률이 16% 라
+  // 40번 뽑는다 (0.2%)
+  for (let n = 0; n < 40; n++) {
     ipcMain.emit('widget:break-now', {}, 'eye');
     // 화면 수만큼 다 뜨길 기다린다 — 하나만 보고 «같다»고 하면 검사가 아니다
     const want = screen.getAllDisplays().length;

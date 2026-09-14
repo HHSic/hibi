@@ -71,7 +71,12 @@ function isMine(id) { return typeof id === 'string' && id.startsWith('my:'); }
 const ALL = [
   { id: 'fade', name: '기본', hint: '조용히 밝아집니다' },
   { id: 'web', name: '웹스윙', hint: '가면 곡예사가 줄을 타고 날아와 거미줄을 치고 매달려 쉽니다' },
-  { id: 'cat', name: '고양이', hint: '진짜 고양이가 화면 구석에 앉아 함께 쉽니다' },
+  // 고양이는 종류별로 따로 고른다 («종류별로 따로 고르기» 요청). 'cat' 은 예전부터 저장돼 있던 id 라 그대로 둔다.
+  { id: 'cat', name: '앉은 고양이', hint: '진짜 고양이가 화면 구석에 앉아 함께 쉽니다' },
+  { id: 'cat-loaf', name: '큰 식빵 고양이', hint: '커다란 고양이가 가운데서 식빵을 굽고, 안내는 오른쪽 아래로 비켜 줍니다' },
+  { id: 'cat-lie', name: '엎드린 아기 고양이', hint: '아기 고양이가 구석에 엎드려 두리번거립니다' },
+  { id: 'cat-roll', name: '늘어진 아기 고양이', hint: '아기 고양이가 배를 드러내고 늘어져 뒹굽니다' },
+  { id: 'cat-meow', name: '야옹하는 아기 고양이', hint: '아기 고양이가 구석에 앉아 두리번거리다 가끔 야옹합니다' },
   { id: 'blinds', name: '블라인드', hint: '가로 띠가 내려와 배경이 됩니다' },
   { id: 'breathe', name: '호흡', hint: '숨 고르는 원이 계속 커졌다 작아집니다' },
   { id: 'tv', name: '브라운관', hint: '옛 TV처럼 켜져 배경이 됩니다' },
@@ -230,9 +235,10 @@ function play(id, host, asset, breakSec) {
     pick = opts[Math.floor(Math.random() * opts.length)];
   }
   const mine = isMine(pick) && asset && asset.url;
-  if (reduce || (!mine && !MAKERS[pick])) return Promise.resolve(0);
-
   const clip = mine ? null : clipFor(pick);
+  // 고양이 종류(cat-loaf 등)는 옛 그림(MAKERS)이 없고 영상만 있다 — 영상이 있으면 그걸로 띄운다
+  if (reduce || (!mine && !clip && !MAKERS[pick])) return Promise.resolve(0);
+
   const scene = mine || clip ? null : sceneFor(pick);
   const arrival = arrivalMs(pick, asset);
   host.textContent = '';
