@@ -1,0 +1,43 @@
+/*
+ * 유리 창이 같이 쓰는 색 이름 — 라이트 값은 여기 한 곳에서 정한다.
+ *
+ * 라이트 글자색은 알파 없이 불투명하다. 반투명 유리 위에 반투명 글자를 얹으면 대비가 두 번 깎인다
+ * (예전 rgba(60,60,67,.32) 는 흰 배경화면 위에서도 1.8:1 이었다).
+ * 값은 가장 나쁜 경우에 맞췄다 — 라이트 유리 바닥 0.90 + #111 배경화면에서, 유리 위와 옅은 채움(.06) 위 모두
+ * 글자 4.5:1 에 3% 이상 여유. 바닥은 src/win.js effScrim 이 지킨다.
+ *
+ * 각 페이지의 다크 :root (0,1,0) 는 그대로 두고 아래 :root[data-theme="light"] (0,2,0) 가 이긴다.
+ * 페이지의 라이트 블록은 이보다 뒤에 같은 우선순위로 오므로, 여기 있는 이름을 되풀이하면 이 값을 덮는다.
+ */
+
+/* 새로 생긴 이름의 기본값. 다크에서는 지금 모습과 같다 (--separator 만 예외 — 아래). 페이지 :root 가 뒤에 오므로 정의한 페이지는 그쪽이 이긴다. */
+:root {
+  --accent-fill: var(--accent);
+  --tint-ink: color-mix(in srgb, var(--tint, #5ecfb6) 86%, white);
+  --tint-fill: oklch(from var(--tint, #5ecfb6) 0.50 c h);
+  --quaternary: var(--tertiary);
+  --secondary-label: var(--secondary);   /* settings.html 이 정의 없이 쓰던 이름 */
+  --separator: var(--hairline);          /* widget.html 이 정의 없이 쓰던 이름 — 다크 위젯 메일 계정 줄(.macts)의 밑줄이 이제 그려진다 */
+}
+
+:root[data-theme="light"] {
+  --scrim: rgba(252, 252, 254, var(--scrim-a));  /* 바탕은 한 가지로 (예전엔 창마다 252/250/248) */
+  --label: rgba(0, 0, 0, 0.90);
+  --secondary: #434348;                          /* 예전 rgba(60,60,67,.62) */
+  --tertiary: #5a5a5f;                           /* 예전 rgba(60,60,67,.32~.40). #5c5c61 은 채움 위 여유가 2.6% 뿐이라 한 단계 진하게 */
+  --quaternary: rgba(60, 60, 67, 0.38);          /* 꺼짐·장식 전용 — 정보를 싣지 않는다 */
+  --fill: rgba(0, 0, 0, 0.06);
+  --fill-hi: rgba(0, 0, 0, 0.10);                /* 호버·누름 전용 — 계속 켜져 있는 선택은 --secondary 이상 글자로 */
+  --separator: rgba(60, 60, 67, 0.16);
+  --hairline: rgba(0, 0, 0, 0.12);               /* 예전 흰색 .60 은 흰 유리 위에서 안 보였다 */
+  --track: rgba(120, 120, 128, 0.32);
+  --accent: #00664e;       /* 글자·링크·체크·포커스 링 = oklch(from #23a58a 0.44 c h) */
+  --accent-fill: #007761;  /* 흰 글자를 얹는 채움 — 단추·선택된 칸·켜진 스위치·막대 (L .50) */
+  --danger: #a82424;
+  --sun: #a82424;
+  --up: #a82424;           /* 우리 관례: 오름 = 빨강 */
+  --dn: #1c58b1;           /* 내림 = 파랑. #1d5ab5 는 행 호버(.06) 위 여유가 1.8% 뿐이었다 */
+  --unread: #8b4a00;       /* #8f4c00 은 .prog 틴트 위 여유가 2.5% 뿐이었다 */
+  --tint-ink: oklch(from var(--tint, #5ecfb6) 0.44 c h);
+  --bar-idle: rgba(60, 60, 67, 0.60);
+}

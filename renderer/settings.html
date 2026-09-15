@@ -18,6 +18,10 @@
                font-src file:;
                img-src file: data: https:;
                media-src file: data:">
+<!-- 유리 창 공통 색 이름(라이트 값 포함)과 테마·유리 진하기 — 페이지 <style> 보다 먼저 와야
+     아래 :root 가 그 위에 설정 창 값만 얹는다 -->
+<link rel="stylesheet" href="tokens.css">
+<script src="theme.js"></script>
 <link rel="stylesheet" href="../assets/font/pretendard.css">
 <script src="icons.js"></script>
 <script src="sound.js"></script>
@@ -29,7 +33,8 @@
 <style>
   :root {
     --accent: #0a84ff;
-    --scrim-a: 0.80;
+    /* 주소에 값이 없을 때(시험용 창)의 기본. 실제 값은 theme.js 가 메인이 준 값으로 덮는다 */
+    --scrim-a: 0.96;
     --scrim: rgba(20, 20, 25, var(--scrim-a));
     --inset: 12px;
     --r: 20px;
@@ -42,17 +47,19 @@
     --track: rgba(255, 255, 255, 0.18);
     --veil: rgba(24, 24, 28, 0.94);
     --pad: 16px;
+    /* 쓰던 곳은 있는데 정의가 없던 이름 — 다크 모양은 지금 그대로 */
+    --danger: #ff8f8f;
+    --fill: rgba(255, 255, 255, 0.08);
   }
+  /* 라이트 글자·선 색은 tokens.css 가 정한다. 여기서 같은 이름을 다시 쓰면 그 값을 덮으니
+     설정 창만 다른 것만 둔다.
+     · 설정은 파랑을 지킨다 — 글자·링크는 #005ecb(판 위 4.8:1), 스위치·단추 채움은 #007aff.
+     · 판을 회색(242,242,247)으로, 묶음 카드를 거의 흰색으로 — 예전 흰 .62 카드는 흰 판과 구별이 안 됐다. */
   :root[data-theme="light"] {
-    --accent: #007aff;
-    --scrim: rgba(252, 252, 254, var(--scrim-a));
-    --label: rgba(0, 0, 0, 0.90);
-    --secondary: rgba(60, 60, 67, 0.62);
-    --tertiary: rgba(60, 60, 67, 0.34);
-    --separator: rgba(60, 60, 67, 0.13);
-    --group: rgba(255, 255, 255, 0.62);
-    --hairline: rgba(255, 255, 255, 0.60);
-    --track: rgba(120, 120, 128, 0.22);
+    --accent: #005ecb;
+    --accent-fill: #007aff;
+    --scrim: rgba(242, 242, 247, var(--scrim-a));
+    --group: rgba(255, 255, 255, 0.92);
     --veil: rgba(242, 242, 247, 0.94);
   }
 
@@ -127,6 +134,8 @@
   .nav .done svg { width: 13px; height: 13px; display: block; }
   .nav .done:hover { background: var(--group); color: var(--label); }
   .nav .done:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
+  /* 라이트에서 반투명 파랑 링은 흰 판 위 2.3:1 로 안 보인다 — 채움 파랑 그대로 (판 위 3.2:1) */
+  :root[data-theme="light"] .nav .done:focus-visible { box-shadow: 0 0 0 2px var(--accent-fill); }
 
   /* 탭 */
   .tabs {
@@ -141,7 +150,7 @@
     font-family: inherit; font-size: 12.5px; font-weight: 600;
     padding: 6px 0; border-radius: 7px; color: var(--secondary);
   }
-  .tabs button.on { background: color-mix(in srgb, var(--accent) 88%, black); color: #fff; }
+  .tabs button.on { background: color-mix(in srgb, var(--accent-fill) 88%, black); color: #fff; }
 
   .scroll { flex: 1; overflow-y: auto; padding: 0 var(--pad) var(--pad); }
   /* 스크롤바는 평소 숨기고 그 영역에 마우스를 올릴 때만 드러낸다 (앱 전체 공통) */
@@ -158,6 +167,8 @@
     box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.07);
     overflow: hidden;
   }
+  /* 흰 테두리는 흰 카드 위에서 사라진다 — 라이트는 옅은 회색 선으로 카드 가장자리를 잡는다 */
+  :root[data-theme="light"] .group { box-shadow: inset 0 0 0 0.5px rgba(60, 60, 67, 0.10); }
 
   /* 알림 종류 행 */
   /* 가운데 두 칸은 반드시 줄어들 수 있어야 한다.
@@ -177,6 +188,17 @@
     white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis;
   }
   .rem.off .g, .rem.off .nm { opacity: 0.45; }
+  /* 라이트는 글자를 흐리게(opacity) 하지 않고 한 단계 옅은 색으로 물린다 —
+     반투명 유리 위에서 opacity 는 대비를 한 번 더 깎아 아래 설명 줄이 1.5:1 까지 떨어졌다 */
+  :root[data-theme="light"] .rem.off .nm,
+  :root[data-theme="light"] .flcond.off { opacity: 1; color: var(--secondary); }
+  /* 알림 종류 색 — JS 가 원래 색을 --c 로 넘기고 칠은 여기서 한다.
+     style.color 로 박으면 테마 규칙이 못 이겨서, 라이트에서도 옅은 파스텔(흰 카드 위 1.5~2:1)이 그대로 남았다.
+     라이트는 같은 색상·채도에 밝기만 내린다 (oklch L .44). */
+  .g.tinted { color: var(--c); }
+  :root[data-theme="light"] .g.tinted { color: oklch(from var(--c) 0.44 c h); }
+  /* 메일 계정 연결 오류 — 회색 설명과 섞이지 않게 */
+  :root[data-theme="light"] .rem .val.bad { color: var(--danger); }
   /* 메일 계정 행 — 스위치 뒤에 삭제가 하나 더 붙는다 */
   /* 주소록·계정 줄은 왼쪽이 «고치는 칸»(이름)이고 가운데가 «읽는 값»(주소)이다.
      둘이 자리를 다투면 고치는 칸을 먼저 지킨다 — 주소는 …으로 줄어도 title로 볼 수 있지만,
@@ -198,15 +220,34 @@
     background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.3);
     transition: transform 0.18s;
   }
-  .sw.on { background: var(--rc, var(--accent)); }
+  .sw.on { background: var(--rc-ui, var(--accent-fill)); }
   .sw.on::after { transform: translateX(15px); }
   .sw:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent); }
+  /* 라이트의 꺼진 스위치 — 옅은 회색 막대에 흰 손잡이는 흰 카드 위에서 1.3:1 로 사라졌다.
+     테두리만 있는 막대에 회색 손잡이로 «꺼짐»을 그린다 (테두리 3.6:1, 손잡이 4.7:1). */
+  :root[data-theme="light"] .sw:not(.on) {
+    background: transparent;
+    box-shadow: inset 0 0 0 1px rgba(60, 60, 67, 0.62);
+  }
+  :root[data-theme="light"] .sw:not(.on)::after { background: rgba(60, 60, 67, 0.72); box-shadow: none; }
+  /* 켜진 스위치는 막대가 링과 같은 파랑이라(1.0:1, 알림 색 막대와도 1.4~1.6:1) 붙여 두르면 초점이 안 보인다.
+     outline-offset 으로 2px 떼어 두른다 — 틈은 비어 있어 카드 바탕이 그대로 비친다 (링은 카드 위 3.95:1, 판 위 3.18:1) */
+  :root[data-theme="light"] .sw.on:focus-visible { box-shadow: none; outline: 2px solid var(--accent-fill); outline-offset: 2px; }
+  :root[data-theme="light"] .sw:not(.on):focus-visible {
+    box-shadow: inset 0 0 0 1px rgba(60, 60, 67, 0.62), 0 0 0 2px var(--accent-fill);
+  }
+  /* 알림마다의 스위치·슬라이더 색. 다크는 그 알림 색 그대로, 라이트는 흰 손잡이를 얹을 만큼
+     어둡게 (oklch L .50 — 가장 옅은 종류도 카드 위 5.4:1, 흰 손잡이 5.5:1).
+     알림 밖의 스위치(일반·캘린더 탭)는 이 이름이 없어 --accent-fill 을 쓴다. */
+  .rem-wrap { --rc-ui: var(--rc); }
+  :root[data-theme="light"] .rem-wrap { --rc-ui: oklch(from var(--rc) 0.50 c h); }
 
   /* 펼침 상세 (주기·길이) */
   .detail { padding: 2px 13px 12px 50px; display: none; }
   .rem-wrap.open .detail { display: block; }
   .drow { display: grid; grid-template-columns: 44px 1fr 46px; align-items: center; gap: 10px; padding: 4px 0; }
-  .drow span:first-child { font-size: 11.5px; color: var(--secondary); }
+  /* 바로 아래 칸만 — 자손 전부로 걸면 시각 고르기 단추(pickfield) 안의 글자까지 작아지고 옅어졌다 */
+  .drow > span:first-child { font-size: 11.5px; color: var(--secondary); }
   .drow .out { font-size: 11.5px; color: var(--tertiary); text-align: right; font-variant-numeric: tabular-nums; }
   /* 손잡이 — accent-color만 주면 윈도우 기본 막대에 색만 입힌 모양이 된다.
      지나온 쪽만 색이 차도록 직접 그린다. --rc는 그 알림의 색이다. */
@@ -218,7 +259,7 @@
     height: 4px; border-radius: 2px;
     /* 채워진 길이는 --fill-pct로 들어온다 (settings.js가 값과 함께 맞춰준다) */
     background: linear-gradient(to right,
-      var(--rc, var(--accent)) var(--fill-pct, 0%), var(--track) var(--fill-pct, 0%));
+      var(--rc-ui, var(--accent-fill)) var(--fill-pct, 0%), var(--track) var(--fill-pct, 0%));
   }
   input[type=range]::-webkit-slider-thumb {
     -webkit-appearance: none; appearance: none;
@@ -227,7 +268,14 @@
   }
   input[type=range]:hover::-webkit-slider-thumb { transform: scale(1.12); }
   input[type=range]:focus-visible::-webkit-slider-thumb {
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--rc, var(--accent)) 35%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--rc-ui, var(--accent-fill)) 35%, transparent);
+  }
+  /* 흰 카드 위 흰 손잡이는 그림자만으로는 윤곽이 없다 — 회색 테두리를 두른다 */
+  :root[data-theme="light"] input[type=range]::-webkit-slider-thumb {
+    box-shadow: 0 0 0 1px rgba(60, 60, 67, 0.30), 0 1px 3px rgba(0, 0, 0, 0.30);
+  }
+  :root[data-theme="light"] input[type=range]:focus-visible::-webkit-slider-thumb {
+    box-shadow: 0 0 0 1px rgba(60, 60, 67, 0.30), 0 0 0 3px var(--rc-ui, var(--accent-fill));
   }
 
   .rem-wrap + .rem-wrap { box-shadow: inset 0 0.5px 0 var(--separator); }
@@ -237,9 +285,12 @@
     all: unset; cursor: default; display: block; width: 100%; text-align: center;
     margin-top: 8px; padding: 10px 0; border-radius: 11px;
     font-size: 12.5px; font-weight: 600; color: var(--accent);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-fill) 35%, transparent);
   }
-  .add-btn:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .add-btn:hover { background: color-mix(in srgb, var(--accent-fill) 12%, transparent); }
+  :root[data-theme="light"] .add-btn { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-fill) 60%, transparent); }
+  /* 라이트 판 위 파란 글자는 4.8:1 로 여유가 적다 — 파랗게 물들이면 4.2:1 로 떨어지니, 호버는 흰 카드처럼 밝힌다 */
+  :root[data-theme="light"] .add-btn:hover { background: var(--group); }
 
   /* 사용자 지정 알림 편집 */
   .cust-name {
@@ -247,7 +298,6 @@
     background: rgba(255,255,255,0.07); box-shadow: inset 0 0 0 0.5px var(--separator);
     border-radius: 8px; padding: 6px 10px; width: 100%; box-sizing: border-box;
   }
-  :root[data-theme="light"] .cust-name { background: rgba(0,0,0,0.05); }
   /* 서명 — 받는 사람이 볼 모습 그대로 보여준다. 메일은 흰 종이가 기본이다. */
   .sigbox {
     background: #fff; color: #1a1a1a;
@@ -256,7 +306,10 @@
     overflow: auto; outline: none;
     box-shadow: inset 0 0 0 0.5px var(--separator);
   }
-  .sigbox:empty::before { content: attr(data-ph); color: #9aa0a6; }
+  /* 흰 종이 위 안내 글 — 예전 #9aa0a6 은 2.6:1 이었다 (테마와 상관없이 종이는 늘 희다) */
+  .sigbox:empty::before { content: attr(data-ph); color: #6b7078; }
+  /* 라이트에서는 흰 종이가 흰 카드에 녹아든다 — 종이 가장자리를 선으로 */
+  :root[data-theme="light"] .sigbox { box-shadow: inset 0 0 0 1px rgba(60, 60, 67, 0.22); }
   .sigbox img { max-width: 100%; height: auto; }
   .sigbox table { border-collapse: collapse; }
   textarea.cust-name {
@@ -295,8 +348,10 @@
     padding: 5px 0; border-radius: 8px;
   }
   .emoji-grid button:hover { background: var(--fill); }
-  .emoji-grid button.on { background: color-mix(in srgb, var(--accent) 26%, transparent); box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--accent) 50%, transparent); }
-  .cust-del { all: unset; cursor: default; color: #ff8f8f; font-size: 12px; font-weight: 600; }
+  .emoji-grid button.on { background: color-mix(in srgb, var(--accent-fill) 26%, transparent); box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--accent-fill) 50%, transparent); }
+  /* 옅은 파랑 바탕만으로는 흰 카드 위에서 고른 칸이 안 보인다 — 채움 파랑 테두리 (3.9:1) */
+  :root[data-theme="light"] .emoji-grid button.on { box-shadow: inset 0 0 0 1.5px var(--accent-fill); }
+  .cust-del { all: unset; cursor: default; color: var(--danger); font-size: 12px; font-weight: 600; }
   .cust-del:hover { text-decoration: underline; }
   .drow.wide { grid-template-columns: 44px 1fr; }
   .drow.wide .lbl2 { font-size: 11.5px; color: var(--secondary); }
@@ -305,13 +360,17 @@
   .row { display: grid; grid-template-columns: 90px 1fr 52px; align-items: center; gap: 11px; padding: 10px 13px; }
   .row + .row { box-shadow: inset 0 0.5px 0 var(--separator); }
   .row .nm { font-size: 13.5px; }
-  .row .nm small { display: block; font-size: 11px; color: #ff8f8f; margin-top: 2px; }
+  .row .nm small { display: block; font-size: 11px; color: var(--danger); margin-top: 2px; }
   /* 설명은 이름 아래 줄로 — 같은 줄에 두면 슬라이더 칸을 눌러 찌그러진다 */
   .row .nm i { display: block; font-style: normal; font-size: 11px; color: var(--tertiary); margin-top: 2px; line-height: 1.4; }
   /* 설명이 붙은 슬라이더 행은 이름을 한 줄 전체로 쓰고 슬라이더를 아래에 둔다 */
   .row.wide { grid-template-columns: 1fr 52px; row-gap: 8px; }
   .row.wide .nm { grid-column: 1 / -1; }
   .row .out { font-size: 11.5px; color: var(--tertiary); text-align: right; font-variant-numeric: tabular-nums; }
+  /* 라이트는 유리가 90% 아래로 옅어지지 않아 값 옆에 «· 라이트 90%»가 붙는다 — 그 칸을 늘 넓혀 둔다.
+     값에 따라 넓어졌다 좁아지면 끄는 도중에 슬라이더 길이가 손 아래에서 바뀐다. */
+  :root[data-theme="light"] .row.glass-row { grid-template-columns: 90px 1fr 100px; }
+  .row.glass-row .out { white-space: nowrap; }
   .row.toggle { grid-template-columns: 1fr auto auto; }
   .row.toggle .sw { justify-self: end; }
 
@@ -328,14 +387,15 @@
     width: 52px; text-align: center; font-variant-numeric: tabular-nums;
     -moz-appearance: textfield;
   }
-  :root[data-theme="light"] .spin input[type=number] { background: rgba(0,0,0,0.05); }
   .spin input[type=number]::-webkit-outer-spin-button,
   .spin input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
   .spin input[type=number]:focus { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent); }
 
   /* 백업 진행 막대 */
   .bar { height: 4px; border-radius: 999px; background: var(--track); overflow: hidden; }
-  .bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.3s; }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--accent-fill); transition: width 0.3s; }
+  /* 라이트 --track(.32)은 스위치·슬라이더용이라 진하다 — 여기는 옅게 두어야 찬 쪽이 빈 쪽과 3:1 로 갈린다 */
+  :root[data-theme="light"] .bar { background: rgba(120, 120, 128, 0.18); }
   .path {
     font-size: 11px; color: var(--secondary); word-break: break-all; line-height: 1.5;
   }
@@ -347,6 +407,8 @@
   .col { padding: 10px 13px; display: flex; flex-direction: column; gap: 6px; }
   .col + .col, .row + .col, .col + .row { box-shadow: inset 0 0.5px 0 var(--separator); }
   .col .lbl { font-size: 11.5px; color: var(--tertiary); }
+  /* 설명은 이름 아래 줄로 (.row .nm i 와 같다) — 이어 붙이면 긴 기울임 글이 이름과 한 덩어리로 읽힌다 */
+  .col .lbl i { display: block; font-style: normal; font-size: 11px; color: var(--tertiary); margin-top: 2px; line-height: 1.4; }
   input[type=text] {
     all: unset;
     font-family: inherit; font-size: 12.5px; color: var(--label);
@@ -357,13 +419,29 @@
   }
   input[type=text]:focus { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent); }
   input[type=text]::placeholder { color: var(--tertiary); }
+  /* 라이트 입력칸 — 흰 카드 위 옅은 채움만으로는 칸 경계가 1.0~1.1:1 이라 «어디에 쓰는지» 안 보였다.
+     얇은 테두리에 밑줄을 조금 진하게 (밑줄 3.3:1). 초점은 채움 파랑 한 줄 (3.6:1). */
+  :root[data-theme="light"] .cust-name,
+  :root[data-theme="light"] .spin input[type=number],
+  :root[data-theme="light"] input[type=text] {
+    background: rgba(0, 0, 0, 0.035);
+    box-shadow: inset 0 0 0 1px rgba(60, 60, 67, 0.22), inset 0 -1px 0 rgba(60, 60, 67, 0.60);
+  }
+  :root[data-theme="light"] .cust-name:focus,
+  :root[data-theme="light"] .spin input[type=number]:focus,
+  :root[data-theme="light"] input[type=text]:focus { box-shadow: inset 0 0 0 1px var(--accent-fill); }
+  /* 고르기 단추(.cust-name 을 물려받는다)는 위 채움에 호버가 가려진다 */
+  :root[data-theme="light"] .pickfield:hover { background: var(--fill-hi); }
+  /* 기본 안내 글 색(짙은 회색)은 라이트 카드 위 2.3:1 — 글자 칸과 같은 색으로 */
+  :root[data-theme="light"] input[type=password]::placeholder,
+  :root[data-theme="light"] textarea::placeholder { color: var(--tertiary); }
 
   .col .hint { font-size: 11px; color: var(--tertiary); line-height: 1.5; }
   /* 연결 실패는 작은 회색 글씨로 두면 못 본다 */
   .msg { font-size: 12px; line-height: 1.5; display: none; border-radius: 8px; padding: 8px 10px; }
   .msg.show { display: block; }
-  .msg.bad { background: rgba(255, 90, 90, 0.14); color: #ff9a9a; }
-  .msg.good { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+  .msg.bad { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
+  .msg.good { background: color-mix(in srgb, var(--accent-fill) 16%, transparent); color: var(--accent); }
   .msg.wait { background: var(--group); color: var(--secondary); }
   .col .hint b { color: var(--secondary-label); font-weight: 600; }
   .helprow { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -372,8 +450,8 @@
     display: flex; align-items: center; gap: 10px;
     margin: 0 0 8px; padding: 10px 13px;
     border-radius: 10px;
-    background: color-mix(in srgb, var(--accent) 14%, transparent);
-    box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--accent) 40%, transparent);
+    background: color-mix(in srgb, var(--accent-fill) 14%, transparent);
+    box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--accent-fill) 40%, transparent);
   }
   .paste .ptxt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .paste .ptxt b { font-size: 12.5px; font-weight: 600; }
@@ -381,21 +459,28 @@
     font-size: 11px; color: var(--tertiary);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
+  /* 파랑 바탕 위라 한 단계 진한 글자로 */
+  :root[data-theme="light"] .paste .ptxt span { color: var(--secondary); }
   .upline { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .upline .ver { font-size: 12.5px; color: var(--label); }
   .mini {
     all: unset; cursor: default; flex: none;
     font-family: inherit; font-size: 11.5px; font-weight: 620;
-    color: #fff; background: color-mix(in srgb, var(--accent) 86%, black);
+    color: #fff; background: color-mix(in srgb, var(--accent-fill) 86%, black);
     padding: 6px 12px; border-radius: 999px;
   }
   .mini:hover { filter: brightness(1.12); }
+  /* 라이트에서 밝히면 파란 단추 위 흰 글자가 4.3:1 로 떨어진다 — 누를 곳은 살짝 어둡게 알린다 */
+  :root[data-theme="light"] .mini:hover { filter: brightness(0.92); }
   .mini[disabled] { opacity: 0.45; }
   /* 연결 확인이 끝나면 다음에 눌러야 할 버튼을 알려준다 */
   .mini.urge { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
+  /* 라이트: 파란 단추에 같은 파랑 링을 붙이면 1.3:1 로 묻힌다 — 스위치처럼 2px 틈을 두고 두른다 (카드 위 3.95:1) */
+  :root[data-theme="light"] .mini.urge { box-shadow: none; outline: 2px solid var(--accent-fill); outline-offset: 2px; }
   .mini.ghost { background: transparent; color: var(--accent); }
-  .mini.ghost:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
-  .mini.danger { color: #ff6b6b; }
+  .mini.ghost:hover { background: color-mix(in srgb, var(--accent-fill) 14%, transparent); }
+  /* 지우기 계열은 바탕 없이 빨간 글자로 쓴다 (ghost 와 같이). 파란 채움 위 빨강은 1.7~1.9:1 이었다 */
+  .mini.danger { color: var(--danger); }
   /* 넣은 파일 미리보기 — 바둑판 무늬로 깔아 «어디가 투명한지»를 보여준다 */
   .entprev {
     margin-top: 8px; width: 168px; height: 95px; border-radius: 8px; overflow: hidden;
@@ -415,8 +500,11 @@
     background: linear-gradient(135deg, #2a3140, #141820);
     box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.08);
   }
-  .mini.danger:hover { background: rgba(255, 107, 107, 0.14); }
-  .mini.armed { color: #fff; background: #e0453f; }
+  .mini.danger:hover { background: color-mix(in srgb, var(--danger) 14%, transparent); }
+  /* 흰 글자가 4.5:1 을 넘는 빨강 (예전 #e0453f 는 4.1:1).
+     :hover 까지 같이 — 두 번째로 누를 때는 마우스가 늘 위에 있는데, 위의 .mini.danger:hover 옅은 분홍이
+     이기면 흰 글자가 분홍 위에 남아 라이트에서 1.3:1 로 사라졌다. */
+  .mini.armed, .mini.armed:hover { color: #fff; background: #c9302c; }
   /* 요일 고르기 — 일곱 개가 한 줄에 들어가야 해서 «가나다» 알약보다 좁다 */
   .mini.day { padding: 5px 0; width: 26px; text-align: center; }
   /* 정해진 시각 줄 — 시·분 고르기와 지우기가 한 줄에 */
@@ -444,7 +532,7 @@
   .banner {
     margin: 8px 0 0; padding: 9px 12px; border-radius: 10px;
     font-size: 11.5px; line-height: 1.5;
-    background: color-mix(in srgb, var(--accent) 13%, transparent);
+    background: color-mix(in srgb, var(--accent-fill) 13%, transparent);
     color: var(--secondary-label);
   }
   .banner b { color: var(--label); }
@@ -721,7 +809,7 @@
   <div class="scroll" id="pane-app" style="display:none">
     <div class="sec">위젯 모양</div>
     <div class="group">
-      <div class="row">
+      <div class="row glass-row">
         <span class="nm">유리 진하기</span>
         <input type="range" id="scrim" min="40" max="98" step="2">
         <span class="out" id="out-scrim"></span>

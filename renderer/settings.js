@@ -2,12 +2,11 @@
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const root = document.documentElement;
-root.dataset.theme = params.get('theme') === 'light' ? 'light' : 'dark';
+// 테마(data-theme)와 유리 진하기(--scrim-a)는 theme.js 가 입힌다. 설정 창은 글이 빽빽해 메인이
+// 한 단계 진한 값을 준다 (src/win.js effScrim, dense). 여기서 또 더하면 두 번 진해진다.
 const num = (k, d) => { const v = parseFloat(params.get(k)); return Number.isNaN(v) ? d : v; };
 root.style.setProperty('--inset', num('inset', 12) + 'px');
 root.style.setProperty('--r', num('radius', 20) + 'px');
-// 설정 창은 내용이 많아 위젯보다 약간 더 불투명하게 둔다
-root.style.setProperty('--scrim-a', String(Math.min(0.96, num('scrim', 0.92) + 0.04)));
 
 const fmtInterval = (m) => (m >= 60 && m % 60 === 0 ? `${m / 60}시간` : `${m}분`);
 const fmtDuration = (sec) => (sec >= 60 ? `${Math.round(sec / 60)}분` : `${sec}초`);
@@ -81,7 +80,9 @@ function buildRow(type, cfg) {
   row.className = 'rem' + (cfg.enabled ? '' : ' off');
 
   const g = window.nunsMark(type, 'g');
-  g.style.color = type.color;
+  // 색은 --c 로만 넘긴다 — 칠은 CSS(.g.tinted)가 테마에 맞춰 한다. style.color 는 테마 규칙을 이긴다.
+  g.style.setProperty('--c', type.color);
+  g.classList.add('tinted');
 
   const nm = document.createElement('div');
   nm.className = 'nm';
@@ -186,7 +187,8 @@ function buildCustomRow(id, def, startOpen) {
   row.className = 'rem' + (def.enabled === false ? ' off' : '');
 
   const g = window.nunsMark(meta, 'g');
-  g.style.color = def.color || 'var(--accent)';
+  g.style.setProperty('--c', def.color || 'var(--accent)');
+  g.classList.add('tinted');
 
   const nm = document.createElement('div');
   nm.className = 'nm';
@@ -244,7 +246,8 @@ function buildCustomRow(id, def, startOpen) {
       def.emoji = emo;
       emojiGrid.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
       const ng = window.nunsMark({ glyph: 'custom', emoji: emo }, 'g');
-      ng.style.color = def.color || 'var(--accent)';
+      ng.style.setProperty('--c', def.color || 'var(--accent)');
+      ng.classList.add('tinted');
       g.replaceWith(ng);
       data.custom = await window.nunsseom.customUpdate(id, { emoji: emo });
     };
@@ -519,7 +522,8 @@ function renderEnter() {
   const own = mine.find((m) => `my:${m.id}` === cur);
   if (own) {
     const del = document.createElement('button');
-    del.className = 'mini danger';
+    // ghost 까지 — 파란 채움 위 빨간 글자는 1.7~1.9:1 로 거의 안 읽혔다
+    del.className = 'mini ghost danger';
     del.textContent = '지우기';
     del.onclick = async () => {
       const r = await window.nunsseom.enterRemove(own.id);
@@ -1017,6 +1021,7 @@ function bindAppRow(id, fmt, toValue, toStore) {
   paint();
   input.oninput = paint;
   input.onchange = () => window.nunsseom.setApp(toStore(Number(input.value)));
+  return paint;
 }
 
 /**
@@ -1041,7 +1046,21 @@ function bindAppNum(id, { min = 1, max = Infinity, toValue, toStore }) {
 window.nunsseom.getSettings().then((d) => {
   data = d;
   renderReminders();
-  bindAppRow('scrim', (v) => `${v}%`, (s) => Math.round((s.scrim ?? 0.62) * 100), (v) => ({ scrim: v / 100 }));
+  // 라이트는 유리를 90% 아래로 안 옅게 칠한다 (src/win.js effScrim). 슬라이더는 40까지 내려가니
+  // 그대로 두면 «내렸는데 안 바뀐다»가 된다 — 라벨에 실제로 칠하는 값을 같이 적는다.
+  // 기본값은 저장소 기본(0.92)과 같게 — 예전 0.62 는 값이 없을 때 슬라이더만 엉뚱한 곳에 서 있었다.
+  const paintScrim = bindAppRow('scrim',
+    (v) => (root.dataset.theme === 'light' && v < 90 ? `${v}% · 라이트 90%` : `${v}%`),
+    (s) => Math.round((s.scrim ?? 0.92) * 100), (v) => ({ scrim: v / 100 }));
+  // 앱 모드를 바꾸면 theme.js 가 data-theme 만 바꾼다 — 라벨도 따라 붙였다 뗀다
+  new MutationObserver(paintScrim).observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+  // 끄는 동안 열린 유리 창 전부에 미리 보여준다 — 저장은 놓을 때(change) 한다.
+  // 한 프레임에 한 번만 보낸다. 저장 없이 창을 닫으면 메인이 저장값으로 되돌린다.
+  let scrimRaf = 0;
+  $('scrim').addEventListener('input', () => {
+    cancelAnimationFrame(scrimRaf);
+    scrimRaf = requestAnimationFrame(() => window.nunsseom.previewScrim(Number($('scrim').value) / 100));
+  });
   bindAppRow('radius', (v) => `${v}px`, (s) => s.radius ?? 26, (v) => ({ radius: v }));
   bindAppRow('idlePauseSec', (v) => `${v}초`, (s) => s.idlePauseSec ?? 120, (v) => ({ idlePauseSec: v }));
 

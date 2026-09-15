@@ -136,6 +136,8 @@ function renderMailAccounts() {
     val.className = 'val';
     const err = (mailData.status.errors || []).find((e) => e.name === a.name);
     val.textContent = err ? err.message.slice(0, 24) : '';
+    // 오류는 회색 설명과 섞이지 않게 빨강으로 (settings.html .rem .val.bad)
+    if (err) val.classList.add('bad');
     const sw = document.createElement('button');
     sw.className = 'sw' + (a.enabled === false ? '' : ' on');
     sw.onclick = async () => {
@@ -523,7 +525,8 @@ async function loadBook() {
 function bookMsg(kind, text) {
   const el = $('cb-msg');
   el.textContent = text || '';
-  el.style.color = kind === 'bad' ? 'var(--sun, #ff8f8f)'
+  // --sun 은 이 창에 정의가 없어 라이트에서도 다크용 분홍(#ff8f8f, 1.9:1)이 나왔다
+  el.style.color = kind === 'bad' ? 'var(--danger)'
     : kind === 'good' ? 'var(--accent)' : 'var(--tertiary)';
 }
 

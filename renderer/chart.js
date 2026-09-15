@@ -14,7 +14,8 @@ const params = new URLSearchParams(location.search);
 const root = document.documentElement;
 
 root.style.setProperty('--radius', `${params.get('radius') || 16}px`);
-if (params.get('scrim')) root.style.setProperty('--scrim-a', params.get('scrim'));
+// 테마와 유리 진하기는 theme.js 가 입힌다. 선·축 색은 아래 SVG 속성이 var(--up) 처럼 CSS 변수를 그대로 쓰므로
+// 테마가 바뀌면 다시 그리지 않아도 따라온다.
 
 let cur = {
   ticker: params.get('ticker') || '',

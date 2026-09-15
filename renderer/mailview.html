@@ -16,10 +16,14 @@
 <link rel="stylesheet" href="../assets/font/pretendard.css">
 <script src="icons.js"></script>
 <script src="safehtml.js"></script>
+<!-- 라이트 색 이름과 테마·유리 진하기는 창들이 같이 쓴다 — 여기서 따로 정하지 않는다 -->
+<link rel="stylesheet" href="tokens.css">
+<script src="theme.js"></script>
 <style>
+  /* 다크 값. 라이트는 tokens.css 가 덮는다 — 여기에 라이트 색 이름 블록을 다시 두면 그 값을 도로 덮어쓴다 */
   :root {
     --accent: #4fc3a8;
-    --scrim-a: 0.86;
+    --scrim-a: 0.92;   /* 주소에 값이 없을 때만 — 메인 SCRIM.fallback 과 같게 */
     --scrim: rgba(26, 26, 30, var(--scrim-a));
     --label: rgba(255, 255, 255, 0.96);
     --secondary: rgba(235, 235, 245, 0.62);
@@ -29,18 +33,7 @@
     --hairline: rgba(255, 255, 255, 0.16);
     --separator: rgba(255, 255, 255, 0.10);
     --danger: #ff6b6b;
-  }
-  :root[data-theme="light"] {
-    --accent: #23a58a;
-    --scrim: rgba(250, 250, 252, var(--scrim-a));
-    --label: rgba(0, 0, 0, 0.90);
-    --secondary: rgba(60, 60, 67, 0.62);
-    --tertiary: rgba(60, 60, 67, 0.40);
-    --fill: rgba(0, 0, 0, 0.05);
-    --fill-hi: rgba(0, 0, 0, 0.10);
-    --hairline: rgba(0, 0, 0, 0.14);
-    --separator: rgba(60, 60, 67, 0.13);
-    --danger: #d93636;
+    --unread: #f5a623;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { width: 100%; height: 100%; overflow: hidden; background: transparent; }
@@ -78,8 +71,12 @@
     background: var(--fill); color: var(--secondary);
     transition: background 0.15s, color 0.15s;
   }
-  .seen.unread { background: color-mix(in srgb, #f5a623 22%, transparent); color: #f5a623; }
+  .seen.unread { background: color-mix(in srgb, var(--unread) 22%, transparent); color: var(--unread); }
   .seen:hover { background: var(--fill-hi); }
+  /* 라이트의 --unread 는 짙은 호박색이다. 제 색 22% 를 깔면 바탕까지 짙어져 글자가 묻힌다 — 8% 로.
+     호버도 짙은 채움(--fill-hi, 4.3:1) 대신 옅은 채움으로 둔다 */
+  :root[data-theme="light"] .seen.unread { background: color-mix(in srgb, var(--unread) 8%, transparent); }
+  :root[data-theme="light"] .seen.unread:hover { background: var(--fill); }
   .seen.busy { opacity: 0.5; }
   .close {
     all: unset; cursor: default; flex: none;
@@ -113,7 +110,8 @@
   .body.rich img { max-width: 100%; height: auto; }
   .body.rich table { max-width: 100%; border-collapse: collapse; }
   .body.rich td, .body.rich th { padding: 2px 6px; }
-  .body.rich a { color: var(--accent); }
+  /* 종이가 테마와 상관없이 흰색이라 창의 강조색을 쓰면 안 된다 — 다크 민트는 흰 종이 위 2.2:1 */
+  .body.rich a { color: #00664e; }
   .body.rich * { max-width: 100%; }
   .blocked {
     font-size: 11px; color: var(--tertiary);
@@ -147,6 +145,9 @@
     background: var(--fill); color: var(--label);
   }
   .file:hover { background: var(--fill-hi); }
+  /* 라이트: 짙은 채움(--fill-hi) 위에선 크기 글자와 초록 «보기»가 4.5:1 아래로 떨어진다.
+     호버 표시는 «보기»가 초록으로 바뀌는 것으로 충분하다 — 채움은 한 단계만 짙게 */
+  :root[data-theme="light"] .file:hover { background: rgba(0, 0, 0, 0.07); }
   .file .sz { color: var(--tertiary); font-variant-numeric: tabular-nums; }
   .saved { font-size: 11px; color: var(--accent); margin-top: 8px; }
   /* 파일 칩 — 이름을 누르면 미리보기, 저장은 따로 */
@@ -164,6 +165,8 @@
     color: var(--accent); text-decoration: underline; font-size: inherit;
   }
   .saved button.link:hover { opacity: 0.8; }
+  /* 라이트: 글자를 흐리게 하면 대비가 바로 깎인다 (초록 3.8:1) — 밑줄을 굵게 해서 알린다 */
+  :root[data-theme="light"] .saved button.link:hover { opacity: 1; text-decoration-thickness: 2px; }
   .saved button.link.warn { color: var(--danger); font-weight: 600; }
   .saved button.link:disabled { color: var(--tertiary); text-decoration: none; }
 
@@ -245,8 +248,7 @@
 <script>
   const $ = (id) => document.getElementById(id);
   const q = new URLSearchParams(location.search);
-  if (q.get('theme') === 'light') document.documentElement.dataset.theme = 'light';
-  if (q.get('scrim')) document.documentElement.style.setProperty('--scrim-a', q.get('scrim'));
+  // 테마와 유리 진하기는 theme.js 가 입힌다 — 메인이 정한 값(라이트 바닥 0.90)을 받고, 창을 연 뒤 테마가 바뀌어도 따라간다
   if (q.get('inset')) document.documentElement.style.setProperty('--inset', q.get('inset') + 'px');
   if (q.get('radius')) document.documentElement.style.setProperty('--r', q.get('radius') + 'px');
 

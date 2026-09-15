@@ -6,6 +6,8 @@
       content="default-src 'none'; script-src file: 'unsafe-inline'; style-src file: 'unsafe-inline'; font-src file:;">
 <title>주식</title>
 <link rel="stylesheet" href="../assets/font/pretendard.css">
+<link rel="stylesheet" href="tokens.css">
+<script src="theme.js"></script>
 <script src="icons.js"></script>
 <script src="drag.js"></script>
 <style>
@@ -25,19 +27,7 @@
     --dn: #6aa9ff;
     --r: 18px;
   }
-  :root[data-theme="light"] {
-    --accent: #23a58a;
-    --scrim: rgba(250, 250, 252, var(--scrim-a));
-    --label: rgba(0, 0, 0, 0.90);
-    --secondary: rgba(60, 60, 67, 0.62);
-    --tertiary: rgba(60, 60, 67, 0.40);
-    --separator: rgba(60, 60, 67, 0.13);
-    --fill: rgba(0, 0, 0, 0.05);
-    --fill-hi: rgba(0, 0, 0, 0.10);
-    --hairline: rgba(0, 0, 0, 0.12);
-    --up: #e03b3b;
-    --dn: #2f6fd0;
-  }
+  /* 라이트 값(오름·내림 색 포함)은 tokens.css 에 있다. 여기서 이름을 다시 쓰면 그 값을 덮는다. */
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; background: transparent; }
   body {
@@ -81,6 +71,8 @@
     padding: 4px 10px; border-radius: 999px;
   }
   .seg.on { background: var(--accent); color: #06231d; }
+  /* 라이트 --accent 는 글자용이라 진하다 — 그 위의 어두운 글자는 2.4:1 이다. 채움은 --accent-fill 에 흰 글자로 */
+  :root[data-theme="light"] .seg.on { background: var(--accent-fill); color: #fff; }
   .seg:not(.on):hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
   .bar .sp { flex: 1; }
 
@@ -118,6 +110,10 @@
   .row .pc.bad { color: var(--tertiary); font-weight: 400; font-size: 10.5px; }
   .row.tap:hover { background: var(--fill); }
   .row.stale .px, .row.stale .nm { opacity: 0.5; }
+  /* 라이트에서 반투명으로 흐리면 흰 유리 위 3.2:1 까지 떨어진다 — 불투명한 옅은 글자색으로 물린다.
+     --secondary 는 지수 줄 이름(.row.idx .nm)과 같은 색이라 멈춘 지수가 거래 중인 지수와 똑같아 보였다 —
+     한 단계 더 옅은 --tertiary (카드 .94 위 5.9:1, 줄 호버 위 5.2:1) */
+  :root[data-theme="light"] .row.stale .px, :root[data-theme="light"] .row.stale .nm { opacity: 1; color: var(--tertiary); }
   /* 지우기는 그 줄에 마우스를 올렸을 때만 — 늘 보이면 목록이 시끄럽다 */
   .row .del {
     all: unset; cursor: default; width: 18px; height: 18px; border-radius: 5px;
@@ -141,11 +137,15 @@
   }
   .add input::placeholder { color: var(--tertiary); }
   .add input:focus { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); }
+  /* 55% 테두리는 라이트 입력칸 위에서 2.3:1 — 포커스가 안 보인다 */
+  :root[data-theme="light"] .add input:focus { box-shadow: inset 0 0 0 1px var(--accent); }
   .mini {
     all: unset; cursor: default; flex: none;
     font-size: 11.5px; font-weight: 620; color: #06231d; background: var(--accent);
     padding: 6px 11px; border-radius: 999px;
   }
+  /* .seg.on 과 같은 까닭. ghost 는 바탕이 없는 글자 단추라 뺀다 */
+  :root[data-theme="light"] .mini:not(.ghost) { background: var(--accent-fill); color: #fff; }
   .mini:hover { filter: brightness(1.08); }
   .mini[disabled] { opacity: 0.45; }
   .mini.ghost { background: transparent; color: var(--accent); }
@@ -161,7 +161,8 @@
     box-shadow: 0 -8px 26px rgba(0, 0, 0, 0.45), inset 0 0 0 0.5px var(--hairline);
     max-height: 216px; overflow-y: auto; display: none; z-index: 20;
   }
-  :root[data-theme="light"] .sug { background: #fff; }
+  /* 라이트에서 .45 검은 그림자는 바로 위 줄을 회색 띠로 덮어 옅은 글자가 3.4:1 까지 떨어졌다 — 흰 목록에 맞게 옅게 */
+  :root[data-theme="light"] .sug { background: #fff; box-shadow: 0 -4px 18px rgba(0, 0, 0, 0.14), inset 0 0 0 0.5px var(--hairline); }
   .sug.on { display: block; }
   .sug .it {
     display: flex; align-items: baseline; gap: 7px;

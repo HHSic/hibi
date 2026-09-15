@@ -3,9 +3,13 @@
 <meta http-equiv="Content-Security-Policy"
       content="default-src 'none'; script-src file: 'unsafe-inline'; style-src file: 'unsafe-inline'; font-src file:; img-src data:">
 <title>메일 쓰기</title>
+<!-- 라이트 색 이름과 테마·유리 진하기는 창들이 같이 쓴다 — 여기서 따로 정하지 않는다 -->
+<link rel="stylesheet" href="tokens.css">
+<script src="theme.js"></script>
 <style>
+  /* 다크 값. 라이트는 tokens.css 가 덮는다 — 여기에 라이트 색 이름 블록을 다시 두면 그 값을 도로 덮어쓴다 */
   :root {
-    --scrim-a: 0.86;
+    --scrim-a: 0.92;   /* 주소에 값이 없을 때만 — 메인 SCRIM.fallback 과 같게 */
     --scrim: rgba(28, 28, 32, var(--scrim-a));
     --label: rgba(255, 255, 255, 0.96);
     --secondary: rgba(235, 235, 245, 0.62);
@@ -16,15 +20,6 @@
     --accent: #4fc3a8;
     --danger: #ff8b8b;
     --r: 20px;
-  }
-  :root[data-theme="light"] {
-    --scrim: rgba(252, 252, 254, var(--scrim-a));
-    --label: rgba(0, 0, 0, 0.90);
-    --secondary: rgba(60, 60, 67, 0.62);
-    --tertiary: rgba(60, 60, 67, 0.32);
-    --separator: rgba(0, 0, 0, 0.10);
-    --fill: rgba(0, 0, 0, 0.05);
-    --fill-hi: rgba(0, 0, 0, 0.10);
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; overflow: hidden; background: transparent; }
@@ -90,6 +85,8 @@
   .book .it b { font-weight: 600; color: var(--label); }
   .book .it span { color: var(--tertiary); font-size: 11px; }
   .book .it.on, .book .it:hover { background: var(--fill-hi); }
+  /* 라이트: 흰 목록 위 옅은 회색 줄만으로는 키보드로 고른 줄이 안 보인다 (1.25:1) — 왼쪽 막대를 더한다 */
+  :root[data-theme="light"] .book .it.on { box-shadow: inset 2px 0 0 var(--accent); }
   .book .none { padding: 6px 8px; font-size: 11.5px; color: var(--tertiary); }
   .helprow { display: flex; gap: 4px; align-items: center; }
 
@@ -114,6 +111,7 @@
   .plist::-webkit-scrollbar { width: 6px; }
   .plist::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; transition: background 0.15s; }
   .plist:hover::-webkit-scrollbar-thumb { background: var(--fill-hi); }
+  .plist .none { padding: 10px 8px; font-size: 12px; color: var(--tertiary); }
   .prow {
     display: flex; align-items: center; gap: 9px;
     padding: 7px 8px; border-radius: 8px; cursor: default;
@@ -126,6 +124,10 @@
     display: grid; place-items: center; font-size: 10px; color: #06231d;
   }
   .prow.on .mark { background: var(--accent); box-shadow: none; }
+  /* 라이트: 빈 칸 테두리가 옅은 채움색이면 칸 자체가 안 보인다 (1.25:1).
+     고른 칸은 짙은 초록 채움이라 그 위 짙은 체크(#06231d)가 묻힌다 — 흰 체크로 */
+  :root[data-theme="light"] .prow .mark { box-shadow: inset 0 0 0 1.2px rgba(60, 60, 67, 0.62); }
+  :root[data-theme="light"] .prow.on .mark { background: var(--accent-fill); color: #fff; box-shadow: none; }
   .prow .who { flex: 1; min-width: 0; }
   .prow .who b { display: block; font-size: 12.5px; font-weight: 600; }
   .prow .who span { display: block; font-size: 11px; color: var(--tertiary);
@@ -152,6 +154,9 @@
     background: var(--fill); border-radius: 7px; padding: 3px 8px; max-width: 180px;
   }
   .fld .pickfield:hover { background: var(--fill-hi); color: var(--label); }
+  /* 라이트: pickfield.js 의 꺾쇠는 글자색 50% 라 옅은 채움 위에서 안 보인다 (1.7:1) — 고르는 칸이라는 표시다.
+     1.4px 빗금이라 안티에일리어싱으로 이미 옅어진다. 흐리게 하지 않고 글자색 그대로 */
+  :root[data-theme="light"] .pickfield .pf-c { opacity: 1; }
   .bar button {
     all: unset; cursor: default; min-width: 22px; height: 22px; border-radius: 6px;
     display: grid; place-items: center; color: var(--secondary);
@@ -159,6 +164,8 @@
   }
   .bar button:hover { background: var(--fill); color: var(--label); }
   .bar button.on { background: var(--fill-hi); color: var(--label); }
+  /* 라이트: 켜진 서식(굵게·정렬)이 옅은 채움만으로는 꺼진 것과 구별이 안 된다 (1.25:1) — 테두리를 한 줄 더 */
+  :root[data-theme="light"] .bar button.on { box-shadow: inset 0 0 0 1px rgba(60, 60, 67, 0.68); }
   .bar .sep { width: 1px; height: 14px; background: var(--separator); margin: 0 3px; }
   .bar input[type=color] {
     all: unset; width: 20px; height: 20px; border-radius: 5px; overflow: hidden; cursor: default;
@@ -178,7 +185,8 @@
     word-break: keep-all;
     overflow-wrap: anywhere;
   }
-  .body:empty::before { content: attr(data-ph); color: #9aa0a6; }
+  /* 흰 종이 위 안내 글 — 예전 #9aa0a6 은 2.6:1 이라 안 읽혔다. 종이는 테마와 상관없이 흰색이라 두 테마 같은 값 */
+  .body:empty::before { content: attr(data-ph); color: #6b7078; }
   .body img { max-width: 100%; height: auto; }
   /* 서명은 대개 표로 짜여 있다. 이 창에 doctype이 빠져 있던 동안 표 안 글자가
      흰 종이 위에서 흰색으로 나왔다 — quirks mode에서 크롬은 표의 색을 부모가 아니라
@@ -244,6 +252,8 @@
     background: var(--accent); color: #06231d;
   }
   button.act.ghost { background: var(--fill); color: var(--label); font-weight: 500; }
+  /* 라이트 강조색은 짙은 초록이라 그 위 짙은 글자(#06231d)는 2.4:1 — 흰 글자로. 채움은 흰 글자용 --accent-fill */
+  :root[data-theme="light"] button.act:not(.ghost) { background: var(--accent-fill); color: #fff; }
   button.act:hover { filter: brightness(1.08); }
   button.act[disabled] { opacity: 0.45; }
 

@@ -9,8 +9,12 @@
                font-src file:;">
 <title>Hibi</title>
 <link rel="stylesheet" href="../assets/font/pretendard.css">
+<!-- 라이트 색 이름은 tokens.css 한 곳에서, 테마·유리 진하기는 theme.js 가 입힌다 (다른 유리 창과 같은 값) -->
+<link rel="stylesheet" href="tokens.css">
+<script src="theme.js"></script>
 <style>
   /* 앱과 같은 유리 마감 — 물어보는 창만 윈도우 기본 모양이면 그 순간 남의 앱처럼 보인다 */
+  /* 다크 값만 여기 둔다. 라이트 블록을 다시 만들면 같은 우선순위로 뒤에 와서 tokens.css 를 덮는다. */
   :root {
     --accent: #4fc3a8;
     --scrim-a: 0.92;
@@ -23,18 +27,6 @@
     --hairline: rgba(255, 255, 255, 0.16);
     --separator: rgba(255, 255, 255, 0.10);
     --danger: #ff6b6b;
-  }
-  :root[data-theme="light"] {
-    --accent: #23a58a;
-    --scrim: rgba(250, 250, 252, var(--scrim-a));
-    --label: rgba(0, 0, 0, 0.90);
-    --secondary: rgba(60, 60, 67, 0.62);
-    --tertiary: rgba(60, 60, 67, 0.40);
-    --fill: rgba(0, 0, 0, 0.05);
-    --fill-hi: rgba(0, 0, 0, 0.10);
-    --hairline: rgba(0, 0, 0, 0.14);
-    --separator: rgba(60, 60, 67, 0.13);
-    --danger: #d93636;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { width: 100%; height: 100%; overflow: hidden; background: transparent; }
@@ -59,7 +51,8 @@
   /* ── 물어보는 창 ── */
   /* 카드가 세로 flex다 — flex: none이 없으면 안엣것이 눌린다 */
   .dlg { flex: none; padding: 16px 18px 14px; display: flex; flex-direction: column; gap: 0; }
-  .dlg .ttl { font-size: 11px; font-weight: 700; color: var(--tertiary); letter-spacing: 0.02em; }
+  /* 제목은 «누가 묻는지»를 알려주는 글이다 — --tertiary 는 다크에서도 2.7:1 이라 --secondary 로 */
+  .dlg .ttl { font-size: 11px; font-weight: 700; color: var(--secondary); letter-spacing: 0.02em; }
   .dlg .msg {
     margin-top: 7px; font-size: 14px; font-weight: 640; line-height: 1.45;
     word-break: keep-all; overflow-wrap: anywhere;
@@ -81,7 +74,8 @@
   .btn:hover { background: var(--fill-hi); }
   .btn:focus-visible { box-shadow: inset 0 0 0 1.5px var(--accent); }
   /* 기본 단추 — 그냥 엔터를 눌렀을 때 무엇이 일어나는지 눈으로 보여야 한다 */
-  .btn.go { background: var(--accent); color: #fff; box-shadow: none; }
+  /* 흰 글자를 얹는 채움은 --accent-fill — 라이트의 --accent 는 글자용이라 채움으로는 너무 어둡다 (다크는 같은 값) */
+  .btn.go { background: var(--accent-fill); color: #fff; box-shadow: none; }
   .btn.go:hover { filter: brightness(1.08); }
   /* 되돌릴 수 없는 것은 색으로도 말해준다 */
   .btn.bad { background: var(--danger); color: #fff; box-shadow: none; }
@@ -103,7 +97,12 @@
   }
   .item:hover { background: var(--fill-hi); }
   .item.bad { color: var(--danger); }
+  /* 라이트에서 빨간 글자는 호버 채움(.10) 위에서 4.5:1 에 겨우 걸린다 — 지우기 줄만 한 단계 옅게 칠한다 */
+  :root[data-theme="light"] .item.bad:hover { background: rgba(0, 0, 0, 0.07); }
   .item.off { color: var(--tertiary); }
+  /* 라이트의 --tertiary 는 이제 «읽히는» 불투명 글자색(#5a5a5f)이라 꺼진 줄이 켜진 줄과 거의 같아 보인다 —
+     꺼짐·장식 전용 --quaternary 로 물린다 (정보가 아니라 «못 누름»이라 대비 기준에서 빠진다. 다크는 그대로) */
+  :root[data-theme="light"] .item.off { color: var(--quaternary); }
   /* 고르기 목록 — 지금 골라져 있는 줄 */
   .menu.ticks .item { position: relative; padding-left: 26px; }
   .item .tick { position: absolute; left: 9px; color: var(--accent); font-size: 10.5px; }

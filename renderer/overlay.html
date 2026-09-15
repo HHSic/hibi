@@ -23,10 +23,13 @@
 <script src="enter.js"></script>
 <script src="sound.js"></script>
 <style>
+  /* 이 화면은 테마와 상관없이 늘 어둡다 — 대신 밑에 무엇이 깔릴지 모른다 (흰 바탕화면, 밝은 내 그림).
+     글자색은 가장 밝은 바탕(흰 바탕화면 사진 → 스크림)에서 4.5:1 에 3% 이상 여유가 남게 잡았다.
+     예전 .62/.34 는 거기서 초 단위가 2.3:1, 단추 글자가 3.2:1 이었다. */
   :root {
     --label: rgba(255, 255, 255, 0.96);
-    --secondary: rgba(235, 235, 245, 0.62);
-    --tertiary: rgba(235, 235, 245, 0.34);
+    --secondary: rgba(235, 235, 245, 0.82);   /* .78 이면 다 한 줄(채움 위)이 4.47 — 한 단계 더 */
+    --tertiary: rgba(235, 235, 245, 0.60);    /* 체크 칸 테두리 (글자 아님, 3:1) */
     --fill: rgba(255, 255, 255, 0.12);
     --fill-hi: rgba(255, 255, 255, 0.22);
     --hairline: rgba(255, 255, 255, 0.20);
@@ -58,7 +61,11 @@
     transition: opacity 0.5s ease;
   }
   .backdrop.ready { opacity: 1; }
-  .scrim { position: fixed; inset: 0; z-index: -2; background: rgba(16, 16, 20, 0.56); }
+  .scrim { position: fixed; inset: 0; z-index: -2; background: rgba(16, 16, 20, 0.64); }
+  /* 바탕화면 사진을 못 찍었으면 그 자리엔 살아 있는 바탕화면이 그대로 비친다 — 사진은 brightness(.58) 로
+     한 번 어두워지지만 이건 아니다. 흰 바탕화면에서 사진이 있을 때와 같은 밝기가 되게 스크림을 더 진하게.
+     표시는 스크림 자신에 단다 — body 클래스는 dense/denser 가 쓰고, 시험(herolayout)도 그걸 읽는다. */
+  .scrim.noshot { background: rgba(16, 16, 20, 0.80); }
 
   /* ── 등장 연출 (enter.js) ──────────────────────────────
      무언가가 화면을 덮었다가 걷히고, 그 밑에 휴식 화면이 드러난다.
@@ -237,10 +244,13 @@
     from { opacity: 0; transform: scale(1.08); }
     to { opacity: 1; transform: scale(1); }
   }
-  /* 커스텀 그림·영상은 밝을 수 있다 — 그 위에만 옅은 어둠을 한 겹 깔아 글자가 읽히게.
-     기본(어두운) 연출엔 없다. */
+  /* 커스텀 그림·영상은 밝을 수 있다 — 그 위에만 어둠을 한 겹 깔아 글자가 읽히게.
+     기본(어두운) 연출엔 없다.
+     진하기는 새하얀 그림에서 잰 값이다. .42 에서는 제목도 3.3:1, 킥커·부제·초·단추는 1.6~2.5:1 이었다.
+     킥커의 옅은 틴트색(손목 #ff9448)이 4.5:1 을 넘으려면 바탕이 흰 바탕화면 사진 밝기(#40)까지 내려와야 해서 .78 —
+     그림은 여전히 비치고, 밝기만 기본 휴식 화면과 같아진다. */
   .curtain.ent-media::after {
-    content: ""; position: absolute; inset: 0; background: rgba(8, 10, 14, 0.42);
+    content: ""; position: absolute; inset: 0; background: rgba(8, 10, 14, 0.78);
     animation: entVeil calc(var(--cover) * 0.5) ease both;
   }
 
@@ -294,7 +304,8 @@
     font-variant-numeric: tabular-nums;
     letter-spacing: -0.02em; line-height: 1;
   }
-  .count small { font-size: 13px; font-weight: 420; color: var(--tertiary); margin-left: 3px; }
+  /* «초»도 읽는 글자다 — 숫자와 같은 --secondary (--tertiary 는 흰 바탕화면에서 2.3:1 이었다) */
+  .count small { font-size: 13px; font-weight: 420; color: var(--secondary); margin-left: 3px; }
 
   /* 체크리스트가 길면 남은 시간을 줄여 목록에 자리를 준다 —
      이 화면의 주인공이 «남은 시간»에서 «해야 할 것»으로 바뀌는 순간이기 때문이다. */
@@ -333,7 +344,8 @@
     width: 23px; height: 23px; flex: none; border-radius: 50%;
     box-shadow: inset 0 0 0 1.5px var(--tertiary);
     display: grid; place-items: center;
-    color: #fff; transition: background 0.18s, box-shadow 0.18s;
+    /* 체크는 옅은 틴트 칸 위에 얹힌다 — 흰 체크는 1.7~2.2:1 로 안 보였다. 어두운 체크는 8:1 이상 */
+    color: #16161a; transition: background 0.18s, box-shadow 0.18s;
   }
   .list .item .box svg { width: 13px; height: 13px; opacity: 0; }
   .list .item .g { width: 17px; height: 17px; flex: none; color: var(--itc, var(--tint)); }
@@ -351,14 +363,16 @@
   .actions button {
     all: unset; cursor: default;
     font-family: inherit; font-size: 13px; font-weight: 540; letter-spacing: -0.01em;
-    color: var(--secondary);
+    /* 채움(.12) 위라 바탕이 한 겹 밝다 — --secondary 보다 한 단계 밝게 둬야 흰 바탕화면에서도 4.5:1 */
+    color: rgba(235, 235, 245, 0.84);
     padding: 10px 20px; border-radius: 999px;
     background: var(--fill);
     box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.11);
     transition: background 0.15s, color 0.15s;
   }
   .actions button:hover { background: var(--fill-hi); color: var(--label); }
-  .actions button:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--tint) 65%, transparent); }
+  /* 반투명 링은 밝은 바탕에서 흐려진다 — 틴트 그대로 칠한다 */
+  .actions button:focus-visible { box-shadow: 0 0 0 2px var(--tint); }
 
   /* 일찍 끝내기 — 체크를 다 하면 강조된다 */
   .actions button.finish {
@@ -368,9 +382,11 @@
     box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--tint) 45%, transparent);
     padding-left: 16px;
   }
-  .actions button.finish:hover { background: color-mix(in srgb, var(--tint) 38%, transparent); }
+  /* 38% 면 가장 옅은 틴트(#e3c08a)가 흰 바탕화면에서 흰 글자 4.57:1 — 여유 3% 가 안 남아 34% */
+  .actions button.finish:hover { background: color-mix(in srgb, var(--tint) 34%, transparent); }
+  /* 흰 글자를 얹으므로 틴트를 절반쯤 어둡게 — 86% 로는 틴트가 그대로 밝아 흰 글자가 2.3~2.9:1 이었다 */
   .actions button.finish.ready {
-    background: color-mix(in srgb, var(--tint) 86%, black);
+    background: color-mix(in srgb, var(--tint) 55%, black);
     color: #fff;
     box-shadow: none;
   }
@@ -437,13 +453,15 @@
     tick();
     render(p);
 
-    // 미리 찍어둔 바탕화면 — 없으면 그냥 없이 간다
+    // 미리 찍어둔 바탕화면 — 없으면 그냥 없이 간다.
+    // 없을 때는 살아 있는 바탕화면이 비치므로 스크림을 진하게 한다 (.noshot) — 흰 바탕화면에서 글자가 묻힌다
+    const noShot = () => document.querySelector('.scrim').classList.add('noshot');
     window.nunsseom.getOverlayBg(displayId).then((url) => {
-      if (!url) return;
+      if (!url) { noShot(); return; }
       const bd = $('backdrop');
       bd.style.backgroundImage = `url("${url}")`;
       requestAnimationFrame(() => bd.classList.add('ready'));
-    }).catch(() => {});
+    }).catch(noShot);
 
     // 알림음 (주 모니터에서만 — 여러 화면에서 같이 울리면 겹쳐 들린다)
     if (isMain && p.sound && p.sound.enabled) {

@@ -95,7 +95,8 @@ function openStocks() {
   });
   // 우리 페이지 밖으로 못 나가게 (남의 주소로 가면 이 창이 다리를 쥔 브라우저가 된다)
   lockToOurPage(stocksWin);
-  stocksWin.loadFile(page('stocks.html'), { query: glassQuery({ radius: '18' }) });
+  // 글이 빽빽한 창이라 유리를 한 단계 진하게 받는다 (계산은 win.js effScrim)
+  stocksWin.loadFile(page('stocks.html'), { query: glassQuery({ radius: '18', dense: '1' }) });
   stocksWin.webContents.once('did-finish-load', () => {
     sendStocks();
     refreshStocks();

@@ -1,8 +1,7 @@
 'use strict';
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
-document.documentElement.dataset.theme = params.get('theme') === 'light' ? 'light' : 'dark';
-document.documentElement.style.setProperty('--scrim-a', params.get('scrim') || '0.86');
+// 테마와 유리 진하기는 theme.js 가 입힌다 — 메인이 정한 값(라이트 바닥 0.90)을 받고, 창을 연 뒤 테마가 바뀌어도 따라간다
 document.documentElement.style.setProperty('--inset', (params.get('inset') || '12') + 'px');
 document.documentElement.style.setProperty('--r', (params.get('radius') || '20') + 'px');
 
@@ -284,10 +283,7 @@ function paintPicker() {
   host.textContent = '';
   if (!hits.length) {
     const p = document.createElement('div');
-    p.className = 'none';
-    p.style.padding = '10px 8px';
-    p.style.color = 'var(--tertiary)';
-    p.style.fontSize = '12px';
+    p.className = 'none';   // 모양은 compose.html .plist .none
     p.textContent = contacts.length
       ? '찾는 사람이 없습니다'
       : '아직 비어 있습니다 — 메일을 주고받으면 쌓입니다';

@@ -6,6 +6,8 @@
       content="default-src 'none'; script-src file: 'unsafe-inline'; style-src file: 'unsafe-inline'; font-src file:;">
 <title>차트</title>
 <link rel="stylesheet" href="../assets/font/pretendard.css">
+<link rel="stylesheet" href="tokens.css">
+<script src="theme.js"></script>
 <script src="icons.js"></script>
 <script src="drag.js"></script>
 <style>
@@ -22,6 +24,7 @@
     --up: #ff5f56;      /* 한국식 — 오르면 빨강 */
     --dn: #4a90ff;
   }
+  /* 라이트 값은 tokens.css 에 있다 — 예전엔 테마를 안 봐서 늘 어두웠다 */
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
@@ -68,6 +71,8 @@
   }
   .seg:hover { background: var(--fill-hi); color: var(--label); }
   .seg.on { background: color-mix(in srgb, var(--accent) 82%, black); color: #fff; }
+  /* 라이트 --accent 는 이미 진한 글자색이라 검정을 더 섞지 않고 흰 글자용 채움을 쓴다 */
+  :root[data-theme="light"] .seg.on { background: var(--accent-fill); }
 
   /* 값 요약 */
   .sum { flex: none; display: flex; align-items: baseline; gap: 10px; padding: 0 14px 8px; }
@@ -86,6 +91,9 @@
   /* 차트가 그려질 자리 — renderer/chart.js 가 채운다 */
   .plot { flex: 1 1 auto; min-height: 0; position: relative; padding: 0 8px 6px; }
   .plot svg { width: 100%; height: 100%; display: block; }
+  /* 거래량 막대(chart.js 가 fill-opacity 0.45 로 그린다)는 흰 유리 위에서 2:1 로 묻힌다.
+     CSS 가 속성보다 앞서므로 라이트에서만 진하게 — 0.75 면 내림(파랑)도 3.4:1 */
+  :root[data-theme="light"] .plot rect[fill-opacity="0.45"] { fill-opacity: 0.75; }
   .note {
     position: absolute; inset: 0; display: grid; place-items: center;
     font-size: 12px; color: var(--tertiary);

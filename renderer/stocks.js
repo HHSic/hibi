@@ -8,11 +8,10 @@
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const root = document.documentElement;
-root.dataset.theme = params.get('theme') === 'light' ? 'light' : 'dark';
+// 테마와 유리 진하기는 theme.js 가 입힌다. 글이 빽빽한 창이라 더 진하게(+0.04) 하는 것도 메인이 계산해 넘긴다 (dense=1).
 const num = (k, d) => { const v = parseFloat(params.get(k)); return Number.isNaN(v) ? d : v; };
 root.style.setProperty('--inset', num('inset', 12) + 'px');
 root.style.setProperty('--r', num('radius', 18) + 'px');
-root.style.setProperty('--scrim-a', String(Math.min(0.96, num('scrim', 0.88) + 0.04)));
 
 let data = null;
 let sig = '';

@@ -10,8 +10,7 @@
  */
 const card = document.getElementById('card');
 const q = new URLSearchParams(location.search);
-if (q.get('theme') === 'light') document.documentElement.dataset.theme = 'light';
-if (q.get('scrim')) document.documentElement.style.setProperty('--scrim-a', q.get('scrim'));
+// 테마와 유리 진하기는 theme.js 가 입힌다 — 메인이 정한 값(라이트 바닥 0.90)을 그대로 쓰고, 테마를 바꾸면 따라간다
 if (q.get('inset')) document.documentElement.style.setProperty('--inset', q.get('inset') + 'px');
 
 let answered = false;

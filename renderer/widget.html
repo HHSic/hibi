@@ -15,11 +15,15 @@
                img-src file: data:;
                media-src file: data:">
 <link rel="stylesheet" href="../assets/font/pretendard.css">
+<!-- 유리 창 공용 색 이름과 테마 입히기. 아래 <style> 보다 먼저 온다 —
+     공용 라이트 값이 이 페이지의 다크 :root 를 이기고, 위젯만 다른 값은 뒤에서 덮는다. -->
+<link rel="stylesheet" href="tokens.css">
+<script src="theme.js"></script>
 <script src="icons.js"></script>
 <script src="drag.js"></script>
 <style>
   /* ── 토큰 ─────────────────────────────────────────────
-     블러는 Win11 아크릴이, 틴트는 --scrim이 담당한다.
+     실시간 블러는 없다 — 틴트(--scrim)가 가독성을 맡는다.
      모든 치수는 rem이고 루트 폰트크기는 폭·높이 중 더 제약적인 쪽에 맞춰 스케일된다. */
   :root {
     /* 실시간 블러가 없으므로 틴트가 가독성을 담당한다 */
@@ -42,17 +46,16 @@
     --p: 0%;                  /* 진행률 */
     --r: 0px;                 /* CSS 코너 반경 (투명 창일 때만 사용) */
   }
+  /* 라이트 값은 tokens.css 가 정한다. 여기엔 위젯만 다른 것만 둔다 —
+     같은 이름을 되풀이하면 뒤에 오는 이쪽이 이겨 공용 값을 덮는다. */
   :root[data-theme="light"] {
-    --scrim: rgba(252, 252, 254, var(--scrim-a));
-    --label: rgba(0, 0, 0, 0.90);
-    --secondary: rgba(60, 60, 67, 0.62);
-    --tertiary: rgba(60, 60, 67, 0.32);
+    /* 칩·세그먼트가 흰 유리 위에서 모양을 잃지 않게 공용(.06/.10)보다 진한 채움.
+       이 채움 위에서는 --tertiary 가 4.5:1 에 모자라 칩 글자는 --secondary 를 쓴다. */
     --fill: rgba(120, 120, 128, 0.18);
     --fill-hi: rgba(120, 120, 128, 0.32);
-    --hairline: rgba(255, 255, 255, 0.60);
     --bar: rgba(250, 250, 252, 0.92);
-    --sun: #d94a4a;
-    --unread: #c76a00;        /* 흰 배경에서는 한 단계 눌러야 읽힌다 */
+    /* 주간 막대는 .prog 틴트 위에도 선다 — 공용 .60 은 주황(손목) 틴트 위에서 3:1 에 못 미친다 */
+    --bar-idle: rgba(60, 60, 67, 0.64);
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
@@ -121,6 +124,15 @@
     transition: background 0.9s linear;
     pointer-events: none;
   }
+  /* 라이트: .prog 는 달력·메일 칸까지 카드 전체에 깔린다. 흰 유리에선 같은 농도가 왼쪽 글자
+     (요일·일요일·안 읽은 메일)의 바탕을 눈에 띄게 눌러 대비를 깎는다 — 모양은 같게, 농도만 낮춘다. */
+  :root[data-theme="light"] .prog {
+    background: linear-gradient(90deg,
+      color-mix(in srgb, var(--tint) 20%, transparent) 0%,
+      color-mix(in srgb, var(--tint) 12%, transparent) calc(var(--p) * 0.55),
+      color-mix(in srgb, var(--tint) 4%, transparent) calc(var(--p) * 0.9),
+      transparent var(--p));
+  }
   .paused .prog { filter: saturate(0.12); }
   .quiet .prog { filter: saturate(0.45); }
   .quiet .head .g { color: var(--secondary); }
@@ -143,7 +155,15 @@
     line-height: 1;
     min-width: 0;
   }
-  .head .g { width: 0.8125rem; height: 0.8125rem; flex: none; color: var(--tint); }
+  .head .g { width: 0.8125rem; height: 0.8125rem; flex: none; color: var(--mark, var(--tint)); }
+  /* 종류 색 마크. JS 는 원래 색을 --c 로만 넘기고(.tinted) 무슨 잉크로 칠할지는 여기서 정한다 —
+     인라인 style.color 는 어떤 테마 규칙도 못 이겨 라이트에서 파스텔(1.2~1.4:1)이 그대로 남았다.
+     색 선언은 .head .g / .sheet .row .g 에 그대로 두어 .paused·.quiet .head .g 가 계속 이긴다.
+     --tint-ink 는 :root 에서 한 번 계산되므로 종류마다 다른 색은 제 자리에서 따로 푼다. */
+  .g.tinted { --mark: var(--c); }
+  :root[data-theme="light"] .head,
+  :root[data-theme="light"] .sheet .row { --mark: var(--tint-ink); }
+  :root[data-theme="light"] .g.tinted { --mark: oklch(from var(--c) 0.44 c h); }
   /* 이모지 마크는 font-size로 크기가 정해진다 — 각 문맥의 아이콘 크기에 맞춘다 */
   .g.emoji { display: inline-grid; place-items: center; line-height: 1; }
   .head .g.emoji { font-size: 0.75rem; }
@@ -172,6 +192,9 @@
   .r-large .head .tag.why .nm { display: block; }
   .head .ct { color: var(--tertiary); font-weight: 500; white-space: nowrap; }
   .head .ct b { color: color-mix(in srgb, var(--tint) 80%, white); font-weight: 700; }
+  /* 라이트: 틴트에 흰색을 섞은 글자는 흰 유리 위에서 사라진다(1.3~1.7:1).
+     같은 색상의 짙은 잉크(--tint-ink, oklch L .44)로 — 아래 틴트 글자들도 모두 같은 이유다. */
+  :root[data-theme="light"] .head .ct b { color: var(--tint-ink); }
   .paused .head .g { color: var(--tertiary); }
 
   .time {
@@ -200,10 +223,16 @@
     background: color-mix(in srgb, var(--tint) 22%, transparent);
     color: color-mix(in srgb, var(--tint) 86%, white);
   }
+  /* 라이트: 위젯 채움(.18) 위의 --tertiary 는 4.5:1 경계에 걸린다 — 칩 글자는 한 단계 진하게 */
+  :root[data-theme="light"] .chip { color: var(--secondary); }
+  :root[data-theme="light"] .chip.on { color: var(--tint-ink); }
 
   .week { display: flex; align-items: flex-end; gap: 0.1875rem; height: 1.125rem; }
   .week i { flex: 1; background: var(--fill); border-radius: 0.125rem 0.125rem 0 0; min-height: 0.125rem; }
   .week i.hi { background: color-mix(in srgb, var(--tint) 70%, transparent); }
+  /* 라이트: 채움색 막대는 유리에 묻힌다(1.2:1). 막대는 높이가 곧 정보라 3:1 은 넘어야 한다 */
+  :root[data-theme="light"] .week i { background: var(--bar-idle); }
+  :root[data-theme="light"] .week i.hi { background: var(--tint-ink); }
 
   /* ── 크기대별 레이아웃 ──────────────────────────────
      폭 변화에 반응하지 않던 문제를 크기대 전환으로 해결한다. */
@@ -365,6 +394,7 @@
     color: var(--secondary);
   }
   .note.good { color: var(--tint); }
+  :root[data-theme="light"] .note.good { color: var(--tint-ink); }
   .note.bad { color: var(--sun); }
   .note:empty { display: none; }
   .calnav button.txt {
@@ -394,11 +424,20 @@
   .cday:hover { background: var(--fill); }
   .cday.out { color: var(--tertiary); }
   .cday.sun { color: var(--sun); }
+  /* 다른 달의 일요일도 다른 달로 물러나야 한다 — .sun 이 뒤에 와서 .out 을 지워
+     이번 달 날짜처럼 읽혔다. 고른 날(.on)의 글자색은 건드리지 않는다. */
+  .cday.sun.out:not(.on) { color: var(--tertiary); }
   .cday.today { box-shadow: inset 0 0 0 1px var(--tint); font-weight: 700; }
   .cday.on { background: var(--tint); color: #06231d; font-weight: 700; }
   .cdots { display: flex; gap: 0.0625rem; height: 0.1875rem; }
   .cdots i { width: 0.1875rem; height: 0.1875rem; border-radius: 50%; background: var(--tint); }
   .cday.on .cdots i { background: #06231d; }
+  /* 라이트: 파스텔 링·점·칠은 흰 유리에서 안 보이고(1.3~1.7:1), 짙은 글자 #06231d 는
+     진해진 칠 위에서 안 읽힌다. 표시(링·점)는 잉크로, 고른 날은 흰 글자를 얹는 채움(L .50)으로. */
+  :root[data-theme="light"] .cday.today { box-shadow: inset 0 0 0 1px var(--tint-ink); }
+  :root[data-theme="light"] .cdots i { background: var(--tint-ink); }
+  :root[data-theme="light"] .cday.on { background: var(--tint-fill); color: #fff; }
+  :root[data-theme="light"] .cday.on .cdots i { background: #fff; }
 
   .callist { overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: 0.125rem; }
   .callist::-webkit-scrollbar { width: 3px; }
@@ -495,6 +534,8 @@
   .mailtabs .mtab.on { background: var(--fill-hi); color: var(--label); }
   /* 숨김은 «지금 보는 곳»이 아니라 «확인하러 가는 곳»이다 — 평소엔 뒤로 물러나 있어야 한다 */
   .mailtabs .mtab.dim:not(.on) { opacity: 0.6; }
+  /* 라이트는 불투명도로 물리지 않는다 — --tertiary 가 이미 «읽히는» 가장 옅은 글자라 .6 을 곱하면 2.5:1 */
+  :root[data-theme="light"] .mailtabs .mtab.dim:not(.on) { opacity: 1; }
   .mailtabs .gear { flex: none; font-size: 0.625rem; }
   /* 안 읽은 것이 있다는 표시. 숫자 자리를 뺏지 않으면서 눈에는 걸리게. */
   .mailtabs .mdot {
@@ -507,6 +548,8 @@
     color: var(--tertiary); margin-top: 0.0625rem;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
+  /* 라이트: 짙은 회색 8px 은 획이 가늘어 번져 보인다 — 한 단계 키운다 (다크는 크기 그대로) */
+  :root[data-theme="light"] .why { font-size: 0.5625rem; }
   .calempty { font-size: 0.625rem; color: var(--tertiary); padding: 0.1875rem; }
   .inner { transition: opacity 0.16s ease; }
   .card.open .inner { opacity: 0; pointer-events: none; }
@@ -526,6 +569,7 @@
     font-family: inherit; font-size: 0.625rem; font-weight: 650;
     color: color-mix(in srgb, var(--tint) 85%, white);
   }
+  :root[data-theme="light"] .sheet .sh button { color: var(--tint-ink); }
   .sheet .sh button:hover { text-decoration: underline; }
   .sheet .rows { display: flex; flex-direction: column; gap: 0.1875rem; overflow-y: auto; min-height: 0; }
   #sheet-rows { flex: 1; }   /* 남는 높이는 알림 목록이 갖고, 일정은 제 몫만 */
@@ -568,10 +612,16 @@
   .sheet .row.ev.mail .evdot { background: var(--unread); }
   .sheet .row.ev.mail.read .evdot { background: var(--tertiary); }
   .sheet .row.ev.read .evdot { background: var(--tertiary); }
-  .sheet .row .g { width: 0.875rem; height: 0.875rem; }
+  /* 라이트: 지금 일정 점은 잉크로. 안 읽은 메일 줄도 .now 를 달고 오므로 메일 점(--unread)은 비켜 간다 */
+  :root[data-theme="light"] .sheet .row.ev.now:not(.mail) .evdot { background: var(--tint-ink); }
+  /* 라이트는 불투명도로 물리지 않는다 (.55 를 곱한 글자는 3.7:1) — 패널의 읽은 메일 줄처럼 글자색만 내린다 */
+  :root[data-theme="light"] .sheet .row.ev.read { opacity: 1; }
+  :root[data-theme="light"] .sheet .row.ev.mail.read .nm { color: var(--secondary); }
+  .sheet .row .g { width: 0.875rem; height: 0.875rem; color: var(--mark, var(--tint)); }
   .sheet .row .nm { color: var(--label); font-weight: 540; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sheet .row .tm { color: var(--secondary); font-variant-numeric: tabular-nums; font-weight: 560; }
   .sheet .row.next .tm { color: color-mix(in srgb, var(--tint) 88%, white); }
+  :root[data-theme="light"] .sheet .row.next .tm { color: var(--tint-ink); }
   .sheet .empty { font-size: 0.6875rem; color: var(--tertiary); padding: 0.375rem 0.125rem; }
 
   /* ── 호버 컨트롤 ──
@@ -611,10 +661,13 @@
   .controls button.primary {
     width: auto; padding: 0 0.6875rem; border-radius: 999px;
     grid-auto-flow: column; gap: 0.25rem;
-    background: color-mix(in srgb, var(--tint) 82%, black);
+    /* 흰 글자를 얹는 채움 (oklch L .50, 두 테마 같음). 틴트에 검정을 섞던 예전 채움은
+       밝은 틴트에서 흰 글자가 2.6:1 이었다 */
+    background: var(--tint-fill);
     color: #fff;
   }
-  .controls button.primary:hover { filter: brightness(1.12); }
+  /* 1.12 로 밝히면 흰 글자가 4.5:1 경계(4.56)까지 내려간다 */
+  .controls button.primary:hover { filter: brightness(1.06); }
   .controls button.primary span { font-family: inherit; font-size: 0.6875rem; font-weight: 650; letter-spacing: -0.01em; }
   .controls svg { width: 0.8125rem; height: 0.8125rem; display: block; }
   /* 아이콘마다 그려지는 크기가 제각각이라(톱니는 상자를 꽉 채우고 메일은 절반뿐)
@@ -628,6 +681,10 @@
   #btn-mail svg { transform: scale(1.16); }
   #btn-set svg { transform: scale(0.74); }
   .controls button:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--tint) 70%, transparent); }
+  :root[data-theme="light"] .controls button:focus-visible { box-shadow: 0 0 0 2px var(--tint-ink); }
+  /* 채운 «지금 쉬기» 는 잉크 링과 채움이 1.3:1 로 붙어 초점이 안 보인다 — 2px 떼어 두른다.
+     틈은 비어 있어 띠(--bar) 바탕이 비친다 (링은 띠 위 가장 옅은 종류도 5.7:1). 채움 없는 아이콘 단추는 위 규칙 그대로 */
+  :root[data-theme="light"] .controls button.primary:focus-visible { box-shadow: none; outline: 2px solid var(--tint-ink); outline-offset: 2px; }
 
   /* ── 업데이트 알림 칩 ──
      카드 우측 상단 구석에 조용히 뜬다. 한 번 누르면 확인, 한 번 더 누르면 설치. */
@@ -660,9 +717,16 @@
   .upchip:hover { background: color-mix(in srgb, var(--tint) 34%, transparent); }
   .upchip.armed {
     color: #fff;
-    background: color-mix(in srgb, var(--tint) 88%, black);
+    background: var(--tint-fill);   /* 지금 쉬기 단추와 같은 채움 — 검정 섞은 틴트는 흰 글자 3:1 남짓 */
     box-shadow: none;
   }
+  /* 라이트: 틴트 글자는 잉크로, 테두리도 잉크 기준으로. 호버 칠은 34% 면 잉크 글자가 눌린다.
+     한 번 누른 칩(.armed)은 채움 위 흰 글자라 비켜 간다 — 안 그러면 이 규칙이 우선순위로 이긴다. */
+  :root[data-theme="light"] .upchip:not(.armed) {
+    color: var(--tint-ink);
+    box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--tint-ink) 45%, transparent);
+  }
+  :root[data-theme="light"] .upchip:not(.armed):hover { background: color-mix(in srgb, var(--tint) 28%, transparent); }
   @keyframes upfade { from { opacity: 0; transform: translateY(-3px); } }
 
   /* ── 리사이즈 그립 ── */
@@ -689,6 +753,8 @@
   .rz-sw { left: -5px; bottom: -5px; width: 17px; height: 17px; cursor: nesw-resize; }
   .rz-se { right: -5px; bottom: -5px; width: 17px; height: 17px; cursor: nwse-resize; }
   .stage:hover .grip { opacity: 0.45; }
+  /* 라이트: .45 는 흰 유리 위에서 거의 안 보인다(2.8:1) — 손잡이인 줄 알아볼 만큼만 올린다 */
+  :root[data-theme="light"] .stage:hover .grip { opacity: 0.7; }
   .grip svg { width: 100%; height: 100%; color: var(--label); }
 
   @media (prefers-reduced-motion: reduce) {

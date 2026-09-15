@@ -1,6 +1,6 @@
 const {
   app, BrowserWindow, Tray, Menu, ipcMain, screen,
-  powerMonitor, nativeImage, shell
+  powerMonitor, nativeImage, shell, nativeTheme
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -19,7 +19,7 @@ const glass = require('./glass');
 // 창을 만들 때 쓰는 것들은 win.js 로 옮겼다.
 // 이름을 풀어서 받는다 — 창을 만드는 함수마다 «win»이라는 지역 변수를 이미 쓰고 있어서
 // 모듈을 그 이름으로 두면 가려진다.
-const { PRELOAD, page, PAD, PAD_H, clamp, glassQuery, openWeb, lockToOurPage } = require('./win');
+const { PRELOAD, page, PAD, PAD_H, clamp, glassQuery, broadcastGlass, openWeb, lockToOurPage } = require('./win');
 
 // 물어보는 창·오른쪽 클릭 메뉴는 popup.js 가 그린다 (윈도우 기본 대화상자를 안 쓴다)
 const { askUser } = require('./popup');
@@ -619,9 +619,14 @@ function openSettings(tab) {
   // 우리 페이지 밖으로 못 나가게 (남의 주소로 가면 이 창이 다리를 쥔 브라우저가 된다)
   lockToOurPage(settingsWin);
   settingsWin.loadFile(page('settings.html'), {
-    query: glassQuery(want ? { radius: '20', tab: want } : { radius: '20' })
+    // 글이 빽빽한 창이라 유리를 한 단계 진하게 받는다 (계산은 win.js effScrim)
+    query: glassQuery({ radius: '20', dense: '1', ...(want ? { tab: want } : {}) })
   });
-  settingsWin.on('closed', () => { settingsWin = null; });
+  settingsWin.on('closed', () => {
+    settingsWin = null;
+    // 슬라이더를 끌다가 저장 없이 닫으면 미리보기 값이 다른 창에 남는다 — 저장값으로 되돌린다
+    broadcastGlass();
+  });
 }
 let widgetBaseHeight = null;
 const panelHeights = { cal: 0, mail: 0, fix: 0, calNeeded: -1 };   // 패널이 둘이라 각자 얼마나 쓰는지 따로 센다
@@ -814,12 +819,16 @@ ipcMain.on('settings:set-app', (_e, patch) => {
   // «지금부터»의 기준점을 바로 찍는다. 다음 폴링까지 기다리면 그 사이에 온 메일이
   // 지난 메일로 분류되어 자동 백업 대상에서 빠진다.
   if (patch.mailAutoBackup === true) autoBackupNew({ now: true });
+  // 유리 진하기는 위젯만이 아니라 열린 유리 창 전부가 따른다 (저장한 뒤라 저장값이 나간다)
+  if (patch.scrim != null) broadcastGlass();
   if (widgetWin && !widgetWin.isDestroyed()) {
-    if (patch.scrim != null) widgetWin.webContents.send('scrim', patch.scrim);
     if (patch.radius != null) widgetWin.webContents.send('radius', patch.radius);
   }
   updateTray();
 });
+// 슬라이더를 끄는 동안의 미리보기 — 저장하지 않고 창에만 보여준다.
+// 놓으면 settings:set-app 이 저장값을 다시 알리고, 저장 없이 설정 창을 닫으면 closed 가 되돌린다.
+ipcMain.on('glass:preview', (_e, v) => broadcastGlass(v));
 ipcMain.on('settings:set-reminder', (_e, { id, patch }) => {
   store.setReminder(id, patch);
   scheduler.sync();
@@ -885,6 +894,8 @@ if (!app.requestSingleInstanceLock()) {
     if (resumed) console.log(`[session] 이전 상태 이어가기 (알림 ${resumed.restored}개)`);
 
     updateTray();
+    // 윈도우 설정에서 앱 모드(라이트/다크)를 바꾸면 열린 창이 다시 열지 않아도 따라온다
+    nativeTheme.on('updated', () => broadcastGlass());
     breakwin.watchDisplays();
     // 주소록의 파일 고르기 창을 설정 창 위에 띄우기 위해 (여기서 해야 settingsWin이 선언된 뒤다)
     contacts.init({ parentWin: () => settingsWin });

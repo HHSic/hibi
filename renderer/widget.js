@@ -8,7 +8,8 @@ const mailCard = document.getElementById('card');
 
 const params = new URLSearchParams(location.search);
 
-root.dataset.theme = params.get('theme') === 'light' ? 'light' : 'dark';
+// 테마와 유리 진하기(data-theme · --scrim-a)는 theme.js 가 입힌다 — 메인이 정한 값을
+// 처음엔 주소에서, 그 뒤로는 'glass' 방송에서 받는다. 여기서 또 칠하면 방송을 덮어쓴다.
 const num = (key, fallback) => {
   const v = parseFloat(params.get(key));
   return Number.isNaN(v) ? fallback : v;
@@ -18,10 +19,8 @@ const INSET = num('inset', 12);
 const CTLH = num('ctlh', 36);
 root.style.setProperty('--inset', INSET + 'px');
 root.style.setProperty('--ctlh', CTLH + 'px');
-root.style.setProperty('--scrim-a', String(num('scrim', 0.92)));
 root.style.setProperty('--r', num('radius', 26) + 'px');
 
-window.nunsseom.onScrim((v) => root.style.setProperty('--scrim-a', String(v)));
 window.nunsseom.onRadius((v) => root.style.setProperty('--r', v + 'px'));
 
 // ── 크기대 판정 + 스케일 ───────────────────────────
@@ -185,7 +184,9 @@ function renderTags(d) {
     tag.className = 'tag' + (cls ? ' ' + cls : '');
     if (mark) {
       const g = window.nunsMark(mark, 'g');
-      if (color) g.style.color = color;
+      // 색은 재료로만 넘긴다. style.color 로 박으면 인라인이라 어떤 테마 규칙도 못 이기고,
+      // 라이트의 흰 유리 위에 파스텔이 그대로 올라가 안 보인다 — 잉크는 CSS(.g.tinted)가 고른다.
+      if (color) { g.style.setProperty('--c', color); g.classList.add('tinted'); }
       tag.append(g);
     }
     const nm = document.createElement('span');
@@ -248,7 +249,8 @@ function renderSheet(list) {
     const row = document.createElement('div');
     row.className = 'row' + (i === 0 ? ' next' : '');
     const g = window.nunsMark(t, 'g');
-    g.style.color = t.color;
+    // 라벨바와 같은 이유로 색은 --c 로만 (.g.tinted 참고)
+    if (t.color) { g.style.setProperty('--c', t.color); g.classList.add('tinted'); }
     const nm = document.createElement('span');
     nm.className = 'nm';
     nm.textContent = t.name;

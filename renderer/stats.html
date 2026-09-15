@@ -15,11 +15,13 @@
                img-src file: data:;
                media-src file: data:">
 <link rel="stylesheet" href="../assets/font/pretendard.css">
+<link rel="stylesheet" href="tokens.css">
+<script src="theme.js"></script>
 <script src="icons.js"></script>
 <style>
   :root {
     --accent: #5ecfb6;
-    --scrim-a: 0.84;
+    --scrim-a: 0.92;   /* 주소에 값이 없을 때만 — 메인 SCRIM.fallback 과 같게 */
     --scrim: rgba(20, 20, 25, var(--scrim-a));
     --label: rgba(255, 255, 255, 0.96);
     --secondary: rgba(235, 235, 245, 0.60);
@@ -32,16 +34,10 @@
     --inset: 12px;
     --r: 20px;
   }
+  /* 라이트 글자·강조색은 tokens.css 가 정한다. 여기서 같은 이름을 다시 쓰면 그 값을 덮으므로 이 창에만 있는 것만 둔다.
+     테두리는 예전 흰색 .60 이 흰 유리 위에서 안 보여 공용 hairline 을 쓴다. */
   :root[data-theme="light"] {
-    --accent: #23a58a;
-    --scrim-a: 0.82;
-    --scrim: rgba(248, 248, 250, var(--scrim-a));
-    --label: rgba(0, 0, 0, 0.90);
-    --secondary: rgba(60, 60, 67, 0.62);
-    --tertiary: rgba(60, 60, 67, 0.40);
-    --separator: rgba(60, 60, 67, 0.13);
-    --fill: rgba(0, 0, 0, 0.05);
-    --hair: rgba(255, 255, 255, 0.60);
+    --hair: var(--hairline);
     --grass-empty: rgba(0, 0, 0, 0.07);
     --veil: rgba(242, 242, 247, 0.94);
   }
@@ -107,8 +103,12 @@
   }
   .tab svg { width: 13px; height: 13px; }
   .tab .emoji { font-size: 12px; line-height: 1; display: inline-grid; place-items: center; }
-  .tab.on { color: #08110f; box-shadow: none; }
-  :root[data-theme="light"] .tab.on { color: #fff; }
+  /* 종류 색은 JS 가 --c 로만 넘긴다 — 인라인 background·color 는 테마 규칙을 전부 이겨서
+     라이트에서도 파스텔이 그대로 남았다. 라이트는 색상·채도는 두고 명도만 낮춘다 (글리프 .44, 채움 .50). */
+  .tab { --mark: var(--c); }
+  .tab.on { background: var(--c, var(--accent)); color: #08110f; box-shadow: none; }
+  :root[data-theme="light"] .tab { --mark: oklch(from var(--c, var(--accent)) 0.44 c h); }
+  :root[data-theme="light"] .tab.on { background: oklch(from var(--c, var(--accent)) 0.50 c h); color: #fff; }
 
   .body { flex: 1; overflow-y: auto; padding: 8px 16px 18px; }
   .body::-webkit-scrollbar { width: 8px; }
@@ -120,9 +120,17 @@
   /* 종류 상세 헤더 (특정 종류 선택 시) */
   .detail { display: none; margin-top: 6px; }
   body.type-view .detail { display: block; }
+  /* 종류를 고르면 그 색이 강조색이 된다. JS 는 원래 색을 --type 으로만 넘기고 테마별 색은 여기서 만든다.
+     --accent-fill 은 :root 에서 이미 계산이 끝나 --accent 만 바꾸면 안 따라오므로 둘을 같이 둔다. */
+  body.type-view { --accent: var(--type); --accent-fill: var(--type); }
+  :root[data-theme="light"] body.type-view {
+    --accent: oklch(from var(--type) 0.44 c h);
+    --accent-fill: oklch(from var(--type) 0.50 c h);
+  }
   .d-next { font-size: 40px; font-weight: 250; letter-spacing: -0.045em; line-height: 1; font-variant-numeric: tabular-nums; }
   .d-when { font-size: 12.5px; color: var(--secondary); margin-top: 7px; }
   .d-when b { color: color-mix(in srgb, var(--accent) 82%, white); font-weight: 600; }
+  :root[data-theme="light"] .d-when b { color: var(--accent); }
   /* 버튼은 폭을 꽉 채우지 않고 내용만큼 (배너처럼 안 보이게) */
   .d-act { display: flex; gap: 8px; margin-top: 16px; }
   .btn {
@@ -131,7 +139,8 @@
   }
   .btn svg { width: 13px; height: 13px; vertical-align: -2px; margin-right: 4px; }
   .btn.primary { background: color-mix(in srgb, var(--accent) 88%, black); color: #08110f; }
-  :root[data-theme="light"] .btn.primary { color: #fff; }
+  /* 라이트는 강조색을 검정에 섞으면 흰 글자가 모자란다 — 흰 글자용 채움(--accent-fill)을 쓴다 */
+  :root[data-theme="light"] .btn.primary { background: var(--accent-fill); color: #fff; }
   .btn.ghost { background: var(--fill); box-shadow: inset 0 0 0 0.5px var(--separator); color: var(--secondary); }
 
   /* 전체 요약 (전체 선택 시) */
@@ -157,13 +166,19 @@
 
   .legend { display: flex; align-items: center; gap: 5px; font-size: 10.5px; color: var(--tertiary); margin-top: 11px; }
   .legend .cell { width: 10px; height: 10px; border-radius: 2px; background: var(--grass-empty); }
+  /* 라이트는 옅은 단계(.28·.50) 칸이 흰 유리 위에서 거의 안 보인다 (1.5·2.2:1).
+     채운 칸에만 같은 강조색 64% 테두리를 안쪽으로 둘러 칸 자체는 3:1 을 넘기고 (가장 나쁜 1단계도 3.37),
+     단계 차이는 안쪽 알파 차이가 그대로 보여 준다. 빈 칸은 1단계보다 옅게 그대로 둔다. 범례 칸도 같은 규칙을 탄다.
+     두께는 1.5px — 1px 은 125% 배율에서 칸 모서리가 반 픽셀에 걸려 번지면서 2.6:1 로 떨어졌다. */
+  :root[data-theme="light"] .grass .cell[data-lv],
+  :root[data-theme="light"] .legend .cell[data-lv] { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 64%, transparent); }
 
   .range { display: flex; align-items: center; gap: 12px; margin-top: 20px; }
   .range .rlab { font-size: 12px; color: var(--secondary); }
   .segs { display: inline-flex; background: var(--fill); border-radius: 9px; padding: 2px; box-shadow: inset 0 0 0 0.5px var(--separator); }
   .segs button { all: unset; cursor: default; font-family: inherit; font-size: 11.5px; font-weight: 600; color: var(--secondary); padding: 5px 12px; border-radius: 7px; }
   .segs button.on { background: color-mix(in srgb, var(--accent) 86%, black); color: #08110f; }
-  :root[data-theme="light"] .segs button.on { color: #fff; }
+  :root[data-theme="light"] .segs button.on { background: var(--accent-fill); color: #fff; }
 
   .today-line { font-size: 12px; color: var(--secondary); margin-top: 16px; }
   .today-line b { color: var(--label); font-weight: 600; }
@@ -223,9 +238,7 @@
   const params = new URLSearchParams(location.search);
   const root = document.documentElement;
   if (params.get('material') === 'css') document.body.classList.add('no-glass');
-  root.dataset.theme = params.get('theme') === 'light' ? 'light' : 'dark';
-  const s0 = parseFloat(params.get('scrim'));
-  if (!Number.isNaN(s0)) root.style.setProperty('--scrim-a', String(s0));
+  // 테마와 유리 진하기는 theme.js 가 입힌다 (윈도우 테마를 바꾸면 다시 열지 않아도 따라온다)
 
   const LEVEL_ALPHA = [0, 0.28, 0.5, 0.74, 1];
   let current = params.get('focus') || null;   // 선택된 종류 id (null = 전체)
@@ -289,10 +302,11 @@
       const on = (current || null) === (id || null);
       const b = document.createElement('button');
       b.className = 'tab' + (on ? ' on' : '');
-      if (color && on) b.style.background = color;
+      // 색은 --c 로만 넘긴다. 켜진 탭 바탕·글리프 색은 CSS(.tab)가 테마에 맞춰 만든다
+      if (color) b.style.setProperty('--c', color);
       if (glyph || emoji) {
         const g = window.nunsMark(emoji ? { emoji } : glyph);
-        if (color) g.style.color = on ? 'inherit' : color;
+        if (color) g.style.color = on ? 'inherit' : 'var(--mark)';
         b.append(g);
       }
       const t = document.createElement('span');
@@ -332,7 +346,10 @@
       const el = document.createElement('span');
       el.className = 'cell' + (c.future ? ' future' : '');
       const lv = level(c.count);
-      if (lv > 0) el.style.background = `color-mix(in srgb, ${accent} ${Math.round(LEVEL_ALPHA[lv] * 100)}%, transparent)`;
+      if (lv > 0) {
+        el.dataset.lv = lv;   // 라이트 테두리(CSS)가 채운 칸을 이것으로 고른다 — 범례 칸과 같은 표시
+        el.style.background = `color-mix(in srgb, ${accent} ${Math.round(LEVEL_ALPHA[lv] * 100)}%, transparent)`;
+      }
       host.append(el);
     }
   }
@@ -346,10 +363,11 @@
   async function load() {
     const d = await window.nunsseom.statsData(current);
     weeks = d.weeks;
-    // 종류를 고르면 그 색을 --accent 로, 전체면 CSS 기본값(teal)으로 되돌린다.
-    // (여기서 'var(--accent)'를 setProperty 하면 자기참조로 값이 깨진다)
-    if (d.detail) root.style.setProperty('--accent', d.detail.color);
-    else root.style.removeProperty('--accent');
+    // 종류를 고르면 그 색을 --type 으로 넘기고, 전체면 지워 CSS 기본 강조색(teal)으로 돌아간다.
+    // --accent 에 바로 넣으면 안 된다 — 인라인 값이 라이트 규칙을 이겨 흰 유리 위에 파스텔 글자가 남는다.
+    // 테마별 강조색은 body.type-view 가 --type 에서 만든다.
+    if (d.detail) root.style.setProperty('--type', d.detail.color);
+    else root.style.removeProperty('--type');
     const accent = 'var(--accent)';
 
     document.body.classList.toggle('type-view', !!d.selected);

@@ -1,9 +1,11 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('nunsseom', {
+  // 모든 유리 창 — 테마·유리 진하기가 바뀌면 메인이 알린다 (renderer/theme.js 가 듣는다)
+  onGlass: (cb) => ipcRenderer.on('glass', (_e, g) => cb(g)),
+
   // 위젯
   onTick: (cb) => ipcRenderer.on('tick', (_e, data) => cb(data)),
-  onScrim: (cb) => ipcRenderer.on('scrim', (_e, v) => cb(v)),
   onRadius: (cb) => ipcRenderer.on('radius', (_e, v) => cb(v)),
   togglePause: () => ipcRenderer.send('widget:toggle-pause'),
   breakNow: (id) => ipcRenderer.send('widget:break-now', id),
@@ -42,6 +44,8 @@ contextBridge.exposeInMainWorld('nunsseom', {
   // 설정
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setApp: (patch) => ipcRenderer.send('settings:set-app', patch),
+  // 유리 진하기 슬라이더를 끄는 동안 모든 창에 미리 보여준다 — 저장은 setApp 이 한다
+  previewScrim: (v) => ipcRenderer.send('glass:preview', v),
   setReminder: (id, patch) => ipcRenderer.send('settings:set-reminder', { id, patch }),
   customAdd: (def) => ipcRenderer.invoke('settings:custom-add', def),
   customUpdate: (id, patch) => ipcRenderer.invoke('settings:custom-update', { id, patch }),

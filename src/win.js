@@ -6,7 +6,7 @@
 
 const path = require('path');
 const { pathToFileURL } = require('url');
-const { screen, nativeTheme, shell } = require('electron');
+const { screen, nativeTheme, shell, BrowserWindow } = require('electron');
 const store = require('./store');
 const glass = require('./glass');
 
@@ -19,15 +19,57 @@ const PAD_H = PAD + glass.CONTROLS;
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
-/** 화면이 창을 그릴 때 필요한 것 — 테마·유리 진하기·여백을 주소에 실어 보낸다 */
-function glassQuery(extra) {
+// 유리 진하기(scrim) — 저장값(슬라이더 40~98%)은 그대로 두고, 창에 «실제로 칠할 값»만 여기서 정한다.
+// 이 계산은 여기 한 곳에만 둔다. 창마다 따로 +0.04 를 하던 때는 서로 어긋났다.
+//   · 라이트는 0.90 아래로 안 내린다. 유리가 옅으면 흰 유리 너머로 어두운 배경화면이 비쳐
+//     회색 글자가 묻힌다(«하얀 모드 글자가 안 읽힌다»). 0.90이면 #111 배경 위에서도 글자 토큰이 4.5:1을 넘는다.
+//   · 다크는 예전과 똑같다 (0.40~0.98).
+//   · 글이 빽빽한 창(설정·주식)은 0.04 더 진하게, 단 0.96까지.
+const SCRIM = { min: 0.40, max: 0.98, lightFloor: 0.90, dense: 0.04, denseMax: 0.96, fallback: 0.92 };
+
+/** 칠할 유리 알파. raw = 저장값(0~1), dark = 다크 테마인가, dense = 빽빽한 창인가 */
+function effScrim(raw, dark, dense) {
+  // null·빈 글자를 Number 로 읽으면 0 이 되어 가장 옅은 유리가 된다 — 숫자가 아니면 기본값으로
+  const s = typeof raw === 'number' ? raw : parseFloat(raw);
+  let a = Number.isFinite(s) ? s : SCRIM.fallback;
+  a = clamp(a, dark ? SCRIM.min : SCRIM.lightFloor, SCRIM.max);
+  if (dense) a = Math.min(SCRIM.denseMax, a + SCRIM.dense);
+  // 0.92+0.04 가 0.9600000000000001 로 주소에 실리지 않게
+  return Math.round(a * 1000) / 1000;
+}
+
+/** 지금 테마와 칠할 유리 진하기 — 창을 열 때(주소)와 바뀔 때(방송)가 같은 값을 쓴다 */
+function glassState(raw = store.settings.scrim) {
+  const dark = nativeTheme.shouldUseDarkColors;
+  return { theme: dark ? 'dark' : 'light', scrim: effScrim(raw, dark, false), scrimDense: effScrim(raw, dark, true) };
+}
+
+/**
+ * 화면이 창을 그릴 때 필요한 것 — 테마·유리 진하기·여백을 주소에 실어 보낸다.
+ * scrim 은 저장값이 아니라 칠할 값이다. 빽빽한 창은 extra 에 dense: '1' 을 주면 진한 쪽을 받고,
+ * 화면(renderer/theme.js)도 그 표시를 보고 이후 방송에서 같은 쪽을 고른다.
+ */
+function glassQuery(extra = {}) {
+  const g = glassState();
   return {
-    theme: nativeTheme.shouldUseDarkColors ? 'dark' : 'light',
-    scrim: String(store.settings.scrim),
+    theme: g.theme,
+    scrim: String(extra.dense === '1' ? g.scrimDense : g.scrim),
     inset: String(glass.INSET),
     ctlh: String(glass.CONTROLS),
     ...extra
   };
+}
+
+/**
+ * 열린 창 전부에 테마·유리 진하기를 다시 알린다 — 윈도우 테마가 바뀌었을 때, 슬라이더를
+ * 저장했거나 끄는 중(미리보기)일 때. raw 를 안 주면 저장값으로.
+ * 누가 듣는지 가리지 않는다. 안 듣는 창(휴식 화면 등)은 그냥 흘려보낸다.
+ */
+function broadcastGlass(raw) {
+  const g = glassState(raw);
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed() && !w.webContents.isDestroyed()) w.webContents.send('glass', g);
+  }
 }
 
 /**
@@ -130,5 +172,6 @@ function cascadeFrom(width, height, from) {
 
 module.exports = {
   PRELOAD, page, PAD, PAD_H, clamp,
-  glassQuery, lockToOurPage, openWeb, isOurPage, maxSize, cascadeFrom
+  SCRIM, effScrim, glassState, glassQuery, broadcastGlass,
+  lockToOurPage, openWeb, isOurPage, maxSize, cascadeFrom
 };
