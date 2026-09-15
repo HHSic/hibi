@@ -257,10 +257,12 @@ app.whenReady().then(async () => {
     }
     host.textContent = '';
     document.documentElement.classList.remove('ent-hero');
-    return { wrong, seen: seen.size, total: urls.size, ids: E.catIds(), inList: E.LIST.some((m) => m.id === 'cat-random') };
+    // 구석·가운데 회색 고양이처럼 한 영상을 두 자리가 같이 쓰기도 한다 — 뽑히는 id 가 가리키는 «서로 다른 영상» 수와 맞춘다
+    const idUrls = new Set(E.catIds().map((id) => new URL(window.nunsClip.CLIPS[id].url, document.baseURI).href)).size;
+    return { wrong, seen: seen.size, total: urls.size, idUrls, ids: E.catIds(), inList: E.LIST.some((m) => m.id === 'cat-random') };
   })()`);
   ok(e3.wrong === 0 && e3.inList, '«랜덤 고양이»를 화면 쪽에서 받아도 고양이 영상 하나로 띄운다', e3);
-  ok(e3.seen >= Math.min(3, e3.total) && e3.ids.length === e3.total, '30번에 여러 고양이가 나온다', e3);
+  ok(e3.seen >= Math.min(3, e3.total) && e3.idUrls === e3.total, '30번에 여러 고양이가 나온다 (뽑는 목록이 영상을 빠짐없이 가리킨다)', e3);
 
   console.log('\n[영상이 안 열리면]');
   const e2 = await js(`(async () => {

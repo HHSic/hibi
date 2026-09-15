@@ -1,5 +1,5 @@
 # 알파 다듬어 투명 PNG 묶음 만들기
-# 초록·검은 바탕이 아닌 영상(예: 러시안블루 cat-rb — Pexels 29758643, 방 안에서 찍음)을 AI 누끼로 딴다.
+# 초록·검은 바탕이 아닌 영상(예: cat-rb 회색 고양이 — Pexels 3042263, 방 안에서 찍음)을 AI 누끼로 딴다.
 # 모델: BiRefNet-matting (MIT, github.com/ZhengPeng7/BiRefNet 릴리스 v1 의 BiRefNet-matting-epoch_100.onnx, 927.6MB).
 # 모델 파일은 저장소에 넣지 않는다. CPU onnxruntime 으로 1080p 한 장에 약 18초 (Core Ultra 7 155H).
 # 순서: matte_run.py (프레임마다 알파) → matte_post.py (다듬어 투명 PNG 묶음) → BAKE_FRAMES=<묶음> main.js (반복 webm)
@@ -23,7 +23,7 @@ opt = dict(a.split('=', 1) for a in sys.argv[5:] if '=' in a)
 max_h = int(pos[0]) if len(pos) > 0 else 760
 grow = int(pos[1]) if len(pos) > 1 else 40
 # strict=x0,y0,x1,y1 — 이 상자 안(원본 px)에서는 확실한 몸(중앙값 알파 > 0.9)에서 8px 넘게 떨어진 알파를 지운다.
-#   고양이 뒤 물건(러시안블루 귀 뒤 의자 등받이 테두리)에 반투명 알파가 붙어 나오는 곳에만 쓴다 —
+#   고양이 뒤 물건(처음 cat-rb 였던 러시안블루 Pexels 29758643 의 귀 뒤 의자 등받이 테두리)에 반투명 알파가 붙어 나오는 곳에만 쓴다 —
 #   화면 전체에 쓰면 초점 밖으로 흐린 발처럼 테두리가 넓게 번진 곳이 깎여 딱딱해진다
 strict = [int(v) for v in opt['strict'].split(',')] if 'strict' in opt else None
 # fade_left=0.1 — 자른 영상 왼쪽 폭의 이만큼을 서서히 투명하게. 몸이 원본 왼쪽 끝에 잘렸는데 영상은 창 오른쪽에 붙을 때

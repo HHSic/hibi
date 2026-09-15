@@ -12,8 +12,9 @@
  *   cat-lie.webm   Pixabay 117331 — 줄무늬 아기 고양이, 2.5~5.2초 구간 (엎드려 두리번)
  *   cat-roll.webm  Pixabay 117331 — 같은 고양이, 0~2.2초 구간 (옆으로 늘어져 올려다봄)
  *   cat-loaf.webm  Pexels 5335454 «Adorable Cat Looking Around» — 식빵 자세 브리티시 숏헤어, 검은 바탕
- *   cat-rb.webm    Pexels 29758643 «Relaxed Russian Blue Cat Lounging Indoors» — 의자 위에 동그랗게 누운 러시안블루,
- *                  12~20초 구간. 방 안에서 찍어 배경 색으로는 못 가른다 — AI 누끼(BiRefNet-matting, MIT)로 땄다
+ *   cat-rb.webm    Pexels 3042263 «A Furry Pet Cat Resting On A Carpet Floor» — 흰 가슴털 회색 고양이, 26~36.5초 구간
+ *                  (식빵 자세로 고개를 돌린다). 방 안에서 찍어 배경 색으로는 못 가른다 — AI 누끼(BiRefNet-matting, MIT)로 땄다.
+ *                  구석(cat-rb)과 가운데(cat-rb-hero) 두 자리가 이 한 파일을 같이 쓴다 — 가운데서도 선명하게 원본 높이로 구웠다
  * 원본 mp4 는 싣지 않고, scripts/bake-clip 이 바꾼 결과만 싣는다:
  *   · 배경을 걷어 투명하게 (VP9 알파) — 초록 바탕은 초록 우세도로, 검은 바탕은 밝기 + 구멍 메운 실루엣으로
  *   · 고양이 자리만 잘라 내고, 앉은 받침(밝은 초록 띠)을 잘라 발이 창 아래 끝에 닿게
@@ -83,15 +84,28 @@
       arrivalMs: 700
     },
     'cat-rb': {
-      // Pexels 29758643 의 12~20초 — 러시안블루가 의자 위에 동그랗게 누워 초록 눈으로 바라본다. 가까이서 찍어 몸이
-      // 원본 왼쪽·오른쪽·아래 끝에 잘렸다 — 오른쪽 끝은 창 오른쪽에 딱 붙이고(side 0), 왼쪽·아래 끝은 구울 때 흐리게 지웠다.
-      // 아래까지 지운 까닭: 세로 화면에서는 단추 줄 위로 올라가는데, 잘린 아랫면이 공중에 뜨면 어색하다
+      // Pexels 3042263 의 26~36.5초 — 회색 고양이가 카펫에 식빵 자세로 앉아 왼쪽을 보다가 고개를 돌려 정면을 본다.
+      // 처음엔 러시안블루(Pexels 29758643) 클로즈업이었는데, 거의 안 움직이고 몸이 잘린 털 덩어리로 보여 바꿨다.
+      // 예전에 골라 둔 설정이 그대로 이어지게 id 는 'cat-rb' 로 둔다. 원본 위쪽 끝에 귀 끝이 몇 픽셀 잘려 있다(cut.top)
       url: '../assets/enter/cat-rb.webm',
-      width: 1402,
-      height: 760,
+      width: 1034,
+      height: 1032,
       fps: 30,
-      cut: { right: true },
-      place: { mode: 'corner', anchor: 'right', side: 0, bottom: 0, height: 0.46 },
+      cut: { top: true },
+      // 오른쪽 여백은 다른 고양이(0.035)보다 좁게 — 가로세로가 거의 같아서, 세로 화면(1080x1920)에서 단추 줄을
+      // 피해 폭이 줄면 짧은 변의 30% 아래로 작아졌다 (영상 안에 제 여백이 조금 있어 창 끝에 붙어 보이지는 않는다)
+      place: { mode: 'corner', anchor: 'right', side: 0.01, bottom: 0, height: 0.46 },
+      arrivalMs: 700
+    },
+    'cat-rb-hero': {
+      // 같은 회색 고양이를 가운데에 크게 — 휴식 안내·할 일 목록·단추는 오른쪽 아래로 비켜 준다
+      // («할 목록과 그거를 오른쪽으로 밀고 고양이 영상을 가운데로 옮기는 버전도» 요청). 영상은 cat-rb 와 같은 파일
+      url: '../assets/enter/cat-rb.webm',
+      width: 1034,
+      height: 1032,
+      fps: 30,
+      cut: { top: true },
+      place: { mode: 'hero', height: 0.8 },
       arrivalMs: 700
     }
   };

@@ -154,7 +154,7 @@ const DISABLED_ENTER = new Set(['web']);
  * 고양이 영상 id — renderer/anim/clip.js 의 CLIPS 와 같아야 한다. 메인은 화면 쪽 파일을 못 읽어 따로 적는다
  * (test/catrandom.test.js 가 맞춰 본다). «랜덤 고양이»와 «그때그때»가 여기서 뽑는다.
  */
-const CAT_ENTERS = ['cat', 'cat-loaf', 'cat-lie', 'cat-roll', 'cat-meow', 'cat-rb'];
+const CAT_ENTERS = ['cat', 'cat-loaf', 'cat-lie', 'cat-roll', 'cat-meow', 'cat-rb', 'cat-rb-hero'];
 // 바로 앞 휴식에 나온 고양이 — «랜덤 고양이»가 같은 고양이를 두 번 연달아 내지 않게
 let lastCat = null;
 

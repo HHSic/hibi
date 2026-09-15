@@ -1,5 +1,5 @@
 # 프레임마다 AI 누끼 알파 만들기
-# 초록·검은 바탕이 아닌 영상(예: 러시안블루 cat-rb — Pexels 29758643, 방 안에서 찍음)을 AI 누끼로 딴다.
+# 초록·검은 바탕이 아닌 영상(예: cat-rb 회색 고양이 — Pexels 3042263, 방 안에서 찍음)을 AI 누끼로 딴다.
 # 모델: BiRefNet-matting (MIT, github.com/ZhengPeng7/BiRefNet 릴리스 v1 의 BiRefNet-matting-epoch_100.onnx, 927.6MB).
 # 모델 파일은 저장소에 넣지 않는다. CPU onnxruntime 으로 1080p 한 장에 약 18초 (Core Ultra 7 155H).
 # 순서: matte_run.py (프레임마다 알파) → matte_post.py (다듬어 투명 PNG 묶음) → BAKE_FRAMES=<묶음> main.js (반복 webm)

@@ -144,11 +144,11 @@ app.whenReady().then(async () => {
   await sleep(5500);
   const s7 = await state();
   ok(s7.src === null, '떼어 낸 뒤 돌리기가 되살아나지 않는다', s7);
-  await click('러시안블루');
+  await click('회색 고양이');
   const s8 = await shown('cat-rb.webm');
   await sleep(5500);
   const s9 = await state();
-  ok(!!s8 && s9.src === 'cat-rb.webm' && !s9.hidden && s9.on[0] === '러시안블루', '고양이 하나를 고르면 그 영상만 — 돌리지 않는다', { s8, s9 });
+  ok(!!s8 && s9.src === 'cat-rb.webm' && !s9.hidden && s9.on[0] === '회색 고양이', '고양이 하나를 고르면 그 영상만 — 돌리지 않는다', { s8, s9 });
   const saved = await js('window.__setApp || []');
   ok(saved.some((p) => p.overlayEnter === 'cat-random') && saved[saved.length - 1].overlayEnter === 'cat-rb',
     '고른 것이 저장 요청으로 나간다', saved);
