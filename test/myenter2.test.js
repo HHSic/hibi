@@ -73,9 +73,9 @@ app.whenReady().then(async () => {
   // 페이로드를 직접 읽는다. 여기 담긴 enter 가 곧 그 휴식의 연출이다.
   store.setSettings({ overlayEnter: 'random' });
   const seen = new Set();
-  // 뽑는 후보가 고양이(src/breakwin.js CAT_ENTERS, 지금 일곱)·블라인드·내 파일로 9개다 — 12번이면 내 파일이
-  // 한 번도 안 나올 확률이 24% 라 40번 뽑는다 (0.9%). 고양이를 더 넣으면 이 확률도 같이 다시 잰다
-  for (let n = 0; n < 40; n++) {
+  // 뽑는 후보가 고양이(src/breakwin.js CAT_ENTERS, 지금 아홉)·블라인드·내 파일로 11개다 — 40번이면 내 파일이
+  // 한 번도 안 나올 확률이 2.2% 라 60번 뽑는다 (0.33%). 고양이를 더 넣으면 이 확률도 같이 다시 잰다
+  for (let n = 0; n < 60; n++) {
     ipcMain.emit('widget:break-now', {}, 'eye');
     // 화면 수만큼 다 뜨길 기다린다 — 하나만 보고 «같다»고 하면 검사가 아니다
     const want = screen.getAllDisplays().length;

@@ -15,6 +15,8 @@
  *   cat-rb.webm    Pexels 3042263 «A Furry Pet Cat Resting On A Carpet Floor» — 흰 가슴털 회색 고양이, 26~36.5초 구간
  *                  (식빵 자세로 고개를 돌린다). 방 안에서 찍어 배경 색으로는 못 가른다 — AI 누끼(BiRefNet-matting, MIT)로 땄다.
  *                  구석(cat-rb)과 가운데(cat-rb-hero) 두 자리가 이 한 파일을 같이 쓴다 — 가운데서도 선명하게 원본 높이로 구웠다
+ *   cat-black.webm Pexels 5791546 «Video of a Black Cat» (Phillip Dillow) — 까만 고양이, 0~6.5초 구간 (밝은 바닥에
+ *                  엎드려 정면을 보다 고개를 들어 올려다본다). AI 누끼로 땄다. 구석(cat-black)·가운데(cat-black-hero)가 같이 쓴다
  * 원본 mp4 는 싣지 않고, scripts/bake-clip 이 바꾼 결과만 싣는다:
  *   · 배경을 걷어 투명하게 (VP9 알파) — 초록 바탕은 초록 우세도로, 검은 바탕은 밝기 + 구멍 메운 실루엣으로
  *   · 고양이 자리만 잘라 내고, 앉은 받침(밝은 초록 띠)을 잘라 발이 창 아래 끝에 닿게
@@ -107,6 +109,29 @@
       cut: { top: true },
       place: { mode: 'hero', height: 0.8 },
       arrivalMs: 700
+    },
+    'cat-black': {
+      // Pexels 5791546 의 0~6.5초 — 까만 고양이가 밝은 바닥에 엎드려 정면을 보다가 고개를 들어 올려다본다(«까만 고양이 버전도»).
+      // 밝은 바닥·흰 벽이라 까만 털이 AI 누끼로 깨끗이 떨어졌다. 뒤에서 오는 빛이 털 가장자리를 살려 준다
+      url: '../assets/enter/cat-black.webm',
+      width: 1036,
+      height: 966,
+      fps: 24,
+      // 어두운 휴식 화면에 까만 털이 묻힌다 — 위쪽으로 치우친 옅은 뒤쪽 빛(mount 가 filter 로 입힌다)
+      glow: 'drop-shadow(0 -2px 10px rgba(225, 232, 255, 0.2))',
+      place: { mode: 'corner', anchor: 'right', side: 0.035, bottom: 0, height: 0.46 },
+      arrivalMs: 700
+    },
+    'cat-black-hero': {
+      // 같은 까만 고양이를 가운데에 크게 — 휴식 안내·할 일 목록·단추는 오른쪽 아래로 비켜 준다 («가운데 버전도»)
+      url: '../assets/enter/cat-black.webm',
+      width: 1036,
+      height: 966,
+      fps: 24,
+      // 어두운 휴식 화면에 까만 털이 묻힌다 — 위쪽으로 치우친 옅은 뒤쪽 빛(mount 가 filter 로 입힌다)
+      glow: 'drop-shadow(0 -2px 10px rgba(225, 232, 255, 0.2))',
+      place: { mode: 'hero', height: 0.8 },
+      arrivalMs: 700
     }
   };
 
@@ -195,6 +220,9 @@
     v.preload = 'auto';
     v.disablePictureInPicture = true;
     v.setAttribute('aria-hidden', 'true');
+    // 영상마다 따로 주는 필터(CLIPS 의 glow) — 까만 고양이는 어두운 휴식 화면에 윤곽이 묻혀,
+    // 뒤에서 비치는 듯한 옅은 빛을 준다. .ent-clip 의 transform(들어오는 움직임)과는 따로 논다
+    if (clip.glow) v.style.filter = clip.glow;
     let dead = false;
 
     const place = () => {
