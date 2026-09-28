@@ -388,8 +388,11 @@ function renderMail(box) {
       ? `받음 · 안읽음 ${box.unread} · 폴더 ${folders.map((f) => `${f.name}(${f.count})`).join(' ') || '없음'}`
       : '받은 것 없음 (설정이 꺼져 있거나 계정 없음)');
   }
+  // 쓸 수 있는 계정이 없으면 폴더가 비어 온다. 그래도 시트의 메일 칸은 남겨 까닭(blocked)과 ↻ 를 보인다 —
+  // 예전엔 통째로 숨겨서, 패널을 안 켠 사람(기본)은 보이던 메일 칸이 까닭 없이 사라지는 것만 봤다
+  const blocked = !!box && !folders.length ? (box.blocked || '') : '';
   // 패널이 켜져 있으면 시트에도 넣을 이유가 없다 — 같은 목록이 두 번 겹쳐 보인다
-  if (!box || !folders.length || nw.card.classList.contains('mailon')) {
+  if (!box || (!folders.length && !blocked) || nw.card.classList.contains('mailon')) {
     sec.style.display = 'none';
     return;
   }
@@ -397,11 +400,19 @@ function renderMail(box) {
   $('mail-ttl').textContent = box.unread ? `메일 · 안 읽음 ${box.unread}` : '메일';
   $('mail-allread').style.display = box.unread ? '' : 'none';
   const host = $('mail-rows');
-  // 시트 목록도 틱마다 다시 지으면 마우스를 올려둔 줄이 깜빡인다 — 패널과 같은 규칙
+  // 시트 목록도 틱마다 다시 지으면 마우스를 올려둔 줄이 깜빡인다 — 패널과 같은 규칙 (까닭도 mailSig 에 든다)
   const sig = mailSig(box);
   if (sig === sheetSig && host.childElementCount) return;
   sheetSig = sig;
   host.textContent = '';
+  if (blocked) {
+    // 목록·계정 줄·폴더 줄은 없다 — 까닭 한 줄만
+    const p = document.createElement('div');
+    p.className = 'empty';
+    p.textContent = blocked;
+    host.append(p);
+    return;
+  }
   // 계정 줄이 먼저, 폴더 줄이 그 아래
   const acts = accountStrip(box, () => renderMail(lastMailBox));
   if (acts) host.append(acts);
@@ -446,7 +457,8 @@ function mailSig(box) {
   const rows = ((cur && cur.items) || [])
     .map((m) => `${m.accountId}:${m.uid}:${m.seen ? 1 : 0}${m.byRule ? 'r' : ''}`)
     .join(',');
-  return [mailAccount, mailFolder, box.unread, accs, tabs, rows].join('~');
+  // 까닭 한 줄이 바뀌어도 다시 그린다 — 목록이 비어 있는 동안에는 그것만 바뀐다
+  return [mailAccount, mailFolder, box.unread, accs, tabs, rows, box.blocked || ''].join('~');
 }
 
 function paintMailPanel() {
@@ -468,7 +480,9 @@ function paintMailPanel() {
   if (!folders.length) {
     const p = document.createElement('div');
     p.className = 'calempty';
-    p.textContent = box ? '새 메일 없음' : '설정에서 메일을 연결하세요';
+    // 쓸 수 있는 계정이 없으면 그 까닭을 메인이 실어 보낸다(blocked) — «새 메일 없음»으로 두면
+    // 계정이 둘 다 등록돼 있는데 비밀번호가 안 풀려 못 받는 것을 «메일이 없다»로 읽게 된다
+    p.textContent = box ? (box.blocked || '새 메일 없음') : '설정에서 메일을 연결하세요';
     host.append(p);
     // 여기서 그냥 돌아가면 직전 폴더에 묶인 스크롤 처리기가 그대로 살아 있는다.
     // 폴더가 사라졌는데도 그 폴더로 «더 보기»를 부르게 된다.

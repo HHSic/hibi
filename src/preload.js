@@ -105,6 +105,8 @@ contextBridge.exposeInMainWorld('nunsseom', {
   mailAdd: (acc) => ipcRenderer.invoke('mail:add', acc),
   mailUpdate: (id, patch) => ipcRenderer.invoke('mail:update', { id, patch }),
   mailRemove: (id) => ipcRenderer.invoke('mail:remove', id),
+  // 저장된 계정의 비밀번호만 다시 — { id, pass }. 접속이 되는 것만 저장된다
+  mailRepass: (req) => ipcRenderer.invoke('mail:repass', req || {}),
   mailRefresh: () => ipcRenderer.invoke('mail:refresh'),
   mailMarkRead: (opts) => ipcRenderer.invoke('mail:mark-read', opts || {}),
   mailSmtpTest: (acc) => ipcRenderer.invoke('mail:smtp-test', acc),

@@ -104,10 +104,218 @@ function renderMailScope() {
   $('mail-scope-hint').textContent = sel ? sel.hint : '';
 }
 
+/**
+ * 켜고 끄거나 지운 뒤 «쓸 수 있는 계정이 없다»는 말을 새로 받는다.
+ * 계정 목록만 돌려받으면 위쪽 안내가 옛 판단을 들고 있게 된다 (다 끈 뒤에도 안 뜨거나, 켠 뒤에도 남거나).
+ */
+async function syncMailStatus() {
+  try {
+    const d = await window.nunsseom.mailGet();
+    if (d && d.status) mailData.status = d.status;
+  } catch { /* 안내 한 줄이 늦을 뿐이다 — 목록은 이미 새것이다 */ }
+}
+
+// 계정 id → 고치는 줄. 계정 목록은 켜고 끄기·지우기·서명 저장·추가 때마다 통째로 다시 그려진다.
+// 고치는 줄까지 그때마다 새로 만들면, 느린 서버를 1분 넘게 기다리는 도중에 칸이 접히고 다시 쓸 수 있게 돼
+// 같은 계정으로 두 번 보내게 됐고, 먼저 보낸 것의 결과는 떨어져 나간 줄에 적혀 끝내 안 보였다.
+// 만든 줄을 그대로 다시 붙이면 입력·기다림·결과가 그 자리에 남는다.
+const fixLines = new Map();
+// 비밀번호 다시 넣기가 도는 계정 id — 그동안 그 계정의 «삭제»를 막는다 (비밀번호는 담지 않는다)
+const repassBusy = new Set();
+
+/** 목록에서 그 계정의 줄 — 다시 그려졌을 수 있으니 붙들고 있지 말고 그때그때 찾는다 */
+function acctRow(id) {
+  return [...$('mail-accounts').querySelectorAll('.rem.acct')].find((r) => r.dataset.id === id) || null;
+}
+
+/** 목록 맨 위 안내 — 한 번 만들어 다시 그려도 그대로 쓴다.
+ *  글이 이미 든 채로 새로 끼워진 알림 자리는 화면 읽기 프로그램이 못 읽고 넘어가는 일이 흔하다. */
+let acctNote = null;
+function noteEl() {
+  if (!acctNote) {
+    acctNote = document.createElement('div');
+    acctNote.className = 'msg acct-note';
+    acctNote.id = 'mail-acct-msg';
+    acctNote.setAttribute('role', 'status');
+    acctNote.setAttribute('aria-live', 'polite');
+    // 성공한 뒤 옮겨 갈 줄이 없으면 초점이 여기로 온다
+    acctNote.tabIndex = -1;
+  }
+  return acctNote;
+}
+
+function setNote(kind, text) {
+  const note = noteEl();
+  if (!text) { note.className = 'msg acct-note'; note.textContent = ''; return; }
+  // 같은 말을 다시 쓰면 화면 읽기 프로그램이 또 읽는다 — 다시 그릴 때마다 되풀이되지 않게 바뀔 때만 쓴다
+  if (note.textContent === text && note.classList.contains(kind) && note.classList.contains('show')) return;
+  mailMsg(kind, text, note);
+}
+
+/** 고치는 줄을 버린다 — 넣다 만 비밀번호를 떨어져 나간 칸에 남기지 않는다 */
+function dropFix(id) {
+  const input = fixLines.get(id)?.querySelector('input');
+  if (input) input.value = '';
+  fixLines.delete(id);
+}
+
+/** 다시 그려도 두는 고치는 줄 — 까닭이 바뀌었으면 새로 만든다 (도는 중이면 그대로: 끝나면 결과가 다시 그린다) */
+function fixLineOf(a) {
+  const key = [a.problem, a.canRepass ? 1 : 0, a.problemHint || '', a.name || ''].join('|');
+  const old = fixLines.get(a.id);
+  if (old && (old.dataset.key === key || repassBusy.has(a.id))) return old;
+  if (old) dropFix(a.id);
+  const box = fixLine(a);
+  box.dataset.key = key;
+  fixLines.set(a.id, box);
+  return box;
+}
+
+/**
+ * 못 쓰는 계정 아래에 붙는 «고치는 줄» — 무엇이 문제인지와 고치는 길을 한곳에.
+ *
+ * 비밀번호가 이 PC에서 안 풀리면 예전에는 지우고 다시 넣는 수밖에 없었고,
+ * 그러면 서명과 계정에 매인 것이 같이 사라졌다. 여기서 비밀번호만 다시 넣는다.
+ * 단추를 계정 줄에 하나 더 넣으면 좁은 설정 창에서 이름 칸이 짓눌려 한 줄 아래로 뺐다.
+ */
+function fixLine(a) {
+  const box = document.createElement('div');
+  box.className = 'acct-fix';
+  const top = document.createElement('div');
+  top.className = 'upline';
+  const hint = document.createElement('span');
+  hint.className = 'hint';
+  hint.textContent = a.problemHint || '';
+  top.append(hint);
+  box.append(top);
+  if (!a.canRepass) return box;
+
+  const formId = `repass-${a.id}`;
+  const open = document.createElement('button');
+  open.className = 'mini ghost';
+  open.textContent = '비밀번호 다시 넣기';
+  open.setAttribute('aria-expanded', 'false');
+  open.setAttribute('aria-controls', formId);
+  top.append(open);
+
+  const form = document.createElement('div');
+  form.className = 'repass';
+  form.id = formId;
+  form.hidden = true;
+  const input = document.createElement('input');
+  input.type = 'password';
+  input.className = 'cust-name';
+  input.placeholder = '앱 비밀번호';
+  input.autocomplete = 'off';
+  input.setAttribute('aria-label', `${a.name} 비밀번호`);
+  const save = document.createElement('button');
+  save.className = 'mini';
+  save.textContent = '저장';
+  const cancel = document.createElement('button');
+  cancel.className = 'mini ghost';
+  cancel.textContent = '취소';
+  form.append(input, save, cancel);
+  // 진행·결과는 이 줄 바로 아래에 — 아래쪽 «추가» 칸의 안내 자리는 여기서 안 보인다
+  const msg = document.createElement('div');
+  msg.className = 'msg';
+  msg.setAttribute('role', 'status');
+  msg.setAttribute('aria-live', 'polite');
+  box.append(form, msg);
+
+  const show = (on) => {
+    form.hidden = !on;
+    open.hidden = on;
+    open.setAttribute('aria-expanded', String(on));
+    if (on) { input.focus(); return; }
+    // 닫을 때 비밀번호를 칸에 남기지 않는다
+    input.value = '';
+    msg.className = 'msg';
+    msg.textContent = '';
+    open.focus();
+  };
+  const busy = (on) => {
+    if (on) repassBusy.add(a.id); else repassBusy.delete(a.id);
+    input.disabled = on; save.disabled = on; cancel.disabled = on;
+    // 확인하는 동안 계정을 지우면 결과가 갈 곳이 없다 — 그 줄의 «삭제»도 같이 막는다
+    const del = acctRow(a.id)?.querySelector('.mini');
+    if (del) del.disabled = on;
+  };
+
+  const submit = async () => {
+    if (save.disabled || repassBusy.has(a.id)) return;
+    const pass = input.value;
+    if (!pass) { mailMsg('bad', '비밀번호를 넣으세요', msg); input.focus(); return; }
+    busy(true);
+    mailMsg('wait', '연결 확인 중…', msg);
+    let r = null;
+    try {
+      r = await window.nunsseom.mailRepass({ id: a.id, pass });
+    } catch (e) {
+      r = { ok: false, message: (e && e.message) || '저장하지 못했습니다' };
+    }
+    busy(false);
+    if (r && r.ok) {
+      input.value = '';
+      // 고쳐졌으니 이 줄은 버린다 — 다시 그릴 때 새 모양(문제 없음)으로 나온다
+      dropFix(a.id);
+      if (Array.isArray(r.accounts)) mailData.accounts = r.accounts;
+      if (r.status) mailData.status = r.status;
+      renderMailAccounts();
+      // 다시 그리면 이 줄은 사라진다 — 결과는 목록 맨 위에 남긴다 (다시 그린 «뒤에» 써야 지워지지 않는다).
+      // 파일에 못 적었으면 이번 실행에서만 되는 것이라 빨강으로
+      setNote(r.saved === false ? 'bad' : 'good', r.message || '비밀번호를 다시 저장했습니다');
+      // 초점이 있던 칸이 사라져 body 로 떨어진다 — 고친 계정의 스위치로, 없으면 안내 줄로 옮긴다
+      if (!document.activeElement || document.activeElement === document.body) {
+        (acctRow(a.id)?.querySelector('.sw') || noteEl()).focus();
+      }
+      return;
+    }
+    // 기다리는 동안 계정이 꺼졌거나 지워져 이 줄이 목록에서 빠졌다 — 넣어 둔 비밀번호를 남기지 않고 버린다
+    if (!box.isConnected) {
+      input.value = '';
+      if (fixLines.get(a.id) === box) fixLines.delete(a.id);
+      return;
+    }
+    mailMsg('bad', (r && r.message) || '저장하지 못했습니다', msg);
+    // 기다리는 동안 다른 곳에서 쓰고 있었으면 초점을 빼앗지 않는다 (칸이 막혀 있던 동안 초점은 body 로 갔다)
+    const here = document.activeElement;
+    if (!here || here === document.body || box.contains(here)) {
+      input.select();
+      input.focus();
+    }
+  };
+
+  open.onclick = () => show(true);
+  save.onclick = submit;
+  cancel.onclick = () => show(false);
+  input.addEventListener('keydown', (e) => {
+    // 한글 입력을 끝내는 Enter 는 «저장»이 아니다
+    if (e.isComposing) return;
+    if (e.key === 'Enter') { e.preventDefault(); submit(); }
+  });
+  // Esc 는 칸 전체에서 받는다 — 입력칸에만 달면 Tab 으로 «저장»·«취소»에 간 뒤의 Esc 가
+  // 창 전체의 Esc(설정 닫기)까지 올라가 설정 창이 통째로 닫혔다. 입력만 접는다
+  form.addEventListener('keydown', (e) => {
+    if (e.isComposing || e.key !== 'Escape') return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (!cancel.disabled) show(false);
+  });
+  return box;
+}
+
 function renderMailAccounts() {
   const host = $('mail-accounts');
-  host.textContent = '';
+  // 고치는 줄 안에 초점이 있었으면(다른 계정을 고치던 중) 다시 붙인 뒤 되돌린다 — 떼는 순간 body 로 떨어진다
+  const had = document.activeElement;
+  const refocus = had && [...fixLines.values()].some((b) => b.contains(had)) ? had : null;
+  const note = noteEl();
+  // 안내 자리는 남기고 나머지만 지운다
+  for (const el of [...host.children]) if (el !== note) el.remove();
+  if (note.parentNode !== host) host.prepend(note);
   if (!mailData.accounts.length) {
+    setNote('', '');
+    for (const id of [...fixLines.keys()]) if (!repassBusy.has(id)) dropFix(id);
     const p = document.createElement('div');
     p.className = 'col';
     p.innerHTML = '';
@@ -120,9 +328,18 @@ function renderMailAccounts() {
     host.append(p);
     return;
   }
+  // 목록 맨 위 안내 — 쓸 수 있는 계정이 하나도 없으면 왜 없는지와 무엇을 할지를 먼저 말한다.
+  // 말은 메인이 정한다(위젯 알림·기록과 같은 말). 계정마다 까닭이 있을 때만 믿는다 — 옛 판단이 남지 않게.
+  const blocked = mailData.accounts.every((a) => a.problem) ? (mailData.status.blocked || '') : '';
+  setNote(blocked ? 'bad' : '', blocked);
+
+  const shown = new Set();
   for (const a of mailData.accounts) {
+    // 꺼진 계정은 예전 모습 그대로 — 스위치가 이미 말한다
+    const need = !!a.problem && a.problem !== 'off';
     const row = document.createElement('div');
-    row.className = 'rem acct' + (a.enabled === false ? ' off' : '');
+    row.className = 'rem acct' + (a.enabled === false ? ' off' : '') + (need ? ' need' : '');
+    row.dataset.id = a.id;
     const g = document.createElement('span');
     g.className = 'g';
     g.append(window.nunsIcon('mail'));
@@ -131,29 +348,42 @@ function renderMailAccounts() {
     nm.textContent = a.name;
     const sub = document.createElement('small');
     sub.textContent = `${a.host}:${a.port}`;
+    // 좁은 창에서는 주소가 …으로 줄어든다 — 전체는 올려 보면 나온다
+    sub.title = sub.textContent;
     nm.append(sub);
     const val = document.createElement('span');
     val.className = 'val';
     const err = (mailData.status.errors || []).find((e) => e.name === a.name);
-    val.textContent = err ? err.message.slice(0, 24) : '';
+    // 못 쓰는 까닭이 먼저다 — 접속 오류는 접속을 해 봤을 때의 이야기다
+    val.textContent = need ? (a.problemText || '') : err ? err.message.slice(0, 24) : '';
+    if (need) val.title = a.problemHint || '';
     // 오류는 회색 설명과 섞이지 않게 빨강으로 (settings.html .rem .val.bad)
-    if (err) val.classList.add('bad');
+    if (need || err) val.classList.add('bad');
     const sw = document.createElement('button');
     sw.className = 'sw' + (a.enabled === false ? '' : ' on');
+    sw.setAttribute('aria-label', `${a.name} ${a.enabled === false ? '켜기' : '끄기'}`);
     sw.onclick = async () => {
       mailData.accounts = await window.nunsseom.mailUpdate(a.id, { enabled: a.enabled === false });
+      await syncMailStatus();
       renderMailAccounts();
     };
     const del = document.createElement('button');
     del.className = 'mini ghost';
     del.textContent = '삭제';
+    // 비밀번호를 확인하는 중에는 못 지운다 — 끝나면 풀린다
+    del.disabled = repassBusy.has(a.id);
     del.onclick = async () => {
       mailData.accounts = await window.nunsseom.mailRemove(a.id);
+      await syncMailStatus();
       renderMailAccounts();
     };
     row.append(g, nm, val, sw, del);
     host.append(row);
+    if (need) { host.append(fixLineOf(a)); shown.add(a.id); }
   }
+  // 고쳐졌거나 지워진 계정의 줄은 버린다 — 도는 중인 것만 끝날 때까지 둔다
+  for (const id of [...fixLines.keys()]) if (!shown.has(id) && !repassBusy.has(id)) dropFix(id);
+  if (refocus && refocus.isConnected && document.activeElement !== refocus) refocus.focus();
 }
 
 async function loadMail() {
@@ -175,9 +405,15 @@ async function loadMail() {
   loadRules();
 }
 
-function mailMsg(kind, text) {
-  const el = $('mail-msg');
-  el.className = 'msg show ' + kind;
+/**
+ * 안내 한 줄. 기본 자리는 «추가» 칸 아래(#mail-msg)이고, 계정 줄에서 고칠 때는 그 줄의 자리를 넘긴다.
+ * 모양 이름(msg·acct-note)은 두고 상태(bad·good·wait)만 갈아 끼운다.
+ */
+function mailMsg(kind, text, el = $('mail-msg')) {
+  if (!el) return;
+  el.classList.remove('bad', 'good', 'wait');
+  el.classList.add('show');
+  if (kind) el.classList.add(kind);
   el.textContent = text;
 }
 

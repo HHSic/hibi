@@ -15,7 +15,11 @@ const mail = require('./mail');
 const mailbackup = require('./mailbackup');
 
 // 계정 목록은 main.js 가 들고 있다 (비밀번호를 푸는 곳이 거기다).
-let host = { mailAccountsForUse: () => [] };
+// 쓸 계정이 없을 때 할 말도 거기서 받는다 — 꺼짐·비밀번호 못 풂·없음을 가려 말한다.
+let host = {
+  mailAccountsForUse: () => [],
+  noAccountMessage: () => '메일 계정을 지금 쓸 수 없습니다 — 설정 › 메일을 확인하세요'
+};
 function init(h) { host = { ...host, ...h }; }
 
 // 서버에 있는 메일을 .eml 파일로 내 PC에 내려둔다. 회사를 옮기거나 계정이 닫히면
@@ -205,7 +209,7 @@ ipcMain.handle('mail:backup-start', async () => {
     // 폴더는 고른 뒤에도 지워지거나 권한이 바뀔 수 있다 — 시작 전에 다시 본다
     const bad = backupDirProblem(store.settings.mailBackupDir);
     if (bad) throw new Error(bad);
-    if (!host.mailAccountsForUse().length) throw new Error('쓸 수 있는 계정이 없습니다');
+    if (!host.mailAccountsForUse().length) throw new Error(host.noAccountMessage());
   } catch (e) {
     backup.running = false;
     backup.message = e.message;

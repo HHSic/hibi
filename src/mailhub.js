@@ -17,6 +17,7 @@ const { BrowserWindow, ipcMain, screen, Notification } = require('electron');
 const store = require('./store');
 const evlog = require('./evlog');
 const secret = require('./secret');
+const mailacct = require('./mailacct');
 const mail = require('./mail');
 const mailrules = require('./mailrules');
 const mailmark = require('./mailmark');
@@ -64,7 +65,9 @@ const mailState = {
   // 보낸메일함은 폴링 때 같이 가져오지 않는다. 이 서버는 받은편지함 한 번 읽는 데도
   // 오래 걸려서, 매번 폴더를 하나 더 열면 그만큼 늘어난다. 탭을 눌렀을 때만 가져온다.
   // total — 서버의 보낸메일함에 실제로 몇 통 있나. «마지막입니다»를 말하려면 이게 있어야 한다.
-  sent: { at: 0, loading: false, messages: [], error: '', total: 0 }
+  sent: { at: 0, loading: false, messages: [], error: '', total: 0 },
+  // 쓸 수 있는 계정이 없을 때 그 까닭 한 줄 (있으면 빈 값). 위젯이 빈 목록 대신 이걸 보여준다
+  blocked: ''
 };
 
 // 자동 처리는 한 번씩만 — 서버가 느려 몇십 초씩 걸리는데,
@@ -82,12 +85,71 @@ const RULE_RETRY_MS = 5 * 60_000;
 const ruleLog = new mailtally.WorkLog({ tries: 3, retryMs: RULE_RETRY_MS });
 let ruleBusy = false;
 
-/** 저장된 계정을 실제 접속용으로 — 비밀번호를 여기서만 푼다 */
+/**
+ * 저장된 계정마다 «쓸 수 있나»와 푼 비밀번호. 비밀번호는 여기서만 푼다.
+ * 가르는 셈은 mailacct 가 한다 (창 없이 시험할 수 있는 곳).
+ */
+function mailAccountChecks() {
+  const env = { available: secret.available, open: (sealed) => secret.open(sealed) };
+  return store.mailAccounts.map((a) => ({ account: a, ...mailacct.check(a, env) }));
+}
+
+/** 쓸 수 있는 것만 실제 접속용으로 */
+const usableOf = (checks) => checks
+  .filter((c) => !c.problem)
+  .map((c) => ({ ...c.account, pass: c.pass }));
+
+// 푼 비밀번호도 잠긴 값(sealed)도 싣지 않는다 — 이름과 id만 있으면 말을 만들 수 있다
+const problemsOf = (checks) => checks.map(({ account, problem }) => ({
+  account: { id: account.id, name: account.name }, problem
+}));
+
+/** 저장된 계정을 실제 접속용으로 — 쓸 수 있는 것만 */
 function mailAccountsForUse() {
-  return store.mailAccounts
-    .filter((a) => a.enabled !== false && a.host && a.user)
-    .map((a) => ({ ...a, pass: secret.open(a.sealed) }))
-    .filter((a) => a.pass);
+  return usableOf(mailAccountChecks());
+}
+
+/** 계정마다 못 쓰는 까닭 (쓸 수 있으면 problem 이 null) */
+function mailAccountProblems() {
+  return problemsOf(mailAccountChecks());
+}
+
+/** 계정 하나의 까닭 — 없는 계정이면 undefined */
+function mailAccountProblem(id) {
+  const hit = mailAccountProblems().find((x) => x.account.id === id);
+  return hit ? hit.problem : undefined;
+}
+
+/**
+ * 쓸 수 있는 계정이 없을 때 할 말 한 줄. 예전의 «쓸 수 있는 계정이 없습니다»는
+ * 꺼진 건지, 비밀번호가 안 풀리는 건지, 아예 없는 건지 말해주지 않아 고칠 수가 없었다.
+ * @param accountId 그 계정 하나를 두고 묻는 것이면 (읽음 표시 등)
+ * @param list 이미 가른 것이 있으면 다시 풀지 않게 넘긴다
+ */
+function noAccountMessage(accountId, list = mailAccountProblems()) {
+  if (accountId) {
+    const one = list.find((x) => x.account.id === accountId);
+    const why = one ? mailacct.summary([one]) : '';
+    if (why) return why;
+    if (!one) return '이 메일의 계정을 쓸 수 없습니다 (지워졌습니다)';
+  }
+  // 물어본 사이에 계정이 살아났으면 summary 는 빈 말을 준다 — 빈 알림을 띄우지 않게 막는다
+  return mailacct.summary(list) || '메일 계정을 지금 쓸 수 없습니다 — 설정 › 메일을 확인하세요';
+}
+
+// 쓸 수 있는 계정이 없으면 30초마다 폴링이 한 번씩 건너뛰고, 그때마다 같은 줄이 기록에 쌓였다.
+// 까닭(셈)이 바뀔 때만 다시 적고, 그대로면 10분에 한 번만 — 도중에 기록을 켠 사람도 까닭을 보게.
+const SKIP_LOG_MS = 10 * 60_000;
+let skipLog = { line: '', at: 0 };
+
+function logSkip(list) {
+  const counts = mailacct.tally(list);
+  const line = `건너뜀 — 쓸 수 있는 계정 없음 (저장된 계정 ${list.length}개${counts ? ` · ${counts}` : ''})`;
+  const now = Date.now();
+  if (line === skipLog.line && now - skipLog.at < SKIP_LOG_MS) return;
+  evlog.log('메일', line);
+  // 기록이 꺼져 있었으면 적힌 것이 아니다 — 켜자마자 다음 폴링에서 바로 보이게 남기지 않는다
+  if (evlog.enabled) skipLog = { line, at: now };
 }
 
 // ── 더 보기 ────────────────────────────
@@ -138,13 +200,24 @@ async function refreshMail({ force = false } = {}) {
     }
     if (mailState.loading) return;
   }
-  const accounts = mailAccountsForUse();
+  // 한 번만 가른다 — 쓸 계정과 못 쓰는 까닭을 같은 판에서 본다 (비밀번호를 두 번 풀지 않게)
+  const checks = mailAccountChecks();
+  const accounts = usableOf(checks);
+  const problems = problemsOf(checks);
   if (!accounts.length) {
-    mailState.unread = 0;
-    mailState.messages = [];
-    evlog.log('메일', `건너뜀 — 쓸 수 있는 계정 없음 (저장된 계정 ${store.mailAccounts.length}개)`);
+    // 받아 둔 목록도 같이 비운다 — 폴더가 남아 있으면 위젯이 옛 메일을 계속 보여주고
+    // 왜 안 오는지(blocked)는 끝내 안 보인다
+    Object.assign(mailState, {
+      unread: 0, messages: [], folders: [], groups: [], accountTabs: [], errors: [],
+      blocked: noAccountMessage(null, problems)
+    });
+    logSkip(problems);
     return;
   }
+  mailState.blocked = '';
+  skipLog = { line: '', at: 0 };
+  // 켜 둔 계정 중 못 쓰는 것이 있으면 «확인 완료» 줄에 같이 적는다 — 말없이 빠지면 안 된다
+  const left = mailacct.tally(problems.filter((x) => x.problem && x.problem !== 'off'));
 
   mailState.loading = true;
   const rules = store.mailRules.filter((r) => r.on !== false);
@@ -236,6 +309,7 @@ async function refreshMail({ force = false } = {}) {
     if (!tally.primed) evlog.log('메일', '첫 확인 — 이미 있던 것은 «새 메일»로 세지 않습니다');
 
     evlog.log('메일', `확인 완료 · 계정 ${accounts.length}개 · 안읽음 ${mailState.unread}`
+      + (left ? ` · 빠진 계정: ${left}` : '')
       + ` · 목록 ${mailState.messages.length}건`
       + (rules.length ? ` · 규칙 ${rules.length}개로 ${cut.hidden.length}건 숨김`
         + (cut.groups.length ? ` · ${cut.groups.length}묶음` : '') : '')
@@ -386,11 +460,18 @@ function announceMail() {
  */
 
 // ── 메일 IPC ────────────────────────────────────────────
-/** 계정 목록 (비밀번호는 절대 렌더러로 보내지 않는다 — 저장 여부만 알린다) */
+/** 계정 목록 (비밀번호는 절대 렌더러로 보내지 않는다 — 저장 여부와 못 쓰는 까닭만 알린다) */
 function mailAccountsForUi() {
-  return store.mailAccounts.map(({ sealed, ...rest }) => ({
+  const canStore = secret.available;
+  return mailAccountChecks().map(({ account: { sealed, ...rest }, problem }) => ({
     ...rest,
     hasPassword: !!sealed,
+    // 못 쓰는 까닭 — 말없이 빠지면 «등록돼 있는데 왜 안 되지»가 된다 (꺼짐은 스위치가 말한다)
+    problem: problem || null,
+    problemText: mailacct.label(problem),
+    problemHint: mailacct.hint(problem),
+    // 이 PC에서 잠글 수 없으면 다시 넣어도 저장이 안 된다 — 단추를 내지 않는다
+    canRepass: mailacct.fixable(problem) && canStore,
     // 비워두면 받는 서버와 아이디에서 짐작한다. 화면에는 «무엇이 실제로 쓰이는지»를
     // 보여줘야 한다 — 빈 칸에 예시만 떠 있으면 안 넣은 줄 알고 다시 넣게 된다.
     smtpResolved: mail.smtpOf(rest).host,
@@ -398,12 +479,20 @@ function mailAccountsForUi() {
     fromResolved: mail.fromOf(rest).address
   }));
 }
+
+/** 쓸 수 있는 계정이 없으면 그 까닭 한 줄, 있으면 빈 값 */
+function mailBlocked() {
+  const list = mailAccountProblems();
+  return list.some((x) => !x.problem) ? '' : noAccountMessage(null, list);
+}
+
 function mailStatus() {
   return {
     unread: mailState.unread,
     fetchedAt: mailState.fetchedAt,
     errors: mailState.errors,
-    canStore: secret.available
+    canStore: secret.available,
+    blocked: mailBlocked()
   };
 }
 
@@ -446,6 +535,73 @@ ipcMain.handle('mail:update', (_e, { id, patch }) => {
   refreshMail();
   return mailAccountsForUi();
 });
+/**
+ * 저장된 계정의 비밀번호만 다시 넣는다.
+ *
+ * 비밀번호가 이 PC에서 안 풀리게 되면(윈도우 암호 초기화 등) 고칠 길이 «지우고 다시 추가»뿐이었다.
+ * 그러면 서명과 계정 id에 매인 것(임시보관함·백업 폴더 이름·규칙)이 같이 사라진다.
+ * 추가할 때와 같이 먼저 접속해 보고, 되는 것만 잠가 저장한다 — 틀린 비밀번호로 «고쳤다»가 되면 안 된다.
+ */
+// 접속해 보는 중인 계정 — 느린 서버에서는 1분이 넘게 걸려, 그 사이 또 누르면 같은 계정으로 두 번 로그인했다
+const repassing = new Set();
+
+ipcMain.handle('mail:repass', async (_e, req) => {
+  const { id, pass } = req || {};
+  if (!secret.available) {
+    return { ok: false, message: '이 PC에서는 비밀번호를 안전하게 저장할 수 없습니다' };
+  }
+  const stored = store.mailAccounts.find((a) => a.id === id);
+  if (!stored) return { ok: false, message: '계정을 찾을 수 없습니다 — 창을 닫았다 다시 열어 주세요' };
+  if (typeof pass !== 'string' || !pass) return { ok: false, message: '비밀번호를 넣으세요' };
+  if (!stored.host || !stored.user) {
+    return { ok: false, message: '서버 주소나 아이디가 비어 있어 비밀번호만으로는 고칠 수 없습니다 — 지우고 다시 추가해 주세요' };
+  }
+  if (repassing.has(id)) return { ok: false, message: '이미 확인 중입니다 — 끝날 때까지 기다려 주세요' };
+  repassing.add(id);
+  try {
+    // 기다리기 전에 떠 둔다 — stored 는 저장소의 그 객체라, 도중에 바뀌면 같이 바뀌어 비교가 안 된다
+    const { sealed: _old, ...fields } = stored;
+    const name = fields.name || '계정';
+    const t = await mail.test({ ...fields, pass });
+    if (!t.ok) {
+      evlog.log('메일', `비밀번호 다시 넣기 실패 · ${name} · ${t.message}`);
+      return { ok: false, message: t.message };
+    }
+    // 접속해 보는 동안 계정이 지워졌거나 서버·아이디가 바뀌었을 수 있다. 지운 계정에 쓰면 아무 일도
+    // 안 일어나는데 «다시 저장했습니다»라고 말하게 되고, 바뀐 서버에는 시험해 보지 않은 비밀번호가 붙는다.
+    const cur = store.mailAccounts.find((a) => a.id === id);
+    if (!cur) {
+      evlog.log('메일', `비밀번호 다시 넣기 취소 · ${name} · 확인하는 동안 계정이 지워짐`);
+      return { ok: false, message: '확인하는 동안 계정이 지워졌습니다 — 저장하지 않았습니다' };
+    }
+    if (cur.host !== fields.host || cur.user !== fields.user || String(cur.port) !== String(fields.port)) {
+      evlog.log('메일', `비밀번호 다시 넣기 취소 · ${name} · 확인하는 동안 서버·아이디가 바뀜`);
+      return { ok: false, message: '확인하는 동안 계정의 서버나 아이디가 바뀌었습니다 — 다시 해 주세요' };
+    }
+    const sealed = secret.seal(pass);
+    if (!sealed) return { ok: false, message: '비밀번호를 잠그지 못했습니다 — 다시 해 보세요' };
+    store.updateMailAccount(id, { sealed });
+    // 파일까지 갔는지 본다 (계정 추가와 같은 까닭) — 값은 적지 않고 «같은가»만 적는다.
+    // 저장이 실패해도 store 는 던지지 않는다. 메모리에는 들어가 이번 실행에서는 되지만, 다시 켜면 또 잠긴다 —
+    // «다시 저장했습니다»라고 하면 거짓말이 된다
+    const onDisk = (store.reloadFromDisk().mailAccounts || []).find((a) => a.id === id);
+    const saved = !!onDisk && onDisk.sealed === sealed;
+    evlog.log('메일', `비밀번호 다시 넣기 · ${name}` + (saved ? '' : ' ← 파일에 저장되지 않았습니다'));
+    // 기다리지 않는다 — 느린 서버에서는 1분이 넘는다. 화면은 지금 «됐다»를 들어야 한다
+    refreshMail({ force: true }).catch(() => { /* 다음 폴링이 다시 본다 */ });
+    return {
+      ok: true,
+      saved,
+      message: saved
+        ? `비밀번호를 다시 저장했습니다 · ${t.message}`
+        : '비밀번호는 맞지만 설정 파일에 저장하지 못했습니다 — 이번 실행에서만 쓰이고, 다시 켜면 또 넣어야 합니다',
+      accounts: mailAccountsForUi(),
+      status: mailStatus()
+    };
+  } finally {
+    repassing.delete(id);
+  }
+});
 ipcMain.handle('mail:remove', (_e, id) => {
   store.removeMailAccount(id);
   refreshMail();
@@ -461,7 +617,7 @@ ipcMain.handle('mail:refresh', async () => {
     return mailStatus();
   }
   if (!mailAccountsForUse().length) {
-    notice('bad', '쓸 수 있는 계정이 없습니다');
+    notice('bad', noAccountMessage());
     return mailStatus();
   }
   notice('wait', '메일 확인 중…');
@@ -497,8 +653,9 @@ function notice(kind, text) {
 async function doMarkRead({ accountId, uids, read = true, mailbox = '' } = {}) {
   const accounts = mailAccountsForUse().filter((a) => !accountId || a.id === accountId);
   if (!accounts.length) {
-    notice('bad', '쓸 수 있는 계정이 없습니다');
-    return { ok: false, changed: 0, message: '쓸 수 있는 계정이 없습니다', ...mailStatus() };
+    const why = noAccountMessage(accountId);
+    notice('bad', why);
+    return { ok: false, changed: 0, message: why, ...mailStatus() };
   }
   // 서버가 느리면 1분 넘게 걸린다. 그동안 아무 말이 없으면 «안 눌렸나» 싶어 또 누르게 된다.
   notice('wait', read ? '읽음 표시 중…' : '안 읽음으로 되돌리는 중…');
@@ -846,7 +1003,7 @@ async function loadSent({ force = false } = {}) {
   if (!accounts.length) {
     // at을 찍어야 «한 번 해봤고 안 됐다»가 된다. 안 찍으면 lazy가 안 풀려서
     // 화면이 «누르면 불러옵니다»로 되돌아가고 사유는 끝내 안 보인다.
-    mailState.sent = { ...mailState.sent, at: Date.now(), loading: false, error: '쓸 수 있는 계정이 없습니다' };
+    mailState.sent = { ...mailState.sent, at: Date.now(), loading: false, error: noAccountMessage() };
     return mailState.sent;
   }
   mailState.sent = { ...mailState.sent, loading: true, error: '' };
@@ -975,6 +1132,8 @@ module.exports = {
   init,
   // 바깥이 부르는 것들
   refreshMail, announceMail, forgetRuleWork, mailAccountsForUse, notice,
+  // 쓸 계정이 없을 때 «왜»를 말하는 것들 — 쓰기 창·백업도 같은 말을 쓴다
+  mailAccountProblems, mailAccountProblem, noAccountMessage,
   draftFolders, sentFolders,
   // 상태는 같은 객체를 나눠 쓴다 (다른 창 모듈들이 이걸 그대로 본다)
   mailState, seenMarks

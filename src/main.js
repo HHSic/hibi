@@ -61,10 +61,15 @@ const { slotOf, doTrash } = mailwin;
 
 const backup = require('./backup');
 const { autoBackupNew } = backup;
-backup.init({ mailAccountsForUse: () => mailhub.mailAccountsForUse() });
+backup.init({
+  mailAccountsForUse: () => mailhub.mailAccountsForUse(),
+  // 계정이 없을 때 «왜»까지 — 꺼짐·비밀번호 못 풂·없음을 가려 말한다
+  noAccountMessage: (id) => mailhub.noAccountMessage(id)
+});
 // 화살표로 감싸 둔다 — 여기서 바로 값을 넘기면 아직 선언되지 않은 것이 섞인다.
 composewin.init({
   mailAccountsForUse: () => mailhub.mailAccountsForUse(),
+  noAccountMessage: (id) => mailhub.noAccountMessage(id),
   refreshMail: (o) => mailhub.refreshMail(o),
   slotOf: (e) => slotOf(e),
   doTrash: (msg, parent) => doTrash(msg, parent)
@@ -364,7 +369,9 @@ function pushTick() {
       // 계정을 먼저 고르고 그 안에서 폴더를 고른다. 안 나눌 때는 빈 배열이라
       // 화면이 계정 줄을 아예 안 그린다.
       accounts: mailhub.mailState.accountTabs || [],
-      filtered: mailhub.mailState.filtered
+      filtered: mailhub.mailState.filtered,
+      // 쓸 수 있는 계정이 없을 때 그 까닭 — 빈 목록에 «새 메일 없음»만 뜨면 고장인 줄 모른다
+      blocked: mailhub.mailState.blocked || ''
     }
     : null;
   logMailPayload(mailBox);

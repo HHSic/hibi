@@ -22,6 +22,8 @@ const { PRELOAD, page, PAD, clamp, glassQuery, lockToOurPage, maxSize } = requir
 // 필요한 것만 시작할 때 받아 둔다 (init).
 let host = {
   mailAccountsForUse: () => [],
+  // 쓸 계정이 없을 때 할 말 — 꺼짐·비밀번호 못 풂·없음을 가려 말한다 (mailhub 가 준다)
+  noAccountMessage: () => '메일 계정을 지금 쓸 수 없습니다 — 설정 › 메일을 확인하세요',
   refreshMail: async () => {},
   slotOf: () => null,
   doTrash: async () => ({ moved: false })
@@ -100,7 +102,7 @@ function openCompose(payload, carried = []) {
  */
 function startCompose({ kind = 'new', accountId, source } = {}) {
   const accounts = host.mailAccountsForUse();
-  if (!accounts.length) return { ok: false, message: '쓸 수 있는 계정이 없습니다' };
+  if (!accounts.length) return { ok: false, message: host.noAccountMessage() };
 
   // 답장·전달은 반드시 그 메일을 받은 계정으로 써야 한다. 못 찾았다고 첫 계정으로 넘기면
   // 개인 메일에 회사 주소로 답장이 나간다 — 받는 사람 눈에는 그게 내 정체다.
@@ -164,7 +166,7 @@ function realAttachments(files) {
  */
 function startCopy({ accountId, view, files } = {}) {
   const accounts = host.mailAccountsForUse();
-  if (!accounts.length) return { ok: false, message: '쓸 수 있는 계정이 없습니다' };
+  if (!accounts.length) return { ok: false, message: host.noAccountMessage() };
   // 보낸 메일은 그 계정으로 다시 보내는 게 자연스럽다. 못 찾으면 첫 계정으로 둔다
   // (내 보낸메일함이니 어느 계정이든 내 것이다).
   const acc = accounts.find((a) => a.id === accountId) || accounts[0];

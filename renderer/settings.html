@@ -197,14 +197,49 @@
      라이트는 같은 색상·채도에 밝기만 내린다 (oklch L .44). */
   .g.tinted { color: var(--c); }
   :root[data-theme="light"] .g.tinted { color: oklch(from var(--c) 0.44 c h); }
-  /* 메일 계정 연결 오류 — 회색 설명과 섞이지 않게 */
-  :root[data-theme="light"] .rem .val.bad { color: var(--danger); }
+  /* 메일 계정 연결 오류·못 쓰는 까닭 — 회색 설명과 섞이지 않게.
+     예전엔 라이트만 칠해서 다크에서는 «비밀번호 다시 필요»가 옆의 회색 설명과 구별이 안 됐다 */
+  .rem .val.bad { color: var(--danger); }
   /* 메일 계정 행 — 스위치 뒤에 삭제가 하나 더 붙는다 */
   /* 주소록·계정 줄은 왼쪽이 «고치는 칸»(이름)이고 가운데가 «읽는 값»(주소)이다.
      둘이 자리를 다투면 고치는 칸을 먼저 지킨다 — 주소는 …으로 줄어도 title로 볼 수 있지만,
      이름 칸이 몇 픽셀로 짓눌리면 고칠 수가 없다. */
   .rem.acct { grid-template-columns: 26px minmax(96px, 1.2fr) minmax(0, 1fr) auto auto; }
   .rem.acct .mini { white-space: nowrap; }
+  /* 못 쓰는 계정 아래 «고치는 줄» — 까닭과 «비밀번호 다시 넣기».
+     계정 줄에 단추를 하나 더 넣으면 392px 창에서 이름 칸이 짓눌려서 한 줄 아래로 뺐다.
+     이름 칸 밑에 맞춰 들여 쓴다 (줄 여백 13 + 아이콘 26 + 틈 11) */
+  /* 못 쓰는 까닭(«비밀번호 다시 필요»)은 잘리면 뜻이 안 남는다 — 이 줄만 두 줄로, 낱말 사이에서 접는다. */
+  .rem.acct.need .val { white-space: normal; word-break: keep-all; line-height: 1.35; }
+  /* 이름 밑 서버 주소는 끊을 곳이 없는 한 덩어리라, 길면 옆 칸(스위치·삭제) 밑까지 삐져나와 겹친다
+     (그리드 칸의 바닥 96px 이 창 넘침은 막지만 글은 못 막는다). 모든 계정 줄에서 …으로 줄인다 (전체는 title) */
+  .rem.acct .nm { min-width: 0; }
+  .rem.acct .nm small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 까닭·오류가 없는 줄은 가운데 칸이 비어 있다 — 그 자리까지 이름 칸을 넓혀, 보통 길이의 주소는 예전처럼 다 보이게 */
+  .rem.acct > .val:empty { display: none; }
+  .rem.acct:has(> .val:empty) > .nm { grid-column: span 2; }
+  .acct-fix { display: flex; flex-direction: column; gap: 6px; padding: 0 13px 10px 50px; margin-top: -4px; }
+  .acct-fix .upline { align-items: flex-start; }
+  /* 까닭과 할 일을 읽어야 고친다 — 다크 --tertiary 는 판 위 2.4~2.6:1 이라 한 단계 진한 글자로 (4.8~5.6:1) */
+  .acct-fix .hint { flex: 1; min-width: 0; font-size: 11px; color: var(--secondary); line-height: 1.5; }
+  .acct-fix .repass { display: flex; align-items: center; gap: 6px; }
+  .acct-fix .repass input { flex: 1; min-width: 0; padding: 5px 9px; font-size: 12.5px; }
+  /* 다크 입력칸 테두리(--separator .09)는 판 위 1.6:1 이라 칸이 어디인지 안 보였다 — 라이트의 진한 밑줄처럼
+     다크도 이 칸만 선을 올린다 (3:1 넘음). 라이트는 :root[data-theme="light"] .cust-name 이 이긴다 (더 구체적) */
+  .acct-fix .repass input { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--secondary) 70%, transparent); }
+  .acct-fix .repass input:focus { box-shadow: inset 0 0 0 1px var(--accent); }
+  /* 다크 --accent(#0a84ff)는 판 위 3.3~4.2:1 이라 작은 파란 글자가 흐리다 — 이 줄의 글자 단추만 흰색을 섞어
+     밝힌다 (4.5:1 넘음). 채움 단추·스위치의 파랑은 그대로다. 라이트 --accent 는 이미 판 위 4.8:1 이다 */
+  .acct-fix .mini.ghost { color: color-mix(in srgb, var(--accent) 65%, white); }
+  :root[data-theme="light"] .acct-fix .mini.ghost { color: var(--accent); }
+  /* .mini 는 all: unset 이라 hidden 속성의 기본 display:none 까지 지운다 — 여기서 다시 감춘다 (.repass 보다 뒤에) */
+  .acct-fix [hidden] { display: none; }
+  .acct-fix + .rem { box-shadow: inset 0 0.5px 0 var(--separator); }
+  /* 키보드로 옮겨 다닐 때 어디 있는지 — .mini 에는 초점 표시가 없다 */
+  .acct-fix .mini:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
+  :root[data-theme="light"] .acct-fix .mini:focus-visible { box-shadow: none; outline: 2px solid var(--accent-fill); outline-offset: 2px; }
+  /* 계정 목록 맨 위 안내 — 쓸 수 있는 계정이 없을 때, 비밀번호를 다시 넣은 뒤 */
+  .acct-note.show { margin: 10px 13px 0; }
 
   /* 스위치 */
   .sw {
