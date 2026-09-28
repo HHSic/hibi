@@ -112,6 +112,10 @@ const DEFAULT_SETTINGS = {
   // 휴식 화면 등장 연출. 기본 연출은 renderer/enter.js 의 LIST,
   // 직접 넣은 것은 'my:<id>' 꼴로 enterCustom 을 가리킨다.
   overlayEnter: 'fade',
+  // 고양이 등장 연출(실제 촬영 영상)의 움직임 — 'normal'(찍은 그대로, 1배) | 'slow'(0.75배) | 'slower'(0.6배).
+  // 찍은 빠르기 그대로인데도 «너무 빠르다»는 말을 들어 기본을 느리게 둔다. 배수 표는 src/breakwin.js CAT_RATES ·
+  // renderer/anim/clip.js RATES. 모르는 값은 읽는 쪽(catRate·rateOf)이 기본 'slow' 로 본다.
+  catSpeed: 'slow',
 
   // 알림음 — 화면만으로는 다른 창을 보고 있을 때 놓친다
   soundEnabled: true,

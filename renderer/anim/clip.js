@@ -136,6 +136,26 @@
   };
 
   /**
+   * 고양이 움직임(설정 catSpeed) → 영상 재생 빠르기.
+   *
+   * 영상은 찍은 빠르기 그대로 튼다. 그런데도 «고양이들이 너무 빠르게 움직인다»는 말을 들었다 — 진짜 고양이의
+   * 고개 돌리기는 원래 재빠르고, 짧은 핑퐁 되풀이(cat-lie 3.8초·cat-roll 2.9초)는 같은 몸짓이 금방 또 와서
+   * 더 급해 보인다. 그래서 고를 수 있게 하고, 기본은 «느리게»로 둔다.
+   * 메인(src/breakwin.js CAT_RATES)에도 같은 표가 있다 — 둘을 같이 고친다 (test/catspeed.test.js 가 맞춰 본다).
+   * 모르는 값(손으로 고친 설정 파일 등)은 기본 «느리게»로 본다.
+   */
+  const RATES = { normal: 1, slow: 0.75, slower: 0.6 };
+  const DEFAULT_SPEED = 'slow';
+  function speedOf(v) { return Object.prototype.hasOwnProperty.call(RATES, v) ? v : DEFAULT_SPEED; }
+  function rateOf(v) { return RATES[speedOf(v)]; }
+
+  /** 재생 빠르기로 쓸 수 있는 값 — 없거나 이상하면 1(찍은 그대로). 크로미움이 못 받는 값은 던지므로 넉넉한 범위로 묶는다 */
+  function safeRate(r) {
+    const n = Number(r);
+    return Number.isFinite(n) && n > 0 ? Math.min(2, Math.max(0.25, n)) : 1;
+  }
+
+  /**
    * 주인공 자리일 때 휴식 안내가 차지하는 오른쪽 아래 칸의 폭(여백 포함, CSS px).
    * overlay.html 의 html.ent-hero .stage/.actions 폭 min(460px, 32vw) + 오른쪽 여백 24px 과 같아야 한다.
    */
@@ -208,8 +228,11 @@
 
   /**
    * 휴식 창에 붙인다. 영상이 안 열리면(파일이 없거나 깨짐) 걷어 내고 onFail 을 한 번 부른다.
+   * opts.rate — 재생 빠르기 (고양이 움직임 설정, rateOf). 안 주면 1 — 찍은 그대로.
+   * 도착 시간(arrivalMs)·휴식 내용이 뜨는 때는 빠르기와 상관없이 그대로다.
    */
-  function mount(host, clip, onFail) {
+  function mount(host, clip, onFail, opts) {
+    const rate = safeRate(opts && opts.rate);
     const hero = !!(clip.place && clip.place.mode === 'hero');
     const root = document.documentElement;
     const v = document.createElement('video');
@@ -219,6 +242,10 @@
     v.playsInline = true;
     v.preload = 'auto';
     v.disablePictureInPicture = true;
+    // 빠르기 — src 를 넣으면(load) playbackRate 가 defaultPlaybackRate 로 되돌아가므로 둘 다 넣는다.
+    // 되풀이(loop)가 처음으로 돌아가도 그대로다. 첫 프레임이 준비된 뒤에 한 번 더 맞춘다 (아래 loadeddata)
+    v.defaultPlaybackRate = rate;
+    v.playbackRate = rate;
     v.setAttribute('aria-hidden', 'true');
     // 영상마다 따로 주는 필터(CLIPS 의 glow) — 까만 고양이는 어두운 휴식 화면에 윤곽이 묻혀,
     // 뒤에서 비치는 듯한 옅은 빛을 준다. .ent-clip 의 transform(들어오는 움직임)과는 따로 논다
@@ -240,7 +267,10 @@
       if (hero) root.classList.remove('ent-hero');
     };
     // 첫 프레임이 준비된 뒤에 들어온다 — 빈 네모가 먼저 번쩍이지 않게
-    v.addEventListener('loadeddata', () => v.classList.add('in'), { once: true });
+    v.addEventListener('loadeddata', () => {
+      if (v.playbackRate !== rate) { v.defaultPlaybackRate = rate; v.playbackRate = rate; }
+      v.classList.add('in');
+    }, { once: true });
     v.addEventListener('error', () => {
       if (dead) return;
       dead = true;
@@ -270,5 +300,5 @@
     };
   }
 
-  window.nunsClip = { CLIPS, layout, mount, heroPanelWidth };
+  window.nunsClip = { CLIPS, layout, mount, heroPanelWidth, RATES, DEFAULT_SPEED, speedOf, rateOf };
 })();

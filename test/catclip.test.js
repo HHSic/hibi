@@ -9,6 +9,8 @@
 //   · 구석 자리는 어떤 화면 크기에서도 글 자리를 안 덮고 화면 밖으로 안 나간다
 //     (주인공 자리는 test/herolayout.test.js 가 진짜 휴식 창으로 잰다)
 //   · enter.js 가 영상으로 띄우고, 영상이 안 열리면 옛 그림 없이 조용히 걷는다
+//   · 고양이 움직임 설정의 빠르기(catRate)가 영상 playbackRate·defaultPlaybackRate 로 들어간다 (안 주면 1).
+//     내 파일(my:)·다른 연출은 그대로이고, 휴식 내용이 뜨는 때도 그대로다
 // 이 시험은 앱을 띄우지 않는다 — 보이지 않는 창 하나에 clip.js 와 enter.js 만 싣는다.
 const path = require('path');
 const fs = require('fs');
@@ -263,6 +265,99 @@ app.whenReady().then(async () => {
   })()`);
   ok(e3.wrong === 0 && e3.inList, '«랜덤 고양이»를 화면 쪽에서 받아도 고양이 영상 하나로 띄운다', e3);
   ok(e3.seen >= Math.min(3, e3.total) && e3.idUrls === e3.total, '30번에 여러 고양이가 나온다 (뽑는 목록이 영상을 빠짐없이 가리킨다)', e3);
+
+  console.log('\n[고양이 움직임 — 재생 빠르기]');
+  // 설정 «고양이 움직임»의 빠르기(메인이 catRate 로 싣는다)가 영상에 그대로 들어가는가.
+  // src 를 넣으면 playbackRate 가 defaultPlaybackRate 로 돌아가므로 둘 다 봐야 한다. 안 주면 1 — 찍은 그대로
+  const rt = await js(`(async () => {
+    const host = document.getElementById('curtain');
+    const E = window.nunsEnter;
+    const C = window.nunsClip;
+    const reset = () => { host.textContent = ''; host.className = 'curtain'; document.documentElement.classList.remove('ent-hero'); };
+    const ready = (v) => new Promise((res) => {
+      if (!v) { res(false); return; }
+      if (v.readyState >= 2) { res(true); return; }
+      v.addEventListener('loadeddata', () => res(true), { once: true });
+      setTimeout(() => res(false), 5000);
+    });
+    const grab = async (fn) => {
+      reset();
+      const ms = await fn();
+      const v = host.querySelector('video.ent-clip');
+      const loaded = await ready(v);
+      await new Promise((r) => setTimeout(r, 300));
+      const out = { ms, loaded, rate: v ? v.playbackRate : null, def: v ? v.defaultPlaybackRate : null,
+        playing: v ? !v.paused : false, t: v ? v.currentTime : null };
+      return out;
+    };
+    const r = {};
+    for (const rate of [1, 0.75, 0.6]) r['cat@' + rate] = await grab(() => E.play('cat', host, null, 20, { catRate: rate }));
+    r.omitted = await grab(() => E.play('cat', host, null, 20));
+    r.noRate = await grab(() => E.play('cat-loaf', host, null, 20, {}));
+    r.heroSlow = await grab(() => E.play('cat-black-hero', host, null, 20, { catRate: 0.6 }));
+    r.randomSlow = await grab(() => E.play('cat-random', host, null, 20, { catRate: 0.6 }));
+    // 이상한 값은 던지지 않고 1 로 — 크로미움은 범위 밖 빠르기에 오류를 던져 연출이 통째로 걷혔을 것이다
+    r.garbage = await grab(() => E.play('cat', host, null, 20, { catRate: 'fast' }));
+    r.negative = await grab(() => E.play('cat', host, null, 20, { catRate: -3 }));
+    r.huge = await grab(() => E.play('cat', host, null, 20, { catRate: 1e9 }));
+    // mount 를 바로 불러도 같다 (opts 없으면 1)
+    reset();
+    const m1 = C.mount(host, C.CLIPS['cat-lie'], null);
+    await ready(m1.video);
+    r.mountDefault = { rate: m1.video.playbackRate, def: m1.video.defaultPlaybackRate };
+    m1.destroy();
+    const m2 = C.mount(host, C.CLIPS['cat-lie'], null, { rate: 0.75 });
+    await ready(m2.video);
+    // 끝에서 처음으로 되풀이해도 빠르기가 그대로인가 — 끝 가까이로 옮겨 한 바퀴 넘긴다
+    m2.video.currentTime = Math.max(0, m2.video.duration - 0.15);
+    const wrapped = await new Promise((res) => {
+      const to = setTimeout(() => res(false), 4000);
+      m2.video.addEventListener('timeupdate', function tu() {
+        if (m2.video.currentTime < 0.5) { clearTimeout(to); m2.video.removeEventListener('timeupdate', tu); res(true); }
+      });
+    });
+    r.mountLoop = { rate: m2.video.playbackRate, def: m2.video.defaultPlaybackRate, wrapped };
+    m2.destroy();
+    reset();
+    // 도착·내용 시각은 빠르기와 상관없다
+    r.cover = { plain: E.coverMs('cat'), loaf: E.coverMs('cat-loaf') };
+    return r;
+  })()`);
+  console.log('  ', JSON.stringify(rt));
+  for (const rate of [1, 0.75, 0.6]) {
+    const q = rt['cat@' + rate];
+    ok(q.loaded && q.rate === rate && q.def === rate && q.playing, `catRate ${rate} → 영상 playbackRate·defaultPlaybackRate 가 ${rate} (첫 프레임 뒤에도)`, q);
+  }
+  ok(rt.omitted.rate === 1 && rt.omitted.def === 1 && rt.noRate.rate === 1 && rt.noRate.def === 1, '빠르기를 안 주면 1 — 찍은 그대로', { omitted: rt.omitted, noRate: rt.noRate });
+  ok(rt.heroSlow.rate === 0.6 && rt.heroSlow.def === 0.6, '가운데(주인공) 고양이도 같은 빠르기를 따른다', rt.heroSlow);
+  ok(rt.randomSlow.rate === 0.6 && rt.randomSlow.def === 0.6, '«랜덤 고양이»를 화면 쪽에서 받아도 같은 빠르기', rt.randomSlow);
+  ok([rt.garbage, rt.negative].every((q) => q.loaded && q.rate === 1) && rt.huge.loaded && rt.huge.rate > 0 && rt.huge.rate <= 2,
+    '이상한 빠르기는 던지지 않고 1(또는 넉넉한 범위 안)으로 — 영상은 그대로 뜬다', { garbage: rt.garbage, negative: rt.negative, huge: rt.huge });
+  ok(rt.mountDefault.rate === 1 && rt.mountDefault.def === 1, 'mount(host, clip, onFail) — opts 없으면 1', rt.mountDefault);
+  ok(rt.mountLoop.wrapped && rt.mountLoop.rate === 0.75 && rt.mountLoop.def === 0.75, '되풀이로 처음에 돌아가도 빠르기가 그대로', rt.mountLoop);
+  ok(['cat@1', 'cat@0.75', 'cat@0.6', 'omitted'].every((k) => rt[k].ms === rt.cover.plain) && rt.noRate.ms === rt.cover.loaf,
+    '휴식 내용이 뜨는 때(도착+잠깐)는 빠르기와 상관없다', { cover: rt.cover, ms: ['cat@1', 'cat@0.75', 'cat@0.6', 'omitted'].map((k) => rt[k].ms) });
+
+  console.log('\n[고양이 움직임 — 내 파일·다른 연출은 그대로]');
+  // 빠르기는 진짜 고양이 영상(CLIPS)에만 — 직접 넣은 영상(my:)은 사용자가 고른 그대로 튼다
+  const mine = await js(`(async () => {
+    const host = document.getElementById('curtain');
+    host.textContent = '';
+    document.documentElement.classList.remove('ent-hero');
+    const url = new URL(window.nunsClip.CLIPS.cat.url, document.baseURI).href;
+    await window.nunsEnter.play('my:x', host, { url, kind: 'video', ms: 900 }, 20, { catRate: 0.6 });
+    const v = host.querySelector('video.ent-media');
+    const out = { found: !!v, rate: v ? v.playbackRate : null, def: v ? v.defaultPlaybackRate : null, cls: host.className };
+    host.textContent = '';
+    host.className = 'curtain';
+    await window.nunsEnter.play('blinds', host, null, 20, { catRate: 0.6 });
+    out.blinds = { videos: host.querySelectorAll('video').length, cls: host.className };
+    host.textContent = '';
+    host.className = 'curtain';
+    return out;
+  })()`);
+  ok(mine.found && mine.rate === 1 && mine.def === 1, '내 파일(my:) 영상은 빠르기를 안 바꾼다', mine);
+  ok(mine.blinds.videos === 0 && /ent-blinds/.test(mine.blinds.cls), '다른 연출(블라인드)은 그대로 — 영상 없음', mine.blinds);
 
   console.log('\n[영상이 안 열리면]');
   const e2 = await js(`(async () => {

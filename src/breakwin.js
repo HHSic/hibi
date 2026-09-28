@@ -183,6 +183,20 @@ function resolveEnter(id) {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
+/**
+ * 고양이 움직임(설정 catSpeed) → 고양이 영상 재생 빠르기.
+ *
+ * 영상은 찍은 빠르기 그대로인데도 «너무 빠르게 움직인다»는 말을 들었다 — 진짜 고양이의 고개 돌리기는
+ * 재빠르고, 짧은 핑퐁 되풀이는 같은 몸짓이 금방 또 온다. 그래서 고를 수 있게 하고 기본은 «느리게»다.
+ * 화면 쪽 renderer/anim/clip.js 의 RATES 와 같아야 한다 (test/catspeed.test.js 가 맞춰 본다).
+ * 모르는 값(손으로 고친 설정 파일·옛 값)은 기본으로 본다 — 저장된 값은 고치지 않는다.
+ */
+const CAT_RATES = { normal: 1, slow: 0.75, slower: 0.6 };
+const CAT_SPEED_DEFAULT = 'slow';
+function catRate(speed) {
+  return CAT_RATES[Object.prototype.hasOwnProperty.call(CAT_RATES, speed) ? speed : CAT_SPEED_DEFAULT];
+}
+
 /** 발동한 종류들을 오버레이가 그릴 수 있는 형태로 만든다 */
 function buildBreakPayload(ids) {
   const custom = store.custom;
@@ -213,6 +227,8 @@ function buildBreakPayload(ids) {
     // 'my:<id>'면 그릴 파일 주소를 enterAsset 에 같이 실어 보낸다.
     enter,
     enterAsset: enterAsset(enter),
+    // 고양이 영상 재생 빠르기 (설정 «고양이 움직임»). 화면 쪽은 진짜 고양이 영상에만 쓴다 — 내 파일·다른 연출은 그대로
+    catRate: catRate(s.catSpeed),
     items, grouped,
     mode: grouped || anyLong ? 'checklist' : 'single',
     // 켜면 «건너뛰기»·«다 했어요»를 숨긴다. 시간이 끝나면 tick()이 알아서 닫는다.
@@ -478,5 +494,7 @@ module.exports = {
   // 설정 화면이 쓰는 «내 연출» 목록 (settings:get 이 실어 보낸다)
   enterList,
   // 시험이 쓴다 — «그때그때»·«랜덤 고양이»가 무엇을 뽑는지 (test/catrandom.test.js, charscene.test.js)
-  resolveEnter, CAT_ENTERS, DISABLED_ENTER
+  resolveEnter, CAT_ENTERS, DISABLED_ENTER,
+  // 시험이 쓴다 — 고양이 움직임 설정이 휴식 창에 실리는 빠르기 (test/catspeed.test.js)
+  catRate, CAT_RATES, buildBreakPayload
 };

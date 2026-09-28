@@ -237,14 +237,17 @@ const MAKERS = { web, cat, blinds, breathe, tv };
  * 연출을 재생한다. 내용이 뜰 시점(ms)으로 resolve.
  * 움직임을 줄여 달라는 설정이면 아무것도 안 하고 바로 끝낸다 — 그 설정을 켠 사람에게
  * 화면을 뒤덮는 애니메이션은 정확히 원치 않는 것이다.
+ *
+ * opts.catRate — 고양이 영상 재생 빠르기 (설정 «고양이 움직임», 메인이 buildBreakPayload 에서 정한다).
+ * 진짜 고양이 영상(anim/clip.js CLIPS)에만 쓴다. 내 파일·다른 연출은 그대로 — 내용이 뜨는 때도 그대로다.
  */
-function play(id, host, asset, breakSec) {
+function play(id, host, asset, breakSec, opts) {
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
   let pick = effective(id);
   // 'random' 은 보통 main 이 미리 정해서 넘긴다 — 모니터마다 다른 게 나오면 안 되니까.
   if (pick === 'random') {
-    const opts = Object.keys(MAKERS).filter((k) => !DISABLED.has(k));
-    pick = opts[Math.floor(Math.random() * opts.length)];
+    const pool = Object.keys(MAKERS).filter((k) => !DISABLED.has(k));
+    pick = pool[Math.floor(Math.random() * pool.length)];
   }
   // «랜덤 고양이»도 보통 main 이 정해서 넘긴다 (src/breakwin.js resolveEnter). 그대로 오면 여기서 고른다
   if (pick === 'cat-random') {
@@ -270,7 +273,7 @@ function play(id, host, asset, breakSec) {
       media(host, asset);
     } else if (clip) {
       // 영상이 안 열리면 커튼을 걷는다 — 휴식 내용은 이미 제때 뜬다
-      window.nunsClip.mount(host, clip, () => { host.className = 'curtain'; });
+      window.nunsClip.mount(host, clip, () => { host.className = 'curtain'; }, { rate: opts && opts.catRate });
     } else if (scene) {
       // 휴식마다 조금씩 다르게 — 시드는 여기서 한 번 정한다 (draw 안에서는 무작위를 안 쓴다)
       window.nunsAnim.mount(host, scene, { seed: (Date.now() % 100000) + 1 });

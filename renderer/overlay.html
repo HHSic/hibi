@@ -447,7 +447,8 @@
     // 연출을 그리는 건 마우스가 있는 화면 하나뿐. 나머지는 그동안 어두운 채로 있다가
     // 같은 시각에 내용을 보여준다.
     if (p.enterOn == null || String(p.enterOn) === String(displayId)) {
-      window.nunsEnter.play(p.enter || 'fade', document.getElementById('curtain'), p.enterAsset, breakSec);
+      // catRate — 고양이 영상 빠르기 (설정 «고양이 움직임»). 메인이 정해 싣는다. 고양이 영상에만 쓰인다
+      window.nunsEnter.play(p.enter || 'fade', document.getElementById('curtain'), p.enterAsset, breakSec, { catRate: p.catRate });
     }
 
     tick();

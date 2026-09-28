@@ -7,6 +7,8 @@
 //   · 영상이 안 열리는 고양이는 건너뛴다 — 칸은 계속 보이고 돌리기도 이어진다
 //   · 다 안 열리면 칸을 감추고, 더는 바꾸지 않는다
 //   · 다른 연출로 바꾸면 돌리던 것이 멈춘다. 고양이 하나를 고르면 돌리지 않는다
+//   · «고양이 움직임» 줄은 고양이·«그때그때»에서만 보이고, 고른 빠르기가 저장되며 미리보기 영상에 바로 들어간다
+//     («랜덤 고양이»가 다음 고양이로 넘어가도 그대로)
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -152,6 +154,71 @@ app.whenReady().then(async () => {
   const saved = await js('window.__setApp || []');
   ok(saved.some((p) => p.overlayEnter === 'cat-random') && saved[saved.length - 1].overlayEnter === 'cat-rb',
     '고른 것이 저장 요청으로 나간다', saved);
+
+  console.log('\n[고양이 움직임]');
+  // 고양이를 고르면 «고양이 움직임» 줄(보통·느리게·아주 느리게)이 보이고, 고른 빠르기가 저장되고
+  // 미리보기 영상에 바로 들어간다 — «랜덤 고양이»가 다음 고양이로 넘어가도 그대로다
+  const sp = () => js(`(() => {
+    const row = document.getElementById('cat-speed-row');
+    const v = document.querySelector('#enter-preview video');
+    const btns = [...document.querySelectorAll('#cat-speed button')];
+    return { shown: !row.hidden && row.getBoundingClientRect().height > 0,
+      names: btns.map((b) => b.textContent),
+      on: btns.filter((b) => !b.classList.contains('ghost')).map((b) => b.textContent),
+      pressed: btns.filter((b) => b.getAttribute('aria-pressed') === 'true').map((b) => b.textContent),
+      group: !!row.querySelector('[role="group"][aria-labelledby="cat-speed-lbl"]'),
+      hint: document.getElementById('cat-speed-hint').textContent,
+      src: v ? decodeURIComponent(v.src.split('/').pop()) : null, ready: v ? v.readyState : -1,
+      rate: v ? v.playbackRate : null, def: v ? v.defaultPlaybackRate : null,
+      focus: document.activeElement && document.activeElement.tagName === 'BUTTON' ? document.activeElement.textContent : null };
+  })()`);
+  const clickSpeed = (name) => js(`[...document.querySelectorAll('#cat-speed button')].find((b) => b.textContent === ${JSON.stringify(name)}).click()`);
+  const lastSaved = async () => { const a = await js('window.__setApp || []'); return a[a.length - 1]; };
+
+  const c1 = await sp();
+  ok(c1.shown && JSON.stringify(c1.names) === JSON.stringify(['보통', '느리게', '아주 느리게']) && c1.group,
+    '고양이 하나(회색 고양이)를 고르면 «고양이 움직임» 줄과 단추 셋이 보인다', c1);
+  ok(c1.on.length === 1 && c1.on[0] === '느리게' && JSON.stringify(c1.pressed) === '["느리게"]' && /0\.75/.test(c1.hint),
+    '기본은 «느리게» — 켜진 단추·aria-pressed·설명이 같다', c1);
+  ok(c1.rate === 0.75 && c1.def === 0.75, '미리보기 영상도 기본 빠르기(0.75)로 돈다', { rate: c1.rate, def: c1.def });
+
+  await click('블라인드');
+  await sleep(200);
+  const c2 = await sp();
+  ok(!c2.shown, '블라인드처럼 고양이가 아닌 연출이면 줄을 감춘다', c2);
+  await click('그때그때');
+  await sleep(200);
+  const c3 = await sp();
+  ok(c3.shown, '«그때그때»(고양이가 나올 수 있다)면 줄이 보인다', c3);
+
+  await click('랜덤 고양이');
+  const c4 = await shown(files[0]);
+  const c4b = await sp();
+  ok(!!c4 && c4b.shown && c4b.rate === 0.75, '«랜덤 고양이»로 돌아오면 줄이 보이고 첫 고양이가 0.75 로 돈다', c4b);
+  await js(`(() => { window.__reloads2 = 0; document.querySelector('#enter-preview video').addEventListener('loadstart', () => { window.__reloads2++; }); })()`);
+  await clickSpeed('아주 느리게');
+  const c5 = await sp();
+  const saved5 = await lastSaved();
+  ok(saved5 && saved5.catSpeed === 'slower' && Object.keys(saved5).length === 1, '«아주 느리게»를 누르면 catSpeed 가 저장 요청으로 나간다', saved5);
+  ok(c5.rate === 0.6 && c5.def === 0.6 && c5.src === c4b.src && (await js('window.__reloads2')) === 0,
+    '미리보기 영상이 다시 읽지 않고 바로 0.6 으로 느려진다', { c5, reloads: await js('window.__reloads2') });
+  ok(JSON.stringify(c5.on) === '["아주 느리게"]' && JSON.stringify(c5.pressed) === '["아주 느리게"]' && /0\.6/.test(c5.hint),
+    '켜진 단추·aria-pressed·설명이 따라 바뀐다', c5);
+  ok((await state()).on[0] === '랜덤 고양이', '등장 연출 고르기는 그대로다', (await state()).on);
+  const c6 = await until(async () => { const s = await sp(); return s.src && s.src !== c5.src && s.ready >= 2 ? s : null; }, 8000, 100);
+  ok(!!c6 && c6.rate === 0.6 && c6.def === 0.6, '«랜덤 고양이»가 다음 고양이로 넘어가도 0.6 그대로', c6);
+
+  await clickSpeed('보통');
+  const c7 = await sp();
+  ok(c7.rate === 1 && c7.def === 1 && (await lastSaved()).catSpeed === 'normal', '«보통»은 1배 — 찍은 그대로', { c7, saved: await lastSaved() });
+
+  // 키보드 — 단추에 초점을 두고 Enter 로 고른다 (.mini 는 all: unset 이지만 여전히 <button> 이다)
+  await js(`[...document.querySelectorAll('#cat-speed button')].find((b) => b.textContent === '느리게').focus()`);
+  win.webContents.focus();
+  for (const type of ['keyDown', 'char', 'keyUp']) win.webContents.sendInputEvent({ type, keyCode: type === 'char' ? '\r' : 'Enter' });
+  const c8 = await until(async () => { const s = await sp(); return s.rate === 0.75 ? s : null; }, 2000, 50) || await sp();
+  ok(c8.rate === 0.75 && c8.focus === '느리게' && JSON.stringify(c8.pressed) === '["느리게"]' && (await lastSaved()).catSpeed === 'slow',
+    '키보드(Enter)로도 고르고, 누른 단추에 초점이 남는다', { c8, saved: await lastSaved() });
 
   // 없는 파일을 일부러 연 «불러오기 실패» 말고, 미리보기 코드에서 난 오류가 없어야 한다
   const ours = errs.filter((e) => /^(settings|enter|clip)\.js$/.test(e.file));

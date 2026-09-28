@@ -538,7 +538,71 @@ function renderEnter() {
   $('enter-hint').textContent = built ? built.hint
     : own ? `${own.kind === 'video' ? '영상' : '그림'} · ${(own.ms / 1000).toFixed(1)}초 동안 화면을 덮습니다`
       : '';
+  renderCatSpeed(cur);
   renderEnterPreview(own, built);
+}
+
+/**
+ * «고양이 움직임» — 휴식 창의 고양이 영상을 얼마나 빠르게 틀지 (store catSpeed).
+ * 영상은 찍은 빠르기 그대로인데도 «너무 빠르게 움직인다»는 말을 들어 고를 수 있게 했다. 기본은 «느리게».
+ * 배수 표는 휴식 창과 같은 anim/clip.js 의 것을 쓴다 (RATES·rateOf) — 여기서 따로 적지 않는다.
+ */
+const CAT_SPEEDS = [
+  { id: 'normal', name: '보통', hint: () => '찍은 그대로의 빠르기로 움직입니다' },
+  { id: 'slow', name: '느리게', hint: (x) => `${x}배로 조금 느긋하게 움직입니다` },
+  { id: 'slower', name: '아주 느리게', hint: (x) => `${x}배로 느릿느릿 움직입니다` }
+];
+
+/** 지금 고른 빠르기 id — 모르는 값은 기본(느리게)으로 본다 */
+function catSpeed() {
+  const c = window.nunsClip;
+  return c && c.speedOf ? c.speedOf(data.settings.catSpeed) : 'slow';
+}
+
+/** 미리보기 고양이 영상에 빠르기를 입힌다 — src 를 바꾸면 playbackRate 가 defaultPlaybackRate 로 돌아가므로 둘 다 */
+function applyCatRate(v) {
+  const c = window.nunsClip;
+  const r = c && c.rateOf ? c.rateOf(data.settings.catSpeed) : 1;
+  v.defaultPlaybackRate = r;
+  v.playbackRate = r;
+}
+
+/** 고양이 영상이 나올 수 있는 연출(고양이 하나·«랜덤 고양이»·«그때그때»)을 골랐을 때만 줄을 보인다 */
+function renderCatSpeed(cur) {
+  const E = window.nunsEnter;
+  $('cat-speed-row').hidden = !((E.clipFor && E.clipFor(cur)) || cur === 'cat-random' || cur === 'random');
+  const host = $('cat-speed');
+  // 다시 그리지 않고 칠만 바꾼다 — 새로 만들면 방금 누른 단추가 사라져 키보드 초점을 잃는다
+  const paint = () => {
+    const now = catSpeed();
+    for (const b of host.children) {
+      const on = b.dataset.speed === now;
+      b.classList.toggle('ghost', !on);
+      b.setAttribute('aria-pressed', String(on));
+    }
+    const it = CAT_SPEEDS.find((s) => s.id === now);
+    const c = window.nunsClip;
+    $('cat-speed-hint').textContent = it ? it.hint(c && c.rateOf ? c.rateOf(now) : 1) : '';
+  };
+  if (!host.children.length) {
+    for (const s of CAT_SPEEDS) {
+      const b = document.createElement('button');
+      b.className = 'mini';
+      b.dataset.speed = s.id;
+      b.textContent = s.name;
+      b.onclick = () => {
+        if (data.settings.catSpeed === s.id) return;
+        data.settings.catSpeed = s.id;
+        window.nunsseom.setApp({ catSpeed: s.id });
+        paint();
+        // 미리보기는 다시 틀지 않고 빠르기만 바꾼다 — «랜덤 고양이»가 돌리던 차례도 그대로 이어진다
+        const v = $('enter-preview').querySelector('video[data-cat]');
+        if (v) applyCatRate(v);
+      };
+      host.append(b);
+    }
+  }
+  paint();
 }
 
 // 미리보기로 붙인 것(캔버스 장면·영상) — 떼지 않고 새로 붙이면 안 보이는 캔버스가 뒤에서 계속
@@ -571,6 +635,10 @@ function renderEnterPreview(item, built) {
     box.classList.add('scene');
     const v = document.createElement('video');
     v.muted = true; v.loop = true; v.autoplay = true; v.playsInline = true;
+    // 휴식 창과 같은 빠르기로 (고양이 움직임). 고양이가 바뀌어 새로 읽을 때마다 한 번 더 맞춘다
+    v.dataset.cat = '1';
+    applyCatRate(v);
+    v.addEventListener('loadeddata', () => applyCatRate(v));
     if (cats.length > 1) {
       // 5초마다 다음 고양이로. 한 마리 영상이 안 열리면 그 고양이만 건너뛰고, 다 안 열릴 때만 감춘다
       const bad = new Set();
