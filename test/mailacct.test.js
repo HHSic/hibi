@@ -9,6 +9,9 @@
 //   [3] summary — 할 말 한 줄. 섞이면 고칠 수 있는 것부터, 계정마다 다를 때만 이름을 댄다
 //   [4] tally — 기록에 적는 셈
 //   [5] 실제로 겪은 판 — 계정 둘 다 비밀번호가 이 PC에서 안 풀린다
+//   [6] 비밀번호를 Windows 자격 증명 관리자에 둔 뒤 — DPAPI 가 깨져도 «저장 불가»가 아니고,
+//       항목이 없어졌거나 옛 값이 안 풀리면 «비밀번호 다시 넣기»로 고친다
+//       (진짜 자격 증명 관리자는 credstore.test.js·mailrepass.test.js 가 만진다 — 여기서는 풀기를 흉내 낸다)
 const path = require('path');
 const acct = require(path.join(__dirname, '..', 'src', 'mailacct.js'));
 
@@ -147,6 +150,36 @@ console.log('\n[5] 계정 둘 다 비밀번호가 이 PC에서 안 풀린다');
   ok(line === '건너뜀 — 쓸 수 있는 계정 없음 (저장된 계정 2개 · 비밀번호 못 풂 2)', '기록 한 줄에 까닭이 들어간다', line);
   ok(acct.summary(checks) === LOCKED, '사용자에게는 «비밀번호 다시 넣기»를 하라고 말한다', acct.summary(checks));
   ok(checks.every((c) => acct.fixable(c.problem)), '두 계정 모두 설정에서 비밀번호만 다시 넣으면 된다');
+}
+
+// ── [6] 자격 증명 관리자에 둔 뒤 ──────────────────
+console.log('\n[6] 비밀번호를 자격 증명 관리자에 둔 뒤');
+{
+  // secret.open 흉내 — 'wincred:' 는 자격 증명 관리자에서 찾고(없으면 null), 옛 값은 DPAPI 로 푼다.
+  // 이 PC처럼 DPAPI 가 깨졌으면 옛 값은 늘 null 이다
+  const vault = new Map([['Hibi/mail/m1', 'app-pass']]);
+  const secretOpen = (sealed) => (String(sealed).startsWith('wincred:') ? vault.get(String(sealed).slice(8)) || null : null);
+  // secret.available = 자격 증명 관리자 || DPAPI — 자격 증명 관리자가 되면 DPAPI 가 깨져도 참이다
+  const env = { available: true, open: secretOpen };
+  const inVault = base({ id: 'm1', sealed: 'wincred:Hibi/mail/m1' });
+  const gone = base({ id: 'm2', name: '개인', sealed: 'wincred:Hibi/mail/m2' });
+  const oldBlob = base({ id: 'm3', name: '옛', sealed: 'b2xkLWRwYXBp' });
+  const r = acct.check(inVault, env);
+  ok(r.problem === null && r.pass === 'app-pass', '자격 증명 관리자에 있으면 쓸 수 있다', { problem: r.problem });
+  ok(acct.classify(gone, env) === 'locked', '표시는 있는데 항목이 없어졌으면 locked (nostore 가 아니다)');
+  ok(acct.classify(oldBlob, env) === 'locked', 'DPAPI 가 깨져 옛 값이 안 풀리면 locked (nostore 가 아니다)');
+  ok(acct.fixable(acct.classify(gone, env)) && acct.fixable(acct.classify(oldBlob, env)), '둘 다 «비밀번호 다시 넣기»로 고친다');
+  ok(acct.classify(base({ sealed: null }), env) === 'nopass', '표시가 없으면 여전히 nopass');
+  ok(acct.classify(inVault, { available: false, open: secretOpen }) === 'nostore',
+    'nostore 는 잠가 둘 곳이 하나도 없을 때뿐이다 (자격 증명 관리자도 DPAPI 도 못 씀)');
+  const checks = [inVault, gone, oldBlob].map((a) => ({ account: { id: a.id, name: a.name }, ...acct.check(a, env) }));
+  ok(acct.summary(checks) === '', '하나라도 쓸 수 있으면 할 말이 없다');
+  const broken = checks.slice(1);
+  ok(acct.summary(broken) === LOCKED && acct.tally(broken) === '비밀번호 못 풂 2', '못 쓰는 것만 남으면 «다시 넣기»를 하라고 한다',
+    { summary: acct.summary(broken), tally: acct.tally(broken) });
+  ok(/Windows 자격 증명/.test(acct.hint('locked')) && /서명·설정은 그대로/.test(acct.hint('locked')),
+    'locked 설명이 윈도우 자격 증명 문제도 까닭으로 든다', acct.hint('locked'));
+  ok(!/wincred|Hibi\/mail/.test(acct.summary(broken) + acct.hint('locked') + acct.label('locked')), '할 말에 저장 위치 이름이 새지 않는다');
 }
 
 console.log(bad ? `\n${bad}개 실패` : '\n모두 통과');

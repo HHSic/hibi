@@ -919,6 +919,8 @@ if (!app.requestSingleInstanceLock()) {
       revealWidget: () => revealWidget(),
       holdReason: (ms) => holdReason(ms)
     });
+    // 설정의 어느 계정도 가리키지 않는 비밀번호 항목을 치운다 (계정 추가 중에 죽었거나 저장이 실패해 남은 것)
+    mailhub.sweepPasswords();
     statswin.init({ scheduler, startBreak: (ids) => breakwin.startBreak(ids) });
     mailbody.init({ mailAccountsForUse: () => mailhub.mailAccountsForUse(), mailState: mailhub.mailState });
     mailfilter.init({

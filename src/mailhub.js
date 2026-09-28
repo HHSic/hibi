@@ -90,8 +90,70 @@ let ruleBusy = false;
  * 가르는 셈은 mailacct 가 한다 (창 없이 시험할 수 있는 곳).
  */
 function mailAccountChecks() {
+  upgradeLegacy();
   const env = { available: secret.available, open: (sealed) => secret.open(sealed) };
   return store.mailAccounts.map((a) => ({ account: a, ...mailacct.check(a, env) }));
+}
+
+/** 자격 증명 관리자의 오류 번호를 기록 끝에 붙인다 (없으면 빈 글) — 비밀은 없다 */
+const credErr = () => (secret.lastError ? ` (오류 ${secret.lastError})` : '');
+
+/**
+ * 옛 값(0.9.66까지 safeStorage 로 잠가 설정 파일에 적은 것)을 자격 증명 관리자로 옮긴다.
+ * DPAPI 가 깨지면 옛 값은 못 풀게 된다 — 아직 풀리는 동안 옮겨 둬야 그때도 메일이 온다.
+ * 꺼 둔 계정도 옮긴다 (켰을 때 이미 늦었을 수 있다). 같은 값으로는 실행마다 한 번만 해 본다 —
+ * 못 풀리는 값을 폴링마다 풀어 보고 기록을 쌓지 않게.
+ */
+const upgradeTried = new Map();   // 계정 id → 해 본 옛 값
+function upgradeLegacy() {
+  if (!secret.wincred) return;
+  for (const a of store.mailAccounts) {
+    if (!secret.isLegacy(a.sealed) || upgradeTried.get(a.id) === a.sealed) continue;
+    upgradeTried.set(a.id, a.sealed);
+    const name = a.name || '계정';
+    const pass = secret.open(a.sealed);
+    if (!pass) {
+      evlog.log('메일', `비밀번호 옮기기 못 함 · ${name} · 예전 방식(DPAPI)으로 잠근 값이 이 PC에서 풀리지 않음`);
+      continue;
+    }
+    const ref = secret.sealRef(pass, a.id);
+    if (!ref) {
+      evlog.log('메일', `비밀번호 옮기기 못 함 · ${name} · 자격 증명 관리자에 쓰지 못함${credErr()}`);
+      continue;
+    }
+    store.updateMailAccount(a.id, { sealed: ref });
+    evlog.log('메일', `비밀번호 옮김 · ${name} · Windows 자격 증명 관리자로`);
+  }
+}
+
+/**
+ * 계정의 잠긴 값을 바꾼 뒤, 예전 것이 자격 증명 관리자의 다른 항목이었으면 지운다.
+ * 보통은 같은 이름(계정 id)이라 덮어쓰기로 끝난다 — 옛 값에서 바뀐 때는 지울 것이 없다.
+ */
+function dropOldSealed(old, now, name) {
+  if (!old || old === now || !secret.isRef(old)) return;
+  if (!secret.remove(old)) evlog.log('메일', `예전 비밀번호 항목을 지우지 못함 · ${name}${credErr()}`);
+}
+
+/** 설정 파일에 그 계정이 아직 있나 — 못 읽으면 «있다»로 친다 (지우면 안 되는 쪽으로) */
+function accountOnDisk(id) {
+  const disk = store.reloadFromDisk();
+  return !!disk.unreadable || (Array.isArray(disk.mailAccounts) && disk.mailAccounts.some((a) => a && a.id === id));
+}
+
+/**
+ * 시작할 때 한 번 — 설정의 어느 계정도 가리키지 않는 비밀번호 항목을 자격 증명 관리자에서 치운다.
+ * 계정을 추가하다 앱이 죽었거나 설정 저장이 실패하면, 잠가 둔 비밀번호만 남고 그걸 가리키는 계정이 없다.
+ * 지킬 것은 메모리와 파일 양쪽에 적힌 것 모두다. 설정 파일을 못 읽었으면 하지 않는다 —
+ * 빈 설정을 믿고 치우면 멀쩡한 계정의 비밀번호까지 지운다. 기록에는 개수만 남긴다.
+ */
+function sweepPasswords() {
+  const disk = store.reloadFromDisk();
+  if (disk.unreadable) return;
+  const keep = [...store.mailAccounts, ...(Array.isArray(disk.mailAccounts) ? disk.mailAccounts : [])]
+    .map((a) => a && a.sealed);
+  const n = secret.sweep(keep);
+  if (n) evlog.log('메일', `주인 없는 비밀번호 항목 ${n}개를 자격 증명 관리자에서 지움`);
 }
 
 /** 쓸 수 있는 것만 실제 접속용으로 */
@@ -511,7 +573,15 @@ ipcMain.handle('mail:add', async (_e, acc) => {
   }
   const t = await mail.test({ ...acc, pass: acc.pass });
   if (!t.ok) return { ok: false, message: t.message };
-  store.addMailAccount({ ...acc, sealed: secret.seal(acc.pass) });
+  // 비밀번호는 계정 id 이름으로 잠근다 — id 를 먼저 정하고, 잠그지 못하면 계정을 만들지 않는다.
+  // 먼저 만들고 나중에 잠그면 그 사이·실패 뒤에 «비밀번호 없는 계정»이 남는다
+  const id = store.newMailAccountId();
+  const sealed = secret.seal(acc.pass, id);
+  if (!sealed) {
+    evlog.log('메일', `계정 추가 실패 · 비밀번호를 잠그지 못함${credErr()}`);
+    return { ok: false, message: '비밀번호를 안전하게 저장하지 못했습니다 — 다시 해 보세요' };
+  }
+  store.addMailAccount({ ...acc, id, sealed });
   // 계정을 넣었는데 별도 스위치를 또 켜야 보인다면, 안 보이는 게 당연해진다
   if (!store.settings.mailEnabled) store.setSettings({ mailEnabled: true });
   // 저장이 실제로 파일까지 갔는지 확인한다 — 메모리에만 남으면 다음 실행에 사라진다
@@ -527,11 +597,24 @@ ipcMain.handle('mail:add', async (_e, acc) => {
 });
 ipcMain.handle('mail:update', (_e, { id, patch }) => {
   const p = { ...patch };
-  if (p.pass) { p.sealed = secret.seal(p.pass); delete p.pass; }
+  // 잠긴 값과 id 는 여기서만 정한다 — 화면이 보낸 것으로 바꾸지 않는다
+  delete p.sealed;
+  delete p.id;
+  const cur = store.mailAccounts.find((a) => a.id === id);
+  const old = cur && cur.sealed;
+  if (p.pass && cur) {
+    const sealed = secret.seal(p.pass, id);
+    // 못 잠갔으면 저장된 값을 그대로 둔다 — null 로 덮으면 멀쩡하던 비밀번호까지 사라진다.
+    // 자격 증명 관리자의 항목도 sealRef 가 해 보기 전 값으로 되돌려 둔다 (같은 이름을 덮어쓰기 때문)
+    if (sealed) p.sealed = sealed;
+    else evlog.log('메일', `비밀번호 바꾸기 실패 · ${cur.name || '계정'} · 잠그지 못함${credErr()}`);
+  }
+  delete p.pass;
   // 서명은 웹메일에서 통째로 복사해 오는 일이 많다. 저장되는 것이 최종본이므로
   // 여기서 실행되는 것을 걷어낸다 — 화면 쪽 검사는 붙여넣는 순간의 편의일 뿐이다.
   if (typeof p.signature === 'string') p.signature = mail.cleanHtml(p.signature);
   store.updateMailAccount(id, p);
+  if (p.sealed) dropOldSealed(old, p.sealed, (cur && cur.name) || '계정');
   refreshMail();
   return mailAccountsForUi();
 });
@@ -578,9 +661,15 @@ ipcMain.handle('mail:repass', async (_e, req) => {
       evlog.log('메일', `비밀번호 다시 넣기 취소 · ${name} · 확인하는 동안 서버·아이디가 바뀜`);
       return { ok: false, message: '확인하는 동안 계정의 서버나 아이디가 바뀌었습니다 — 다시 해 주세요' };
     }
-    const sealed = secret.seal(pass);
-    if (!sealed) return { ok: false, message: '비밀번호를 잠그지 못했습니다 — 다시 해 보세요' };
+    // 계정 id 이름으로 잠근다 — 자격 증명 관리자의 같은 항목을 덮어쓴다 (항목이 지워졌으면 새로 만든다)
+    const old = cur.sealed;
+    const sealed = secret.seal(pass, id);
+    if (!sealed) {
+      evlog.log('메일', `비밀번호 다시 넣기 실패 · ${name} · 잠그지 못함${credErr()}`);
+      return { ok: false, message: '비밀번호를 잠그지 못했습니다 — 다시 해 보세요' };
+    }
     store.updateMailAccount(id, { sealed });
+    dropOldSealed(old, sealed, name);
     // 파일까지 갔는지 본다 (계정 추가와 같은 까닭) — 값은 적지 않고 «같은가»만 적는다.
     // 저장이 실패해도 store 는 던지지 않는다. 메모리에는 들어가 이번 실행에서는 되지만, 다시 켜면 또 잠긴다 —
     // «다시 저장했습니다»라고 하면 거짓말이 된다
@@ -603,7 +692,19 @@ ipcMain.handle('mail:repass', async (_e, req) => {
   }
 });
 ipcMain.handle('mail:remove', (_e, id) => {
+  const gone = store.mailAccounts.find((a) => a.id === id);
   store.removeMailAccount(id);
+  // 자격 증명 관리자에 둔 비밀번호도 지운다 — 계정이 없어진 뒤에도 쓸 곳 없는 비밀번호가 PC에 남으면 안 된다.
+  // 다만 설정 파일에서 정말 빠졌을 때만. 저장이 실패했는데 지우면 다음 실행에 계정이 되살아나 «비밀번호 다시 필요»로
+  // 나온다. 남겨 둔 항목은 계정이 파일에서 빠진 뒤 시작할 때 치운다 (sweepPasswords)
+  if (gone && secret.isRef(gone.sealed)) {
+    const name = gone.name || '계정';
+    if (accountOnDisk(id)) {
+      evlog.log('메일', `계정 삭제 · ${name} · 설정 파일에 저장되지 않아 자격 증명 관리자의 비밀번호는 남겨 둠`);
+    } else if (!secret.remove(gone.sealed)) {
+      evlog.log('메일', `계정 삭제 · ${name} · 자격 증명 관리자의 비밀번호를 지우지 못함${credErr()}`);
+    }
+  }
   refreshMail();
   return mailAccountsForUi();
 });
@@ -1131,7 +1232,7 @@ ipcMain.handle('mail:sent', async () => {
 module.exports = {
   init,
   // 바깥이 부르는 것들
-  refreshMail, announceMail, forgetRuleWork, mailAccountsForUse, notice,
+  refreshMail, announceMail, forgetRuleWork, mailAccountsForUse, notice, sweepPasswords,
   // 쓸 계정이 없을 때 «왜»를 말하는 것들 — 쓰기 창·백업도 같은 말을 쓴다
   mailAccountProblems, mailAccountProblem, noAccountMessage,
   draftFolders, sentFolders,

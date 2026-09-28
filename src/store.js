@@ -262,15 +262,31 @@ function save() {
   return true;
 }
 
+/** 메일 계정 id — 시각(ms)에서 나오고, 이미 있는 것과 겹치면 뒤에 번호를 붙인다 */
+function newMailId(s) {
+  const base = `m${Date.now().toString(36)}`;
+  let id = base;
+  for (let n = 1; s.mailAccounts.some((x) => x.id === id); n++) id = `${base}${n.toString(36)}`;
+  return id;
+}
+
 function todayKey() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 module.exports = {
-  /** 파일에 실제로 무엇이 들어 있는지 (저장이 됐는지 확인용) */
+  /**
+   * 파일에 실제로 무엇이 들어 있는지 (저장이 됐는지 확인용).
+   * 못 읽으면 빈 목록에 unreadable 표시를 붙여 준다 — «계정이 하나도 없다»와 헷갈리면 안 되는 곳
+   * (자격 증명 관리자의 비밀번호 항목 지우기·치우기)이 이걸 보고 멈춘다.
+   */
   reloadFromDisk() {
-    try { return JSON.parse(fs.readFileSync(FILE(), 'utf8')); } catch { return { mailAccounts: [] }; }
+    try {
+      const raw = JSON.parse(fs.readFileSync(FILE(), 'utf8'));
+      if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw;
+    } catch { /* 아래 */ }
+    return { mailAccounts: [], unreadable: true };
   },
 
   get settings() { return load().settings; },
@@ -406,9 +422,18 @@ module.exports = {
   },
 
   get mailAccounts() { return load().mailAccounts; },
+  /**
+   * 새 메일 계정 id. 비밀번호를 이 id 이름으로 먼저 잠가 두고 계정을 만들므로, 만들기 전에 정한다.
+   * 같은 ms 에 둘을 만들어도 겹치지 않게 뒤에 번호를 붙인다.
+   */
+  newMailAccountId() {
+    return newMailId(load());
+  },
   addMailAccount(acc) {
     const s = load();
-    const id = `m${Date.now().toString(36)}`;
+    // 미리 정한 id(newMailAccountId)가 있으면 그대로 쓴다 — 비밀번호가 그 이름으로 잠겨 있다
+    const want = typeof acc.id === 'string' && /^[\w.-]{1,64}$/.test(acc.id) ? acc.id : '';
+    const id = want && !s.mailAccounts.some((x) => x.id === want) ? want : newMailId(s);
     s.mailAccounts.push({
       id, name: acc.name || acc.user || '메일',
       provider: acc.provider || 'custom',

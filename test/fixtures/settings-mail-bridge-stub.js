@@ -14,6 +14,7 @@ const known = {
   // Esc 가 입력칸에서 멈추는지 — 설정 창 전체 Esc 는 이걸 부른다
   closeSettings: () => { window.__closed += 1; },
   mailGet: () => ipcRenderer.invoke('mail:get'),
+  mailAdd: (acc) => ipcRenderer.invoke('mail:add', acc),
   mailUpdate: (id, patch) => ipcRenderer.invoke('mail:update', { id, patch }),
   mailRemove: (id) => ipcRenderer.invoke('mail:remove', id),
   mailRepass: (req) => { window.__repass.push(req); return ipcRenderer.invoke('mail:repass', req || {}); },

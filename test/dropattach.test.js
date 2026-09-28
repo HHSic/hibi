@@ -18,9 +18,23 @@ const fs = require('fs');
 const os = require('os');
 const { app, BrowserWindow, ipcMain } = require('electron');
 
-process.on('uncaughtException', (e) => { console.error('LAB 터짐:', (e && e.stack) || e); process.exit(1); });
-process.on('unhandledRejection', (e) => { console.error('LAB 약속 깨짐:', (e && e.stack) || e); process.exit(1); });
-setTimeout(() => { console.error('LAB 시간 초과'); process.exit(1); }, 180_000).unref();
+// 비밀번호는 진짜 Windows 자격 증명 관리자에 들어간다 — 'Hibi-test/<임의>/' 아래에만 시험용 값을 두고,
+// 끝나면(실패해도) 다 지운다. main.js·secret.js 를 싣기 전에 정해야 한다 — 안 정하면 개발 실행의
+// 'Hibi (개발)/' 아래에 써 놓고 안 지운다 (옛 값을 옮겨 적는 길로도 들어간다).
+const NS = `Hibi-test/drop-${require('crypto').randomBytes(6).toString('hex')}`;
+process.env.HIBI_CRED_NS = NS;
+const cred = require(`${ROOT}/src/credstore.js`);
+/** 이 시험이 쓴 항목을 다 지운다 (남은 것 개수를 준다) — 어떻게 끝나든 부른다 */
+function cleanup() {
+  try {
+    for (const t of cred.list(`${NS}/`)) cred.remove(t);
+    return cred.list(`${NS}/`).length;
+  } catch { return -1; }
+}
+
+process.on('uncaughtException', (e) => { console.error('LAB 터짐:', (e && e.stack) || e); cleanup(); process.exit(1); });
+process.on('unhandledRejection', (e) => { console.error('LAB 약속 깨짐:', (e && e.stack) || e); cleanup(); process.exit(1); });
+setTimeout(() => { console.error('LAB 시간 초과'); cleanup(); process.exit(1); }, 180_000).unref();
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'droplab-'));
 app.setPath('appData', tmp);
@@ -28,6 +42,11 @@ app.setPath('appData', tmp);
 require(`${ROOT}/src/main.js`);
 const store = require(`${ROOT}/src/store.js`);
 const secret = require(`${ROOT}/src/secret.js`);
+// 이름 앞머리가 시험용이 아니면 아무것도 쓰지 않고 멈춘다 — 설치본·개발 실행의 항목을 건드리면 안 된다
+if (secret.namespace !== NS) {
+  console.error('시험 이름 앞머리가 적용되지 않았다 — 멈춘다', secret.namespace);
+  process.exit(1);
+}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let bad = 0;
@@ -35,6 +54,14 @@ const ok = (c, m, x) => {
   console.log((c ? '  OK   ' : '  실패 ') + m + (x === undefined ? '' : `  → ${JSON.stringify(x)}`));
   if (!c) bad++;
 };
+/** 치우고, 남은 항목이 없는지 본 뒤 끝낸다 */
+function finish(code) {
+  console.log('\n[치우기]');
+  ok(cleanup() === 0, '이 시험이 쓴 항목을 다 지웠다');
+  ok(cred.list('Hibi-test/').length === 0, '«Hibi-test/» 아래에 남은 항목이 없다', cred.list('Hibi-test/').length);
+  console.log(bad ? `\n${bad}개 실패` : '\n모두 통과');
+  app.exit((code || bad) ? 1 : 0);
+}
 const winBy = (p) => BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes(p)) || null;
 
 // 붙일 진짜 파일들
@@ -50,9 +77,11 @@ app.whenReady().then(async () => {
   await sleep(2500);
   // 계정이 없으면 쓰기 창이 안 열린다. 진짜 경로와 같은 모양으로 하나 심는다
   // (연결은 하지 않는다 — 여기서 보는 것은 첨부이지 보내기가 아니다).
+  // 비밀번호는 계정 id 이름으로 잠근다 — mail:add 와 같은 길이고, id 가 없으면 옛 방식(DPAPI)으로 빠진다
+  const id = store.newMailAccountId();
   store.addMailAccount({
-    name: '시험', provider: 'custom', host: 'imap.example.com', port: 993,
-    user: 'me@example.com', sealed: secret.seal('nope'), from: 'me@example.com', sender: '나'
+    id, name: '시험', provider: 'custom', host: 'imap.example.com', port: 993,
+    user: 'me@example.com', sealed: secret.seal('nope', id), from: 'me@example.com', sender: '나'
   });
   await sleep(500);
 
@@ -61,7 +90,7 @@ app.whenReady().then(async () => {
   await wwc.executeJavaScript(`window.nunsseom.composeOpen({ kind: 'new' })`);
   for (let i = 0; i < 40 && !winBy('compose.html'); i++) await sleep(200);
   const cw = winBy('compose.html');
-  if (!cw) { console.log('쓰기 창이 안 열렸다'); app.exit(1); return; }
+  if (!cw) { console.log('쓰기 창이 안 열렸다'); finish(1); return; }
   await sleep(1500);
   const wc = cw.webContents;
 
@@ -90,7 +119,7 @@ app.whenReady().then(async () => {
   const handlers = im._invokeHandlers;
   if (!handlers || typeof handlers.get !== 'function' || !handlers.get('compose:attach-dropped')) {
     ok(false, 'compose:attach-dropped 핸들러를 못 찾았다 (Electron 내부 모양이 바뀐 듯)');
-    app.exit(1); return;
+    finish(1); return;
   }
   const call = (paths) => handlers.get('compose:attach-dropped')(null, paths);
   const r2 = await call([small, folder, '상대경로.txt', '', null]);
@@ -189,6 +218,5 @@ app.whenReady().then(async () => {
   ok(textDrag === false, '글자를 끌면 테두리가 안 뜬다', textDrag);
 
   try { fs.rmSync(box, { recursive: true, force: true }); } catch { /* 무시 */ }
-  console.log(bad ? `\n${bad}개 실패` : '\n모두 통과');
-  app.exit(bad ? 1 : 0);
+  finish(0);
 });
