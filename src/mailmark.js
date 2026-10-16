@@ -71,6 +71,16 @@ class SeenMarks {
   }
 
   /**
+   * 사용자가 «안 읽음»으로 되돌린 표시가 아직 살아 있나 — 서버 정리(«바로»)가 그 메일을 옮기지 않게.
+   * 표시가 없으면 거짓이다 (seenOf(msg, null) 은 표시가 없어도 거짓을 줘 «안 읽음으로 바꿈»과 구별이 안 된다).
+   * 시간이 지난 표시는 sweep 전이라도 없는 것으로 본다
+   */
+  markedUnread(msg, now = Date.now()) {
+    const v = this.marks.get(markKey(msg));
+    return !!v && v.seen === false && now - v.at <= this.ttlMs;
+  }
+
+  /**
    * 목록에 덮어씌운다.
    *
    * 원본을 고치지 않고 사본을 돌려준다 — 부르는 쪽이 같은 배열을 다시 쓰는 일이 있다.

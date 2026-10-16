@@ -3,7 +3,8 @@
 // 본문은 이때만 받는다. 폴링에서 매번 받으면 ECOUNT 같은 느린 서버에서 목록이 늦어진다.
 // 같은 메일을 또 열면 새 창을 만들지 않고 그 창을 앞으로 가져온다.
 //
-// 바깥에는 «어느 창에서 온 요청인가»(slotOf)와 «휴지통으로»(doTrash)만 내준다.
+// 바깥에는 «어느 창에서 온 요청인가»(slotOf)와 «휴지통으로»(doTrash),
+// «지금 떠 있는 메일»(openMailKeys — 서버 정리가 보는 중인 메일을 건너뛴다)만 내준다.
 
 const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
 const path = require('path');
@@ -162,6 +163,8 @@ function openMailView(msg) {
   const id = win.webContents.id;
   const slot = {
     id, win, key,
+    // 이 창이 보여 주는 메일 — 서버 정리가 보는 중인 메일을 옮기지 않게 (openMailKeys)
+    msg: viewKey(msg, acc),
     payload: null,
     files: [],
     seq: ++mailViewSeq,
@@ -183,6 +186,8 @@ function openMailView(msg) {
         const { source, ...forView } = m;
         autoBackupOne(acc, { ...forView, source });
         if (win.isDestroyed()) return;      // 받는 사이에 닫았으면 버린다
+        // Gmail 은 같은 메일이 라벨 폴더에 다른 UID 로도 있다 — 서버 정리가 Message-ID 로도 알아보게
+        slot.msg.messageId = String(forView.messageId || '');
         slot.files = m.attachments || [];
         slot.payload = {
           ...forView,
@@ -212,6 +217,35 @@ function openMailView(msg) {
   });
   win.on('closed', () => { mailWins.delete(id); });
   return true;
+}
+
+/**
+ * 보기 창 하나가 보여 주는 메일의 열쇠 { accountId, mailbox, uid, messageId }.
+ * 폴더가 비어 오면 받아 올 때(mail.js fetchBody)와 같은 기본값으로 채운다 — 정리가 보는 폴더 이름(b.path)과 맞아야 한다.
+ * Message-ID 는 본문이 온 뒤에 채운다. 창도 서버도 부르지 않는 계산이라 시험이 바로 부른다
+ */
+function viewKey(msg, acc) {
+  const m = msg || {};
+  return { accountId: m.accountId, mailbox: m.mailbox || (acc && acc.mailbox) || 'INBOX', uid: Number(m.uid), messageId: '' };
+}
+
+/** 창 목록 중 살아 있는 창의 열쇠만, 사본으로 (닫힌 창의 것은 내주지 않는다) — 시험이 가짜 창으로 부른다 */
+function liveMailKeys(slots) {
+  const out = [];
+  for (const slot of slots || []) {
+    if (!slot || !slot.msg || !slot.win || slot.win.isDestroyed()) continue;
+    out.push({ ...slot.msg });
+  }
+  return out;
+}
+
+/**
+ * 지금 보기 창에 떠 있는 메일들 [{ accountId, mailbox, uid, messageId }].
+ * 서버 정리(«바로»)는 열어볼 때 저장된 메일을 몇 분 뒤 서버 휴지통으로 옮길 수 있다 — 창이 떠 있는 동안
+ * 옮기면 이 창의 «휴지통»·«읽음» 단추가 이미 옮겨진 UID 를 만진다. 그래서 정리가 이 목록을 보고 건너뛴다.
+ */
+function openMailKeys() {
+  return liveMailKeys(mailWins.values());
 }
 
 ipcMain.handle('mail:open', (_e, msg) => openMailView(msg));
@@ -476,4 +510,4 @@ ipcMain.on('mailview:set-bounds', (e, { x, y, width, height, dir }) => {
 
 /** 우리가 넣어둔 안내 링크만 연다 — 렌더러가 임의 주소를 열지 못하게 http(s)로 제한 */
 
-module.exports = { init, slotOf, doTrash };
+module.exports = { init, slotOf, doTrash, openMailKeys, viewKey, liveMailKeys };

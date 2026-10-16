@@ -30,7 +30,9 @@ app.whenReady().then(async () => {
 
   const dir = path.join(tmp, 'backupdir');
   fs.mkdirSync(dir, { recursive: true });
-  store.setSettings({ mailBackupDir: dir, mailAutoBackup: true, mailEnabled: true });
+  // 백업 폴더는 일반 설정 길로 못 바꾼다 (서버 정리의 근거라 store 가 막는다) — 정해진 길로 쓴다
+  store.setGatedSettings({ mailBackupDir: dir });
+  store.setSettings({ mailAutoBackup: true, mailEnabled: true });
   await sleep(300);
   const s1 = await wwc.executeJavaScript(`window.nunsseom.mailBackupStatus()`);
   ok(s1.dir === dir && s1.auto === true, '폴더·자동 켜짐이 반영된다', { dir: !!s1.dir, auto: s1.auto });

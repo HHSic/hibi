@@ -84,6 +84,11 @@ const DEFAULT_SETTINGS = {
   mailCount: 5,            // 위젯에 몇 통까지 보여줄지 (상한 없음 — 많으면 그만큼 느려질 뿐)
   mailBackupDir: null,     // 메일 백업 폴더 (없으면 아직 정하지 않음)
   mailAutoBackup: false,   // 새로 오는 메일과 열어본 메일을 자동으로 저장할지
+  // 서버 정리 — PC에 저장이 확인된 오래된 메일을 서버 휴지통으로 옮긴다 (src/mailtidy.js).
+  // 이 셋과 mailBackupDir 은 일반 설정 길로 바꿀 수 없다 — 아래 GATED_SETTINGS 참고.
+  mailServerTidy: false,
+  mailTidyDays: 30,        // 받은 지 며칠 지난 것부터 옮길지 — 0(바로: 읽은 것만)·7·30·90 (TIDY_DAYS)
+  mailTidyLast: null,      // 마지막 정리 결과 — 앱을 다시 켜도 설정 화면이 보여 준다
   mailPanel: false,        // 위젯 겉면에 메일 펼쳐두기 (클릭 없이 보이게)
   mailViewSize: null,      // 메일 보기 창을 마지막으로 조절한 크기
   composeSize: null,       // 메일 쓰기 창을 마지막으로 조절한 크기
@@ -124,6 +129,19 @@ const DEFAULT_SETTINGS = {
 
   autoUpdate: true         // 자동으로 업데이트 확인
 };
+
+// 서버의 메일을 옮기는 설정과 그 근거(백업 폴더)는 화면에서 오는 일반 설정 길
+// (settings:set-app, stocks:set-app — 둘 다 받은 patch 를 그대로 setSettings 로 넘긴다)로 바꿀 수 없다.
+// 켜기와 기간 줄이기는 메인이 세어 보고 물은 뒤(backup.js setTidy) setGatedSettings 로만 쓴다.
+// 백업 폴더까지 막는 까닭: 화면이 폴더를 바꿔치기하면 «PC에 저장이 확인됐다»의 근거가 바뀐다.
+// 0 은 «바로» — 날짜 대신 읽음을 본다 (src/mailtidy.js DAYS 와 같아야 한다). 0이 거짓 값이라 `|| 30` 으로 다듬지 않는다
+const TIDY_DAYS = [0, 7, 30, 90];
+const GATED_SETTINGS = ['mailServerTidy', 'mailTidyDays', 'mailBackupDir', 'mailTidyLast'];
+
+/** 기록에 남긴다 — 저장소가 기록 때문에 멈추면 안 된다 */
+function note(cat, msg) {
+  try { require('./evlog').log(cat, msg); } catch {}
+}
 
 let cache = null;
 
@@ -293,10 +311,61 @@ module.exports = {
     return { mailAccounts: [], unreadable: true };
   },
 
+  TIDY_DAYS,
+  GATED_SETTINGS,
+
   get settings() { return load().settings; },
+  /**
+   * 일반 설정 길. 서버 정리 설정(GATED_SETTINGS)은 여기로 바꿀 수 없다 — 받은 patch 에 있으면 버린다.
+   * 정리의 전제(자동 백업·메일 확인)를 끄면 정리도 끈다. 몇 달 뒤 자동 백업만 다시 켰을 때
+   * 묻지도 않고 대량 이동이 다시 시작되면 안 된다 — 다시 켤 때 다시 묻기 위해서다.
+   */
   setSettings(patch) {
     const s = load();
-    s.settings = { ...s.settings, ...patch };
+    const p = { ...(patch && typeof patch === 'object' ? patch : {}) };
+    const blocked = GATED_SETTINGS.filter((k) => Object.prototype.hasOwnProperty.call(p, k));
+    if (blocked.length) {
+      for (const k of blocked) delete p[k];
+      // 값은 남기지 않는다 — 폴더 경로가 들어 있을 수 있다
+      note('설정', `서버 정리 설정(${blocked.join(', ')})은 일반 설정 길로 바꿀 수 없습니다 — 무시했습니다`);
+    }
+    if (s.settings.mailServerTidy === true && (p.mailAutoBackup === false || p.mailEnabled === false)) {
+      p.mailServerTidy = false;
+      note('설정', '서버 정리 꺼짐 — «자동으로 백업» 또는 «메일 확인하기»를 꺼서 (다시 켜려면 다시 확인합니다)');
+    }
+    s.settings = { ...s.settings, ...p };
+    save();
+    return s.settings;
+  },
+  /**
+   * 서버 정리 설정을 쓰는 유일한 길 — backup.js 만 부른다 (확인 창을 거친 뒤·폴더를 고른 뒤·결과 기록).
+   * 네 키 말고는 무시하고, 값은 여기서 다시 다듬는다.
+   */
+  setGatedSettings(patch) {
+    const s = load();
+    const src = patch && typeof patch === 'object' ? patch : {};
+    const has = (k) => Object.prototype.hasOwnProperty.call(src, k);
+    const p = {};
+    if (has('mailServerTidy')) p.mailServerTidy = src.mailServerTidy === true;
+    if (has('mailTidyDays')) {
+      // 목록의 값을 그대로 쓴다 (-0 도 0으로). 0을 거짓으로 보고 30으로 바꾸지 않는다
+      const d = TIDY_DAYS.find((x) => x === src.mailTidyDays);
+      p.mailTidyDays = d === undefined ? 30 : d;
+    }
+    if (has('mailBackupDir')) {
+      p.mailBackupDir = typeof src.mailBackupDir === 'string' && src.mailBackupDir ? src.mailBackupDir : null;
+    }
+    if (has('mailTidyLast')) {
+      const v = src.mailTidyLast;
+      const num = (x) => Number(x) || 0;
+      p.mailTidyLast = v && typeof v === 'object' ? {
+        at: num(v.at), moved: num(v.moved), kept: num(v.kept), unsaved: num(v.unsaved),
+        unverified: num(v.unverified), spared: num(v.spared), unread: num(v.unread), skippedBoxes: num(v.skippedBoxes),
+        more: v.more === true,
+        error: typeof v.error === 'string' ? v.error.slice(0, 200) : null
+      } : null;
+    }
+    s.settings = { ...s.settings, ...p };
     save();
     return s.settings;
   },

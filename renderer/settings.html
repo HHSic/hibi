@@ -543,6 +543,17 @@
   /* 키보드로 옮겨 다닐 때 어디 있는지 — .mini 는 all: unset 이라 초점 표시가 없다 (.acct-fix 와 같은 링) */
   .catspeed .mini:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
   :root[data-theme="light"] .catspeed .mini:focus-visible { box-shadow: none; outline: 2px solid var(--accent-fill); outline-offset: 2px; }
+  /* 서버 정리 — .row·.col 이 display 를 주므로 hidden 속성의 기본 display:none 을 다시 세운다 */
+  .tidy[hidden], #tidy-state[hidden] { display: none; }
+  .tidydays { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+  .tidydays .mini:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
+  :root[data-theme="light"] .tidydays .mini:focus-visible { box-shadow: none; outline: 2px solid var(--accent-fill); outline-offset: 2px; }
+  /* 지금은 누를 수 없는 스위치·단추 — 까닭은 아래 줄에 쓴다. disabled 로 막으면 누른 단추가 초점을 잃어
+     화면 읽기 프로그램이 제자리를 놓친다 — aria-disabled 로 알리고 누름은 스크립트가 무시한다 */
+  .sw[aria-disabled="true"], .tidydays .mini[aria-disabled="true"] { opacity: 0.45; }
+  /* 눌러도 아무 일이 없는 단추가 마우스에 «눌릴 것처럼» 반응하지 않게 — 라이트 .mini:hover 와 구체성이 같아 뒤에 둔다 */
+  .tidydays .mini[aria-disabled="true"]:hover { filter: none; }
+  .tidydays .mini.ghost[aria-disabled="true"]:hover { background: transparent; }
   .mini.danger:hover { background: color-mix(in srgb, var(--danger) 14%, transparent); }
   /* 흰 글자가 4.5:1 을 넘는 빨강 (예전 #e0453f 는 4.1:1).
      :hover 까지 같이 — 두 번째로 누를 때는 마우스가 늘 위에 있는데, 위의 .mini.danger:hover 옅은 분홍이
@@ -828,6 +839,31 @@
       </div>
       <div class="col">
         <span class="hint" id="backup-auto">지난 메일은 아래 «백업 시작»을 한 번 눌러주세요.</span>
+      </div>
+      <!-- 서버 정리 — 메인이 상태(st.tidy)를 줄 때만 보인다. 켜기·기간 줄이기·«바로»는 메인이 세어 보고 확인 창으로 묻는다 -->
+      <div class="row toggle tidy" id="tidy-row" hidden>
+        <span class="nm">서버 정리<i>PC에 저장이 확인된 메일을 서버 휴지통으로 옮깁니다</i></span>
+        <span></span>
+        <button class="sw" id="mailServerTidy" role="switch" aria-checked="false" aria-label="서버 정리"
+                aria-describedby="tidy-hint tidy-state"></button>
+      </div>
+      <div class="col tidy" id="tidy-wrap" hidden>
+        <!-- 옮기는 때 — «바로»는 기간이 아니라 «읽은 메일은 새 메일 확인 때마다»다. 뒤 줄(tidy-days-tail)은 고른 값에 따라 바뀐다 -->
+        <div class="tidydays">
+          <span class="lbl" id="tidy-days-lbl">옮기는 때</span>
+          <div class="helprow" id="tidy-days" role="group" aria-labelledby="tidy-days-lbl" aria-describedby="tidy-days-tail">
+            <button class="mini ghost" data-days="0" aria-pressed="false">바로</button>
+            <button class="mini ghost" data-days="7" aria-pressed="false">7일</button>
+            <button class="mini" data-days="30" aria-pressed="true">30일</button>
+            <button class="mini ghost" data-days="90" aria-pressed="false">90일</button>
+          </div>
+          <span class="lbl" id="tidy-days-tail">받은 지 30일 지난 메일만</span>
+        </div>
+        <span class="hint" id="tidy-hint"></span>
+        <span class="hint">자동 백업은 새로 온 메일과 열어본 메일만 저장합니다. 그보다 오래된 메일까지 정리하려면 먼저 아래 «백업 시작»을 눌러주세요. «자동으로 백업»이나 «메일 확인하기»를 끄거나 저장 폴더를 바꾸면 서버 정리도 꺼집니다.</span>
+        <span class="hint">휴지통도 서버 용량에 들어가는 메일 회사가 많습니다. 용량을 비우려면 웹메일 설정에서 휴지통 자동 비우기를 켜 두세요.</span>
+        <span class="hint" id="tidy-state" hidden></span>
+        <div class="msg" id="tidy-msg" role="status"></div>
       </div>
       <div class="col">
         <div class="bar"><i id="backup-bar"></i></div>

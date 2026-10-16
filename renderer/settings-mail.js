@@ -866,7 +866,160 @@ function paintAuto(st) {
     + (st.autoTotal ? ` · 켠 뒤 모두 ${st.autoTotal}통` : '');
 }
 
+// ── 서버 정리 ────────────────────────────────────
+// PC에 저장이 확인된 메일을 서버 휴지통으로 옮긴다 — 받은 지 7·30·90일 지난 것, 또는 «바로»(0: 읽은 것만).
+// 서버의 메일을 움직이는 일이라 켜기·기간 줄이기·«바로»로(또는 «바로»에서) 바꾸기는 메인이 세어 보고
+// 확인 창으로 묻는다 — 여기서는 부탁만 하고 답을 그린다. 0은 거짓 값이라 `days || …` 꼴로 다루지 않는다.
+// 누르자마자 스위치를 미리 칠하지 않는다: 확인 창에서 그만두면 스위치가 거짓말을 하게 된다.
+// setApp 으로는 이 값을 못 바꾼다 (메인 store 가 버린다) — 늘 mailTidySet 으로만 보낸다.
+let tidyBusy = 0;          // 답을 기다리는 부탁 수 — 그동안 또 켜거나 기간을 누르면 확인 창이 겹친다
+let tidyOffBusy = false;   // 끄기 부탁의 답을 기다리는 중 — 끄기는 다른 부탁(최대 20초 세는 중)을 기다리는 사이에도 보낸다
+let tidyLast = null;       // 마지막으로 받은 st.tidy — 누를 때 «지금 값»과 견준다
+let tidyMsgTimer = null;
+
+/**
+ * 기간 단추 뒤의 말 — «옮기는 때: 바로 · 읽은 메일은 새 메일 확인 때마다» / «… 30일 · 받은 지 30일 지난 메일만».
+ * «저장되자마자»라고 하지 않는다 — 저장된 뒤에 읽은 메일은 읽은 뒤의 메일 확인 때 옮긴다
+ */
+function tidyTail(days) {
+  return days === 0 ? '읽은 메일은 새 메일 확인 때마다' : `받은 지 ${days}일 지난 메일만`;
+}
+
+/**
+ * 무엇을 하는지 — «바로»는 날짜가 아니라 읽음으로 고르므로 글이 통째로 다르다.
+ * 범위(폴더·모든 계정)와 되찾는 길, 남기는 것은 둘 다 같이 적는다.
+ * @param everyMin 메인이 계산한 «바로»의 실제 주기(분) — 메일 확인 주기를 길게 둔 사람에게 «몇 분 안에»는 거짓말이다.
+ *   옛 메인이라 없으면 숫자 없이 말한다
+ */
+function tidyHint(days, everyMin) {
+  const every = Number.isFinite(everyMin) && everyMin > 0 ? `(지금은 약 ${everyMin}분마다)` : '';
+  const what = days === 0
+    ? `받은편지함·보낸편지함·보관함 등 백업하는 폴더에서, PC에 저장된 것이 확인된 메일 중 «읽은» 메일을 새 메일 확인 때마다${every}`
+      + ' 서버의 휴지통으로 옮깁니다. 안 읽은 메일은 읽을 때까지 서버에 남아 위젯·폰에서 새 메일로 보이고, 읽고 나면 다음 정리 때 옮깁니다.'
+      // 이 앱의 보기 창은 열어도 읽음으로 바꾸지 않는다 — 열어 읽고 닫았는데 안 옮겨지면 고장 난 줄 안다
+      + ' 이 앱에서는 열어 보기만 해서는 읽음이 되지 않습니다 — 보기 창이나 위젯 목록에서 읽음으로 표시하거나 웹메일·폰에서 읽어야 옮깁니다.'
+      + ' 보기 창이 떠 있는 동안은 창을 닫은 뒤에 옮깁니다.'
+      // 보낸 메일은 늘 \Seen 이다 — 받은 메일 이야기로만 읽히지 않게 따로 말한다
+      + ' 보낸 메일은 늘 읽은 것으로 쳐서, 저장되면 곧 옮깁니다(보낸편지함도 비게 됩니다).'
+    : `받은편지함·보낸편지함·보관함 등 백업하는 폴더에서, PC에 저장된 것이 확인된 메일 중 받은 지 ${days}일 지난 것을`
+      + ' 서버의 휴지통으로 옮깁니다. 읽었는지는 보지 않습니다.';
+  return what + ' 모든 메일 계정에 적용됩니다. 웹메일·폰과 이 앱의 메일 목록에서도 사라지지만 휴지통에서 되찾을 수 있고'
+    // 휴지통을 저절로 비우지 않는 서버도 있다 — 아래 «휴지통 자동 비우기를 켜 두세요» 안내와 어긋나지 않게
+    + '(메일 회사에 따라 일정 기간이 지나면 휴지통이 비워지기도 합니다), 원래 폴더로 되찾은 메일은 다시 옮기지 않습니다.'
+    + ' 별표·중요 표시가 붙은 메일(Gmail이 저절로 붙인 중요 표시 포함)과 임시보관함·메모·서식 폴더는 남깁니다.'
+    + ' 저장되지 않은 메일은 건드리지 않습니다.';
+}
+
+/**
+ * 상태 한 줄 — 꺼져 있으면 왜 못 켜는지만, 켜져 있으면 마지막으로 무엇을 했는지.
+ * 남긴 메일은 «저장 안 됨»과 «확인 안 됨»을 나눠 말한다 — 앞의 것은 «백업 시작»으로 풀리고 뒤의 것은 안 풀린다.
+ * «바로»에서 안 읽어 남긴 것(unread)은 경고가 아니다 — 읽을 때까지 남긴다고만 말한다 (별표·중요가 붙은 것처럼
+ * 읽어도 남기는 메일이 섞여 있어 «읽으면 옮김»이라고 약속하지 않는다). unread 는 지난 실행의 결과라, «바로»에서
+ * 기간으로 바꾼 뒤 다음 실행 전까지 남아 있다 — 지금 설정이 «바로»일 때만 말한다 (기간 정리는 안 읽은 메일도 옮긴다).
+ * 일부러 남긴 것(spared — Gmail이 저절로 붙인 중요 표시가 흔하다)도 사실로 적는다 — 읽은 메일이 까닭 없이 남아 보이지 않게
+ */
+function tidyLine(t) {
+  if (!t.on) return t.ready ? '' : (t.why || '');
+  if (!t.ready) return `쉬는 중 — ${t.why}`;
+  if (t.running) return '서버 정리 중…';
+  if (!t.at) return '켜져 있습니다. 자동 백업이 한 번 돈 뒤 정리합니다.';
+  return `서버 정리 · ${agoText(t.at)} · ${t.moved}통 휴지통으로`
+    + (t.unread && t.days === 0 ? ` · 안 읽은 ${t.unread}통은 읽을 때까지 남김` : '')
+    + (t.spared ? ` · 별표·중요 표시 등 ${t.spared}통은 남김` : '')
+    + (t.unsaved ? ` · 저장 안 된 ${t.unsaved}통은 남김(«백업 시작»으로 저장하면 대상)` : '')
+    + (t.unverified ? ` · 확인 안 된 ${t.unverified}통은 남김` : '')
+    + (t.more ? ' · 남은 것은 다음에 이어서' : '')
+    + (t.skippedBoxes ? ` · 폴더 ${t.skippedBoxes}곳은 확인할 수 없어 건너뜀` : '')
+    + (t.error ? ` · 실패: ${t.error}` : '');
+}
+
+/**
+ * 스위치·기간 단추·설명·상태 줄을 칠한다. #tidy-msg(부탁에 대한 답)는 건드리지 않는다 —
+ * 폴링이 2~20초마다 다시 칠하므로, 여기서 지우면 확인 창 결과가 읽기도 전에 사라진다.
+ */
+function paintTidy(st) {
+  const t = st.tidy;
+  // 서버 정리를 모르는 메인이면 감춘 채로 둔다 (마크업이 처음부터 hidden 이다)
+  if (!t) {
+    tidyLast = null;
+    $('tidy-row').hidden = true;
+    $('tidy-wrap').hidden = true;
+    return;
+  }
+  tidyLast = t;
+  $('tidy-row').hidden = false;
+  $('tidy-wrap').hidden = false;
+  const busy = tidyBusy > 0;
+  const sw = $('mailServerTidy');
+  sw.classList.toggle('on', t.on);
+  sw.setAttribute('aria-checked', String(t.on));
+  sw.setAttribute('aria-busy', String(busy || t.asking));
+  // 켜진 스위치는 묻는 중이어도, 답을 기다리는 중이어도, 조건이 모자라도 늘 끌 수 있어야 한다 — 막는 것은 «켜기»뿐이다.
+  // (기간 줄이기를 세는 20초 동안에도 그만둘 길이 있어야 한다. 메인도 그 사이의 끄기를 받는다)
+  sw.setAttribute('aria-disabled', String(!t.on && (busy || t.asking || !t.ready)));
+  // 다시 만들지 않고 칠만 바꾼다 — 누른 단추에 초점이 남는다 (고양이 움직임과 같은 방식)
+  for (const b of $('tidy-days').querySelectorAll('button')) {
+    const on = Number(b.dataset.days) === t.days;
+    b.className = 'mini' + (on ? '' : ' ghost');
+    b.setAttribute('aria-pressed', String(on));
+    b.setAttribute('aria-disabled', String(busy || t.asking));
+  }
+  $('tidy-days-tail').textContent = tidyTail(t.days);
+  $('tidy-hint').textContent = tidyHint(t.days, t.everyMin);
+  const line = tidyLine(t);
+  $('tidy-state').textContent = line;
+  $('tidy-state').hidden = !line;
+}
+
+/**
+ * 메인에 부탁한다 — 켜기·끄기({on}) 또는 기간({days}).
+ * 켜기와 기간 줄이기는 메인이 세고(최대 20초) 확인 창을 띄운 뒤에야 답이 온다. 그동안 무엇을 하는지 먼저 말한다.
+ * «바로»(0)에서 기간으로 바꾸는 것도 묻는다 — 기간 정리는 «바로»가 남기던 안 읽은 오래된 메일도 옮긴다 (backup.js setTidy).
+ */
+async function setTidy(req, el) {
+  const t = tidyLast;
+  if (!t || (el && el.getAttribute('aria-disabled') === 'true')) return;
+  // 끄기는 다른 부탁의 답을 기다리는 중에도 보낸다 (같은 끄기를 두 번 보내지는 않는다).
+  // 켜기·기간은 하나씩만 — 겹치면 확인 창이 둘 뜬다
+  const off = req.on === false;
+  if (off ? tidyOffBusy : tidyBusy > 0) return;
+  // 이미 고른 기간을 다시 누른 것은 부탁이 아니다
+  if (req.days !== undefined && req.days === t.days) return;
+  const risky = (req.on === true && !t.on)
+    || (req.days !== undefined && t.on && (req.days < t.days || t.days === 0));
+  const msg = $('tidy-msg');
+  clearTimeout(tidyMsgTimer);
+  tidyBusy += 1;
+  if (off) tidyOffBusy = true;
+  paintTidy({ tidy: t });
+  if (risky) mailMsg('wait', '확인하는 중… 옮길 메일을 세어 봅니다 (최대 20초). 확인 창이 뜨면 거기서 골라주세요.', msg);
+  let st = null;
+  try {
+    st = await window.nunsseom.mailTidySet(req);
+  } catch {
+    st = null;   // 답이 없던 것과 같게 — 아래에서 다시 누르라고 말한다
+  } finally {
+    tidyBusy -= 1;
+    if (off) tidyOffBusy = false;
+  }
+  if (!st) {
+    if (tidyLast) paintTidy({ tidy: tidyLast });
+    mailMsg('bad', '응답이 없습니다 — 잠시 뒤 다시 눌러주세요.', msg);
+    return;
+  }
+  paintBackup(st);
+  // 끄기의 답이 먼저 와 걸어 둔 걷기 타이머가 뒤에 온 답을 일찍 걷지 않게
+  clearTimeout(tidyMsgTimer);
+  const said = st.tidy && st.tidy.message;
+  if (!said) { msg.classList.remove('show'); return; }
+  mailMsg(st.tidy.messageKind, said, msg);
+  // 실패는 읽고 고칠 때까지 남기고, 나머지는 잠시 뒤 걷는다
+  if (st.tidy.messageKind !== 'bad') tidyMsgTimer = setTimeout(() => msg.classList.remove('show'), 10_000);
+}
+
 function paintBackup(st) {
+  // 답이 없으면(메인이 아직 안 떴거나 시험용 다리) 지금 그림을 그대로 둔다
+  if (!st) return;
   $('backup-dir').textContent = st.dir || '아직 정하지 않았습니다';
   paintAuto(st);
   $('btn-backup-open').style.display = st.dir ? '' : 'none';
@@ -878,7 +1031,10 @@ function paintBackup(st) {
   const pct = st.total ? Math.min(100, (st.done / st.total) * 100) : 0;
   $('backup-bar').style.width = `${pct}%`;
 
-  if (st.running) {
+  if (st.running && st.waiting) {
+    // 서버 정리·자동 백업이 비켜 주기를 기다리는 중 — 말없이 멈춰 보이지 않게 무엇을 기다리는지 쓴다
+    $('backup-state').textContent = st.waiting;
+  } else if (st.running) {
     const where = [st.account, st.mailbox].filter(Boolean).join(' · ');
     $('backup-state').textContent = st.total
       ? `${where} — ${st.done}/${st.total} · 저장 ${st.saved}통`
@@ -888,10 +1044,13 @@ function paintBackup(st) {
   } else {
     $('backup-state').textContent = '메일 한 통이 파일 하나(.eml)로 저장됩니다.';
   }
+  paintTidy(st);
 
-  // 도는 동안은 자주, 자동 백업만 켜져 있으면 가끔 — 화면이 멈춰 보이지 않을 만큼만
+  // 도는 동안은 자주, 자동 백업만 켜져 있으면 가끔 — 화면이 멈춰 보이지 않을 만큼만.
+  // 서버 정리가 돌거나 확인 창을 띄운 동안은 그 사이 — 끝나면 결과 줄이 곧 바뀌어야 한다
   clearTimeout(backupTimer);
   if (st.running) backupTimer = setTimeout(loadBackup, 800);
+  else if (st.tidy && (st.tidy.running || st.tidy.asking)) backupTimer = setTimeout(loadBackup, 2000);
   else if (st.auto && st.dir) backupTimer = setTimeout(loadBackup, 20000);
 }
 
@@ -903,6 +1062,16 @@ $('btn-backup-pick').onclick = async () => paintBackup(await window.nunsseom.mai
 $('btn-backup-open').onclick = () => window.nunsseom.mailBackupOpen();
 $('btn-backup-start').onclick = async () => paintBackup(await window.nunsseom.mailBackupStart());
 $('btn-backup-stop').onclick = () => { window.nunsseom.mailBackupStop(); loadBackup(); };
+
+// 서버 정리 — 켜기·끄기와 기간. 둘 다 메인에 부탁만 한다 (위 setTidy)
+$('mailServerTidy').onclick = (e) => { if (tidyLast) setTidy({ on: !tidyLast.on }, e.currentTarget); };
+for (const b of $('tidy-days').querySelectorAll('button')) {
+  b.onclick = () => setTidy({ days: Number(b.dataset.days) }, b);
+}
+// «메일 확인하기»를 끄면 메인이 서버 정리도 끈다 — 스위치가 옛 모습으로 남지 않게 다시 읽는다.
+// settings.js 의 bindSwitch 는 onclick 을 쓰고 다시 묶기도 하므로 덮이지 않게 리스너로 단다.
+// 그 onclick 보다 먼저 불리므로 한 박자 늦춰, setApp 이 메인에 먼저 닿게 한다
+$('mailEnabled').addEventListener('click', () => setTimeout(loadBackup, 0));
 
 // settings.js 의 첫 그리기가 이 둘을 부른다
 window.nunsSetMail = { loadMail, loadBackup };

@@ -287,12 +287,21 @@ function uidList(uids) {
  * 용도별 폴더 찾기 — 이름은 서버마다 다르다.
  * 서버가 알려주는 용도 표시(\Sent, \Junk)를 먼저 믿고, 없으면 흔한 이름으로 짐작한다.
  * 이카운트처럼 용도를 안 알려주는 서버가 있어서 이름 짐작이 실제로 필요하다.
- * @param kind 'junk' | 'sent'
+ * @param kind 'junk' | 'sent' | 'trash'
  */
 async function findBox(client, kind) {
+  if (!BOX_NAMES[kind]) return null;
+  return pickBox(await client.list(), kind);
+}
+
+/**
+ * 이미 받아 둔 폴더 목록에서 고르기만 한다 (서버를 부르지 않는다).
+ * 서버 정리는 공유 폴더를 걸러낸 목록에서 휴지통을 골라야 해서 따로 뺐다 —
+ * 공유 트리의 Trash 로 옮기면 내 휴지통이 아니라 남의 휴지통이다.
+ */
+function pickBox(boxes, kind) {
   const re = BOX_NAMES[kind];
-  if (!re) return null;
-  const boxes = await client.list();
+  if (!re || !Array.isArray(boxes)) return null;
   return boxes.find((b) => b.specialUse === BOX_USE[kind])
     || boxes.find((b) => re.test(b.name))
     // 하위 폴더로 둔 서버도 있다 (INBOX/보낸편지함)
@@ -696,4 +705,4 @@ function friendly(e) {
   return raw.slice(0, 120);
 }
 
-module.exports = { PRESETS, preset, connect, smtpOf, fromOf, cleanHtml, fetchSummary, fetchBody, markRead, moveToSpam, moveToTrash, findJunk, findBox, viewFromSource, fetchSources, test, popMistake, senderOf, friendly, htmlToText, attachmentsForView, buildViewHtml };
+module.exports = { PRESETS, preset, connect, smtpOf, fromOf, cleanHtml, fetchSummary, fetchBody, markRead, moveToSpam, moveToTrash, findJunk, findBox, pickBox, BOX_NAMES, viewFromSource, fetchSources, test, popMistake, senderOf, friendly, htmlToText, attachmentsForView, buildViewHtml };

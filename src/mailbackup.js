@@ -92,6 +92,32 @@ function genOf(state, account, mailbox) {
   return Math.max(1, Number(per && per.gen) || 1);
 }
 
+/**
+ * 이 폴더에 받아둔 파일을 UID별로 — 서버 정리가 «PC에 정말 있나»를 볼 때 쓴다.
+ * 같은 UID 파일이 둘일 수 있다 (전체 백업은 서버가 준 제목을, 열어보기는 파싱한 제목을 쓴다) —
+ * 그래서 경로 목록으로 준다. 하나라도 같은 메일로 확인되면 된다.
+ * 없음과 못 읽음을 섞지 않는다: 폴더가 없으면 빈 목록(«저장 안 됨»), 못 읽으면 null(알 수 없음 —
+ * 부르는 쪽이 그 폴더를 통째로 건너뛴다).
+ * @returns Map<uid, 전체경로[]> | null
+ */
+async function uidFiles(boxDir) {
+  let names;
+  try {
+    names = await fs.promises.readdir(boxDir);
+  } catch (e) {
+    return e && e.code === 'ENOENT' ? new Map() : null;
+  }
+  const out = new Map();
+  for (const n of names) {
+    const m = n.match(UID_IN_NAME);
+    if (!m) continue;
+    const uid = Number(m[1]);
+    if (!out.has(uid)) out.set(uid, []);
+    out.get(uid).push(path.join(boxDir, n));
+  }
+  return out;
+}
+
 /** 이 폴더에 이미 받아둔 UID들 (한 번 읽어 두고 재사용한다) */
 function uidsIn(boxDir) {
   const out = new Set();
@@ -197,12 +223,16 @@ function saveState(dir, state) {
 const SKIP_USE = ['\\Junk', '\\Trash'];
 const SKIP_NAME = /^(spam|junk|trash|deleted|정크|스팸|휴지통|지운편지함)/i;
 
+/**
+ * 이 폴더를 백업하나. 잣대를 한 곳에 둔다 — 서버 정리(mailtidy)도 «백업하는 폴더»만 보므로
+ * 둘이 따로 고치다 어긋나면 백업하지 않은 폴더의 메일을 정리하게 된다.
+ */
+function backsUp(b) {
+  return !b.flags.has('\\Noselect') && !SKIP_USE.includes(b.specialUse) && !SKIP_NAME.test(b.name);
+}
+
 async function listMailboxes(client) {
-  const all = await client.list();
-  return all
-    .filter((b) => !b.flags.has('\\Noselect'))
-    .filter((b) => !SKIP_USE.includes(b.specialUse) && !SKIP_NAME.test(b.name))
-    .map((b) => b.path);
+  return (await client.list()).filter(backsUp).map((b) => b.path);
 }
 
 /**
@@ -389,5 +419,6 @@ function savedFile(dir, account, mailbox, uid) {
 
 module.exports = {
   savedFile,
-  backupAccount, saveOne, safeName, loadState, uidsIn, boxDirFor, genOf, STATE_FILE
+  backupAccount, saveOne, safeName, loadState, uidsIn, boxDirFor, genOf, STATE_FILE,
+  accountKey, backsUp, uidFiles
 };

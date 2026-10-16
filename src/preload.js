@@ -161,6 +161,8 @@ contextBridge.exposeInMainWorld('nunsseom', {
   mailBackupStart: () => ipcRenderer.invoke('mail:backup-start'),
   mailBackupStop: () => ipcRenderer.send('mail:backup-stop'),
   mailBackupOpen: () => ipcRenderer.send('mail:backup-open'),
+  // 서버 정리 켜기·끄기 — 켜기와 기간 줄이기는 메인이 세어 보고 묻는다 (일반 setApp은 이 값을 못 바꾼다)
+  mailTidySet: (req) => ipcRenderer.invoke('mail:tidy-set', req),
   mailOpen: (msg) => ipcRenderer.invoke('mail:open', msg),
   mailViewData: () => ipcRenderer.invoke('mail:view-data'),
   mailViewClose: () => ipcRenderer.send('mail:view-close'),

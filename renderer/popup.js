@@ -92,6 +92,8 @@ function drawDialog(d) {
     const btn = document.createElement('button');
     btn.className = 'btn'
       + (b.i === (d.defaultId ?? 0) ? (d.danger ? ' bad' : ' go') : '');
+    // 원래 번호 — 화면 순서는 뒤집혀 있으므로 초점을 줄 단추를 이 번호로 찾는다
+    btn.dataset.i = String(b.i);
     btn.textContent = b.label;
     btn.onclick = () => answer(b.i);
     row.append(btn);
@@ -99,9 +101,12 @@ function drawDialog(d) {
   box.append(row);
   card.append(box);
 
-  // 기본 단추에 초점을 둔다 — 엔터로 바로 답할 수 있게
+  // 기본 단추에 초점을 둔다 — 엔터로 바로 답할 수 있게.
+  // 위험 단추는 빨갛게 두되 초점은 부르는 쪽이 고른 곳(focusId)에 — 몇 초 늦게 뜨는 확인 창에서
+  // 다른 데 치던 Enter·Space 가 «하기»로 들어가지 않게 (서버 정리 켜기는 세는 데 20초까지 걸린다)
   requestAnimationFrame(() => {
-    const go = card.querySelector('.btn.go, .btn.bad') || card.querySelector('.btn');
+    const want = Number.isInteger(d.focusId) ? card.querySelector(`.btn[data-i="${d.focusId}"]`) : null;
+    const go = want || card.querySelector('.btn.go, .btn.bad') || card.querySelector('.btn');
     if (go) go.focus();
   });
   reportSize('dialog');

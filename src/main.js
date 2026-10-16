@@ -64,7 +64,16 @@ const { autoBackupNew } = backup;
 backup.init({
   mailAccountsForUse: () => mailhub.mailAccountsForUse(),
   // 계정이 없을 때 «왜»까지 — 꺼짐·비밀번호 못 풂·없음을 가려 말한다
-  noAccountMessage: (id) => mailhub.noAccountMessage(id)
+  noAccountMessage: (id) => mailhub.noAccountMessage(id),
+  // 서버 정리가 메일을 옮겼으면 목록을 다시 읽는다. 폴링이 도는 중이어도 끝나기를 기다렸다
+  // 다시 읽는다 (force 없이는 건너뛴다 — mailhub refreshMail)
+  refreshMail: () => mailhub.refreshMail({ force: true }),
+  // 서버 정리를 켜는 요청은 설정 창에서 온 것만 받는다
+  isSettingsWin: (wc) => isSettingsSender(wc),
+  // 메일 보기 창에 떠 있는 메일은 서버 정리가 옮기지 않는다 — 보는 중에 서버에서 사라지지 않게
+  openMailKeys: () => mailwin.openMailKeys(),
+  // 방금 «안 읽음»으로 되돌린 메일도 — 느린 서버의 STORE 가 끝나기 전에 «바로»가 옮기지 않게
+  markedUnread: (k) => mailhub.seenMarks.markedUnread(k)
 });
 // 화살표로 감싸 둔다 — 여기서 바로 값을 넘기면 아직 선언되지 않은 것이 섞인다.
 composewin.init({
@@ -604,6 +613,11 @@ function resetWidgetSize() {
 
 // ── 설정 창 ───────────────────────────────────────────────
 const SETTINGS_TABS = ['rem', 'cal', 'mail', 'app'];
+
+/** 이 요청이 설정 창에서 왔나 — 서버 메일을 옮기는 설정은 설정 창만 켤 수 있다 (backup.js setTidy) */
+function isSettingsSender(wc) {
+  return !!settingsWin && !settingsWin.isDestroyed() && settingsWin.webContents === wc;
+}
 
 /** @param tab 열자마자 보여줄 탭 ('mail' 등). 없으면 마지막 기본값. */
 function openSettings(tab) {
