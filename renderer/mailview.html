@@ -98,6 +98,14 @@
     word-break: keep-all;
     overflow-wrap: anywhere;
     user-select: text;
+    /* 본문 상자가 메일의 끝이다. 위치를 안 정해 두면 메일이 띄운 것(position:absolute)의 기준이
+       창 전체(.stage)가 되어, 본문의 스크롤·잘라내기를 벗어나 첨부 칸 위에 그려졌다 (실측 — Outlook 표 속 그림 42장).
+       safehtml.js 가 띄운 것을 흐름으로 되돌리지만, 거기서 하나라도 새면 여기서 막는다:
+       relative 는 absolute 의 기준을, contain: paint 는 fixed 의 기준까지 이 상자로 묶고 상자 밖으로는 안 그린다.
+       메일의 <style> 이 이 두 줄을 끄지 못하는 까닭: 메일은 이 상자 안 감싸개의 그림자 뿌리에 들어가서
+       (safehtml.js nunsMountMail) 그 안의 규칙은 .body·#body 를 아예 못 고른다. */
+    position: relative;
+    contain: paint;
   }
   /* 메일 원본 HTML을 그릴 때는 pre-wrap을 풀고 메일이 정한 서식을 살린다.
      배경은 흰색으로 둔다 — 메일은 흰 배경을 전제로 글자색을 정하므로
@@ -107,12 +115,8 @@
     background: #fff; color: #1a1a1a;
     margin: 0; padding: 14px 16px;
   }
-  .body.rich img { max-width: 100%; height: auto; }
-  .body.rich table { max-width: 100%; border-collapse: collapse; }
-  .body.rich td, .body.rich th { padding: 2px 6px; }
-  /* 종이가 테마와 상관없이 흰색이라 창의 강조색을 쓰면 안 된다 — 다크 민트는 흰 종이 위 2.2:1 */
-  .body.rich a { color: #00664e; }
-  .body.rich * { max-width: 100%; }
+  /* 메일 안의 그림·표·링크 꾸밈(예전 .body.rich img 등)은 safehtml.js 의 PAPER_CSS 에 있다 —
+     메일이 그림자 뿌리 안에 들어가서, 여기 규칙은 안으로 안 닿는다. 글자 크기·색·줄바꿈은 위에서 물려받는다 */
   .blocked {
     font-size: 11px; color: var(--tertiary);
     background: var(--fill); border-radius: 8px;
@@ -149,6 +153,27 @@
      호버 표시는 «보기»가 초록으로 바뀌는 것으로 충분하다 — 채움은 한 단계만 짙게 */
   :root[data-theme="light"] .file:hover { background: rgba(0, 0, 0, 0.07); }
   .file .sz { color: var(--tertiary); font-variant-numeric: tabular-nums; }
+  /* 본문 그림 — 이미 본문에 그려진 것들이라 «첨부»와 섞지 않는다. 섞으면 Outlook 메일 한 통이
+     «첨부 84개»처럼 보이고 진짜 첨부가 그 사이에 묻힌다 (실측 — 그림 84장, 진짜 첨부 0개).
+     접어 둔 한 줄로만 두고, 펼치면 보기·저장 칩을 꺼낸다 */
+  .inl { margin-top: 8px; }
+  .inl-tog {
+    all: unset; cursor: default;
+    font-size: 11px; color: var(--tertiary);
+    padding: 3px 8px; margin-left: -8px; border-radius: 6px;
+  }
+  .inl-tog:hover { background: var(--fill); color: var(--secondary); }
+  .inl-files { margin-top: 6px; }
+  /* .files 의 display:flex 가 hidden 속성을 이긴다 — 접힌 것은 접힌 채로 */
+  .inl-files[hidden] { display: none; }
+  /* 진짜 첨부가 없으면 첨부 칸은 이 한 줄뿐이다 — 큰 빈 칸을 두지 않는다 */
+  .atts.bare { padding: 6px 16px; }
+  .atts.bare .inl { margin-top: 0; }
+  .atts.bare .saved:empty { display: none; }
+  /* 단추마다 all: unset 이라 초점 테두리가 없다 — 키보드로 옮겨 다닐 때 어디 있는지 보이게 */
+  .inl-tog:focus-visible, .file:focus-visible, .fsave:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 1px;
+  }
   .saved { font-size: 11px; color: var(--accent); margin-top: 8px; }
   /* 파일 칩 — 이름을 누르면 미리보기, 저장은 따로 */
   .file .go { color: var(--tertiary); font-size: 11px; }
@@ -215,9 +240,9 @@
       <div class="meta who" id="who"></div>
     </div>
     <button class="seen" id="reply" style="display:none" title="답장 쓰기">답장</button>
-    <button class="seen" id="copy" style="display:none" title="이 메일을 그대로 복사해 다시 씁니다">복사</button>
+    <button class="seen" id="copy" style="display:none" title="복사해 다시 쓰기">복사</button>
     <button class="seen" id="forward" style="display:none" title="전달하기">전달</button>
-    <button class="seen" id="trash" style="display:none" title="휴지통으로 옮기기 (되찾을 수 있습니다)">휴지통</button>
+    <button class="seen" id="trash" style="display:none" title="휴지통으로 옮기기">휴지통</button>
     <button class="seen" id="seen" style="display:none"></button>
     <button class="close" id="close" title="닫기"></button>
   </div>
@@ -227,6 +252,11 @@
     <div class="cap" id="atts-cap"></div>
     <div class="shots" id="shots"></div>
     <div class="files" id="files"></div>
+    <!-- 본문 그림 — 본문에 이미 보이는 것이라 «첨부»와 따로, 접어 둔 한 줄로 -->
+    <div class="inl" id="inl" style="display:none">
+      <button class="inl-tog" id="inl-tog" aria-expanded="false" aria-controls="inl-files"></button>
+      <div class="files inl-files" id="inl-files" role="group" aria-label="본문 그림" hidden></div>
+    </div>
     <div class="saved" id="saved"></div>
     <div class="ftext" id="ftext" style="display:none"></div>
   </div>
@@ -426,67 +456,103 @@
   }
 
 
+  /**
+   * 첨부 칸 — 두 무리로 가른다.
+   *  · «첨부 N개»: 진짜로 붙어 온 파일. 그림이면 작은 그림을 깔고, 전부 보기·저장 칩.
+   *  · «본문 그림 M개»: 본문에 이미 그려진 것. 접어 둔 한 줄로만 두고 펼치면 칩이 나온다.
+   * 가르는 것은 메인이 한다 (mail.js attachmentsForView — 본문에 실제로 그려졌는가로).
+   * 예전엔 둘을 한 무더기로 깔아서, Outlook 표 속 그림 84장이 전부 첨부처럼 보였다.
+   */
   function renderAttachments(list) {
     if (!list.length) return;
     $('atts').style.display = 'block';
+    const files = list.filter((a) => !a.inline);
+    const inBody = list.filter((a) => a.inline);
     // 본문에 박힌 그림은 이미 본문에서 보이므로 여기서 또 크게 깔지 않는다
-    const images = list.filter((a) => a.dataUrl && !a.inline);
-    const inlineCount = list.filter((a) => a.inline).length;
-    // 본문에 박힌 그림을 «첨부»에 넣어 세면 안 된다 — 서명에 그림이 둘 든 메일이
+    const images = files.filter((a) => a.dataUrl);
+
+    // 본문 그림을 «첨부»에 넣어 세면 안 된다 — 서명에 그림이 둘 든 메일이
     // «첨부 2개»가 되어, 붙어 온 파일이 없는데 있다고 말하는 꼴이 된다.
-    const fileCount = list.length - inlineCount;
-    $('atts-cap').textContent = [
-      fileCount ? `첨부 ${fileCount}개` : '',
-      inlineCount ? `본문 그림 ${inlineCount}` : '',
-      images.length ? `그림 ${images.length}` : ''
-    ].filter(Boolean).join(' · ') || '첨부 없음';
+    if (files.length) {
+      $('atts-cap').textContent = [`첨부 ${files.length}개`, images.length ? `그림 ${images.length}` : '']
+        .filter(Boolean).join(' · ');
+    } else {
+      // 진짜 첨부가 없으면 머리말·그림 칸·칩 칸을 아예 안 둔다 — 아래 접힌 한 줄만 남는다
+      $('atts').classList.add('bare');
+      for (const id of ['atts-cap', 'shots', 'files']) $(id).style.display = 'none';
+    }
 
     for (const a of images) {
       const img = document.createElement('img');
       img.src = a.dataUrl;          // 메일에 담겨 온 그림이라 네트워크를 타지 않는다
       img.alt = a.filename;
-      img.title = `${a.filename} · ${kb(a.size)} · 누르면 크게 봅니다`;
+      img.title = `${a.filename} · ${kb(a.size)} · 크게 보기`;
       img.onclick = () => zoom(a.dataUrl, a.filename);
       $('shots').append(img);
     }
-    // 칩 하나에 둘이 붙는다 — 이름을 누르면 미리보기, 옆의 «저장»은 저장.
-    // 예전엔 누르면 곧바로 저장 대화상자였다. 안을 보려고 매번 저장할 이유가 없다.
-    for (const a of list) {
-      const pair = document.createElement('span');
-      pair.className = 'fpair';
+    for (const a of files) $('files').append(chipOf(a));
 
-      const b = document.createElement('button');
-      b.className = 'file';
-      const nm = document.createElement('span');
-      nm.textContent = a.filename;
-      const sz = document.createElement('span');
-      sz.className = 'sz';
-      sz.textContent = kb(a.size);
-      const go = document.createElement('span');
-      go.className = 'go';
-      go.textContent = '보기';
-      b.append(nm, sz, go);
-      b.title = '누르면 미리보기';
-      b.onclick = () => previewOne(a);
-
-      const sv = document.createElement('button');
-      sv.className = 'fsave';
-      sv.textContent = '저장';
-      sv.title = '파일로 저장';
-      sv.onclick = async (ev) => {
-        ev.stopPropagation();
-        const r = await window.nunsseom.mailSaveAttachment(a.index);
-        if (r && r.ok) {
-          $('saved').textContent = `저장했습니다 — ${r.path}`;
-          $('saved').onclick = () => window.nunsseom.mailReveal(r.path);
-        } else if (r && r.message) {
-          $('saved').textContent = r.message;
-        }
+    if (inBody.length) {
+      const tog = $('inl-tog');
+      const box = $('inl-files');
+      for (const a of inBody) box.append(chipOf(a));
+      const paint = (open) => {
+        tog.setAttribute('aria-expanded', String(open));
+        tog.textContent = `본문 그림 ${inBody.length}개 · ${open ? '접기' : '펼치기'}`;
+        tog.title = open ? '목록 접기' : '펼쳐서 보기·저장';
+        box.hidden = !open;
       };
-
-      pair.append(b, sv);
-      $('files').append(pair);
+      // 처음엔 접어 둔다 — 본문에서 이미 보고 있는 그림이다
+      paint(false);
+      tog.onclick = () => paint(tog.getAttribute('aria-expanded') !== 'true');
+      $('inl').style.display = '';
     }
+  }
+
+  /**
+   * 첨부 칩 하나 — 이름을 누르면 미리보기, 옆의 «저장»은 저장.
+   * 예전엔 누르면 곧바로 저장 대화상자였다. 안을 보려고 매번 저장할 이유가 없다.
+   * 번호(a.index)는 메일의 원래 첨부 번호다 — 메인이 그 번호로 바이트를 찾는다.
+   */
+  function chipOf(a) {
+    const pair = document.createElement('span');
+    pair.className = 'fpair';
+
+    const b = document.createElement('button');
+    b.className = 'file';
+    const nm = document.createElement('span');
+    nm.textContent = a.filename;
+    const sz = document.createElement('span');
+    sz.className = 'sz';
+    sz.textContent = kb(a.size);
+    const go = document.createElement('span');
+    go.className = 'go';
+    go.textContent = '보기';
+    b.append(nm, sz, go);
+    // 본문에 안 그려지는 짝 그림 — Word 가 같은 자리에 한 벌 더 넣은 것 (주석 속 VML 이 가리킨다)
+    b.title = a.dup ? '미리보기 · 본문에 없는 짝 그림' : '미리보기';
+    b.onclick = () => previewOne(a);
+
+    const sv = document.createElement('button');
+    sv.className = 'fsave';
+    sv.textContent = '저장';
+    // Word(Outlook)는 본문 그림마다 원본을 한 벌 더 싣는다 (주석 속 VML 이 가리킨다 — 실측 42장 모두 본문 쪽보다 큰 그림).
+    // 그 원본은 목록에 따로 안 세우고(같은 그림이 두 번 보인다) 이 칩의 «저장»이 대신 저장한다 (mail.js attachmentsForView 의 orig)
+    const saveAt = a.orig != null ? a.orig : a.index;
+    sv.title = a.orig != null ? '원본 그림 저장' : '파일로 저장';
+    sv.onclick = async (ev) => {
+      ev.stopPropagation();
+      const r = await window.nunsseom.mailSaveAttachment(saveAt);
+      if (r && r.ok) {
+        $('saved').textContent = `저장했습니다 — ${r.path}`;
+        $('saved').onclick = () => window.nunsseom.mailReveal(r.path);
+      } else if (r && r.message) {
+        $('saved').textContent = r.message;
+      }
+    };
+
+    pair.append(b, sv);
+    return pair;
   }
 
   // ── 읽음 / 안 읽음 ────────────────────────────────
@@ -502,7 +568,7 @@
       btn.textContent = seen ? '읽음' : '안 읽음';
       btn.classList.toggle('unread', !seen);
       btn.classList.toggle('busy', busy);
-      btn.title = seen ? '누르면 안 읽음으로 되돌립니다' : '누르면 읽음으로 표시합니다';
+      btn.title = seen ? '안 읽음으로 바꾸기' : '읽음으로 표시';
     };
     paint();
 
@@ -666,8 +732,7 @@
     if (m.blockedRemote) {
       $('blocked').style.display = 'block';
       $('blocked').textContent =
-        `인터넷에서 받아오는 그림 ${m.blockedRemote}개는 표시하지 않았습니다`
-        + ' (열어본 사실이 보낸 사람에게 전달될 수 있어요)';
+        `인터넷 그림 ${m.blockedRemote}개를 막았습니다 — 열람 추적 방지`;
     }
     if (m.html) {
       // 세 겹으로 막는다.
@@ -678,14 +743,15 @@
       //     있어 인라인 이벤트 핸들러는 CSP 가 못 막는다. 그래서 2가 필요하다.
       // innerHTML 로 넣으면 넣는 순간 그림 요청이 나가고 핸들러가 붙는다.
       // safehtml 은 떼어낸 문서에서 씻은 «노드»를 주므로, 씻기 전에는 아무것도 안 돈다.
+      // 넣는 자리는 본문 상자 안 감싸개의 그림자 뿌리다 — 메일의 <style> 이 창(머리글·첨부 칸·본문 상자의 경계)을 못 고르게
       $('body').classList.add('rich');
-      $('body').replaceChildren(window.nunsSafeHtml(m.html));
+      window.nunsMountMail($('body'), window.nunsSafeHtml(m.html));
     } else if (m.text) {
       $('body').textContent = m.text;
     } else {
       const p = document.createElement('div');
       p.className = 'note';
-      p.textContent = '글로 된 본문이 없습니다 (이미지나 첨부만 있는 메일일 수 있어요)';
+      p.textContent = '글로 된 본문이 없습니다';
       $('body').append(p);
     }
   });

@@ -546,14 +546,21 @@
   /* 서버 정리 — .row·.col 이 display 를 주므로 hidden 속성의 기본 display:none 을 다시 세운다 */
   .tidy[hidden], #tidy-state[hidden] { display: none; }
   .tidydays { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
-  .tidydays .mini:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
-  :root[data-theme="light"] .tidydays .mini:focus-visible { box-shadow: none; outline: 2px solid var(--accent-fill); outline-offset: 2px; }
+  .tidydays .mini:focus-visible, .fwdaccs .mini:focus-visible, #btn-fwd-save:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
+  :root[data-theme="light"] .tidydays .mini:focus-visible,
+  :root[data-theme="light"] .fwdaccs .mini:focus-visible,
+  :root[data-theme="light"] #btn-fwd-save:focus-visible { box-shadow: none; outline: 2px solid var(--accent-fill); outline-offset: 2px; }
+  /* 자동 전달 — .mini 는 all: unset 이라 hidden 의 기본 display:none 이 풀린다(«바꾸기»). 나머지 둘은 만일을 위해 */
+  .fwd[hidden], #fwd-state[hidden], #btn-fwd-save[hidden] { display: none; }
+  .fwdaccs { display: flex; flex-wrap: wrap; gap: 4px 8px; }
   /* 지금은 누를 수 없는 스위치·단추 — 까닭은 아래 줄에 쓴다. disabled 로 막으면 누른 단추가 초점을 잃어
      화면 읽기 프로그램이 제자리를 놓친다 — aria-disabled 로 알리고 누름은 스크립트가 무시한다 */
-  .sw[aria-disabled="true"], .tidydays .mini[aria-disabled="true"] { opacity: 0.45; }
+  .sw[aria-disabled="true"], .tidydays .mini[aria-disabled="true"],
+  .fwdaccs .mini[aria-disabled="true"], #btn-fwd-save[aria-disabled="true"] { opacity: 0.45; }
   /* 눌러도 아무 일이 없는 단추가 마우스에 «눌릴 것처럼» 반응하지 않게 — 라이트 .mini:hover 와 구체성이 같아 뒤에 둔다 */
-  .tidydays .mini[aria-disabled="true"]:hover { filter: none; }
-  .tidydays .mini.ghost[aria-disabled="true"]:hover { background: transparent; }
+  .tidydays .mini[aria-disabled="true"]:hover, .fwdaccs .mini[aria-disabled="true"]:hover,
+  #btn-fwd-save[aria-disabled="true"]:hover { filter: none; }
+  .tidydays .mini.ghost[aria-disabled="true"]:hover, .fwdaccs .mini.ghost[aria-disabled="true"]:hover { background: transparent; }
   .mini.danger:hover { background: color-mix(in srgb, var(--danger) 14%, transparent); }
   /* 흰 글자가 4.5:1 을 넘는 빨강 (예전 #e0453f 는 4.1:1).
      :hover 까지 같이 — 두 번째로 누를 때는 마우스가 늘 위에 있는데, 위의 .mini.danger:hover 옅은 분홍이
@@ -615,8 +622,8 @@
     <button class="add-btn" id="btn-custom-add">+ 새 알림 만들기</button>
 
     <p class="foot">
-      여러 알림이 비슷한 시각에 겹치면 한 번의 휴식 화면으로 묶어 보여줍니다.<br>
-      행을 눌러 펼치면 주기와 길이를 따로 조절할 수 있어요.
+      겹치는 알림은 휴식 한 번으로 묶습니다.<br>
+      행을 누르면 주기와 길이를 고칠 수 있습니다.
     </p>
   </div>
 
@@ -634,12 +641,12 @@
         <button class="sw" id="mailShow" role="switch" aria-label="새 메일 표시"></button>
       </div>
       <div class="row toggle">
-        <span class="nm">계정마다 따로 보기<i>켜면 계정 이름으로 폴더 칸이 나뉩니다. 끄면 한 목록에 모아서 보여줍니다. 계정이 둘 이상일 때만 나뉩니다.</i></span>
+        <span class="nm">계정마다 따로 보기<i>계정이 둘 이상일 때 계정별로 칸을 나눕니다</i></span>
         <span></span>
         <button class="sw" id="mailPerAccount" role="switch" aria-label="계정마다 따로 보기"></button>
       </div>
       <div class="row toggle">
-        <span class="nm">인터넷 그림 보이기<i>끄면 열어본 사실이 보낸 사람에게 전달되지 않지만, 정상적인 그림도 안 보입니다</i></span>
+        <span class="nm">인터넷 그림 보이기<i>끄면 열람 추적은 막히지만 그림도 안 보입니다</i></span>
         <span></span>
         <button class="sw" id="mailRemoteImages" role="switch" aria-label="인터넷 그림"></button>
       </div>
@@ -649,7 +656,7 @@
         <span class="hint" id="mail-scope-hint"></span>
       </div>
       <div class="row wide">
-        <span class="nm">보여줄 개수<i>상한은 없습니다. 많이 가져올수록 확인이 느려져요</i></span>
+        <span class="nm">보여줄 개수<i>많을수록 확인이 느려집니다</i></span>
         <span class="spin">
           <button class="mini ghost" id="mailCount-dn" aria-label="줄이기">−</button>
           <input type="number" id="mailCount" min="1" step="1" inputmode="numeric">
@@ -700,12 +707,11 @@
           <button class="mini ghost" id="btn-sig-src">HTML</button>
         </div>
         <div class="sigbox" id="ed-sig" contenteditable="true"
-             data-ph="웹메일의 서명을 그대로 복사해 붙여넣으세요 (서식·색·표가 유지됩니다)"></div>
+             data-ph="웹메일 서명을 복사해 붙여넣으세요"></div>
         <textarea id="ed-sig-src" class="cust-name" rows="6" style="display:none"
                   placeholder="<div>…</div>"></textarea>
         <span class="hint">
-          이카운트 웹메일 → 메일서명 설정에서 서명 영역을 끌어 선택하고 Ctrl+C,
-          여기에 Ctrl+V 하면 그대로 들어옵니다.
+          이카운트 웹메일 «메일서명 설정»에서 복사하면 서식째 들어옵니다.
         </span>
         <div class="upline">
           <span class="lbl" id="ed-msg"></span>
@@ -721,8 +727,7 @@
     <div class="group">
       <div class="col">
         <span class="hint" id="fl-sum">
-          위젯은 몇 줄만 보입니다. 광고·자동알림이 자리를 다 차지하지 않게 걸러냅니다.
-          메일 목록에서 <b>오른쪽 클릭</b>하면 그 자리에서 규칙이 만들어집니다.
+          메일 목록에서 <b>오른쪽 클릭</b>하면 바로 규칙을 만듭니다.
         </span>
       </div>
       <div id="fl-list"></div>
@@ -738,12 +743,12 @@
         </div>
         <div class="helprow">
           <select id="fl-action" class="cust-name" style="flex:1"></select>
-          <input type="text" id="fl-label" class="cust-name" placeholder="묶음 이름 (묶기일 때)" style="width:120px">
+          <input type="text" id="fl-label" class="cust-name" placeholder="묶음 이름" style="width:120px">
           <button class="mini" id="btn-fl-add">넣기</button>
         </div>
         <span class="hint">
-          적은 글자가 들어 있으면 걸립니다. <b>*</b>만 «아무거나»라는 뜻이에요 — <b>*@stcdev.com</b> 은 그 도메인 전부.<br>
-          <b>스팸으로</b>는 화면만이 아니라 서버에서 옮깁니다. 웹메일에서도 사라지니 확실할 때만 쓰세요.
+          적은 글자가 들어 있으면 걸립니다 (<b>*</b> = 아무 글자).<br>
+          <b>스팸으로</b>는 서버에서 옮겨 웹메일에서도 사라집니다.
         </span>
       </div>
     </div>
@@ -753,7 +758,7 @@
       <div class="col">
         <input type="text" id="cb-find" class="cust-name" placeholder="이름이나 주소로 찾기">
         <span class="hint">
-          보낸 주소와 받은 메일의 보낸 사람이 자동으로 쌓입니다. 이름을 고쳐두면 쓸 때 그 이름으로 찾을 수 있어요.
+          주고받은 주소가 자동으로 쌓이고, 이름은 바로 고칠 수 있습니다.
         </span>
       </div>
       <div id="cb-list"></div>
@@ -773,8 +778,7 @@
           <span class="hint" id="cb-msg" style="flex:1"></span>
         </div>
         <span class="hint">
-          아웃룭·구글 주소록·엑셀이 내보낸 CSV를 그대로 넣으면 됩니다.
-          이미 있는 사람은 지우지 않고 이름만 채웁니다.
+          아웃룩·구글·엑셀 CSV를 그대로 넣으세요. 이미 있는 사람은 이름만 채웁니다.
         </span>
       </div>
     </div>
@@ -807,7 +811,7 @@
         </div>
         <input type="text" id="mail-from" class="cust-name" placeholder="보내는 사람 주소 (비우면 아이디를 씁니다)">
         <input type="text" id="mail-from-name" class="cust-name" placeholder="보내는 사람 이름 (선택)">
-        <span class="hint">비워두면 받는 서버에서 짐작합니다 (imap.… → smtp.…). 465는 SSL, 587은 STARTTLS입니다.</span>
+        <span class="hint">비우면 받는 서버 주소에서 짐작합니다. 465는 SSL, 587은 STARTTLS입니다.</span>
       </div>
       <div class="col">
         <div class="msg" id="mail-msg"></div>
@@ -860,8 +864,8 @@
           <span class="lbl" id="tidy-days-tail">받은 지 30일 지난 메일만</span>
         </div>
         <span class="hint" id="tidy-hint"></span>
-        <span class="hint">자동 백업은 새로 온 메일과 열어본 메일만 저장합니다. 그보다 오래된 메일까지 정리하려면 먼저 아래 «백업 시작»을 눌러주세요. «자동으로 백업»이나 «메일 확인하기»를 끄거나 저장 폴더를 바꾸면 서버 정리도 꺼집니다.</span>
-        <span class="hint">휴지통도 서버 용량에 들어가는 메일 회사가 많습니다. 용량을 비우려면 웹메일 설정에서 휴지통 자동 비우기를 켜 두세요.</span>
+        <span class="hint">지난 메일은 먼저 «백업 시작»으로 저장하세요. 자동 백업·메일 확인을 끄거나 폴더를 바꾸면 함께 꺼집니다.</span>
+        <span class="hint">휴지통도 서버 용량에 들어가는 곳이 많습니다 — 웹메일에서 휴지통 자동 비우기를 켜 두세요.</span>
         <span class="hint" id="tidy-state" hidden></span>
         <div class="msg" id="tidy-msg" role="status"></div>
       </div>
@@ -878,10 +882,33 @@
       </div>
     </div>
 
+    <!-- 자동 전달 — 메인이 상태(mailFwdStatus)를 줄 때만 보인다. 켜기·주소 더하기·계정 더하기는 메인이 확인 창으로 묻는다 -->
+    <div class="sec fwd" id="fwd-sec" hidden>자동 전달</div>
+    <div class="group fwd" id="fwd-group" hidden>
+      <div class="row toggle">
+        <span class="nm">새 메일 전달<i>다른 주소로 보냅니다</i></span>
+        <span></span>
+        <button class="sw" id="mailForwardOn" role="switch" aria-checked="false" aria-label="자동 전달"
+                aria-describedby="fwd-hint fwd-state"></button>
+      </div>
+      <div class="col">
+        <span class="lbl" id="fwd-to-lbl">받는 주소</span>
+        <div class="helprow">
+          <input type="text" id="fwd-to" class="cust-name" placeholder="me@gmail.com" autocomplete="off" spellcheck="false"
+                 aria-labelledby="fwd-to-lbl" aria-describedby="fwd-hint" style="flex:1">
+          <button class="mini" id="btn-fwd-save" hidden>바꾸기</button>
+        </div>
+        <span class="lbl" id="fwd-acc-lbl">보낼 계정</span>
+        <div class="helprow fwdaccs" id="fwd-accs" role="group" aria-labelledby="fwd-acc-lbl"></div>
+        <span class="hint" id="fwd-hint">켠 뒤 오는 새 메일만 보냅니다 · 주소는 쉼표로 여러 개</span>
+        <span class="hint" id="fwd-state" hidden></span>
+        <div class="msg" id="fwd-msg" role="status"></div>
+      </div>
+    </div>
+
     <p class="foot">
-      평소에는 제목과 보낸 사람만 읽습니다. 본문과 원문은 메일을 열어볼 때와 백업할 때만 받습니다.
-      회사 메일은 사내 정책을 확인하세요.<br>
-      백업은 <b>새로 온 것만</b> 받습니다. 처음 한 번만 오래 걸리고, 중간에 멈춰도 다음에 이어서 받아요.
+      본문은 메일을 열 때·백업·자동 전달 때만 받습니다. 회사 메일은 사내 정책을 확인하세요.<br>
+      백업은 <b>새로 온 것만</b> 받고, 멈춰도 다음에 이어서 받습니다.
     </p>
   </div>
 
@@ -903,7 +930,7 @@
     <div class="sec">곁들이는 기능</div>
     <div class="group">
       <div class="row toggle">
-        <span class="nm">주식 시세<i>켜면 위젯에 단추가 생기고, 눌러야 창이 열립니다. 값은 창을 열어둔 동안에만 받아옵니다.</i></span>
+        <span class="nm">주식 시세<i>위젯에 단추가 생기고, 창을 연 동안만 시세를 받습니다</i></span>
         <span></span>
         <button class="sw" id="stocksEnabled" role="switch" aria-label="주식 시세"></button>
       </div>
@@ -912,7 +939,7 @@
     <div class="sec">알림음</div>
     <div class="group">
       <div class="row toggle">
-        <span class="nm">휴식 시작할 때 소리<i>다른 창을 보고 있으면 화면만으로는 놓칩니다</i></span>
+        <span class="nm">휴식 시작할 때 소리</span>
         <span></span>
         <button class="sw" id="soundEnabled" role="switch" aria-label="알림음"></button>
       </div>
@@ -952,7 +979,7 @@
         <div class="entprev" id="enter-preview" hidden></div>
       </div>
       <div class="row toggle">
-        <span class="nm">휴식을 끝까지<i>휴식 화면에서 «건너뛰기»와 «다 했어요»를 숨깁니다. 시간이 끝나면 저절로 닫히고, «5분 뒤에»는 남습니다.</i></span>
+        <span class="nm">휴식을 끝까지<i>«건너뛰기»·«다 했어요»를 숨기고 «5분 뒤에»만 남깁니다</i></span>
         <span></span>
         <button class="sw" id="breakNoEscape" role="switch" aria-label="건너뛰기와 다 했어요 숨기기"></button>
       </div>
@@ -988,9 +1015,9 @@
 
     <div class="group" id="dnd-add-group">
       <div class="col">
-        <span class="lbl">목록에 없는 앱<i>실행 파일 이름(figma.exe)을 넣으면 그 앱이 앞에 있을 때, «.exe» 없이 넣으면 창 제목에 그 말이 들어 있을 때 미룹니다 — 브라우저로 보는 것은 전부 chrome.exe라 제목으로 갈라야 합니다.</i></span>
+        <span class="lbl">목록에 없는 앱<i>«.exe»를 붙이면 앱 이름, 빼면 창 제목으로 찾습니다</i></span>
         <div class="upline">
-          <input type="text" id="dnd-custom" placeholder="예: figma.exe · 또는 제목의 한 마디 (라이브)">
+          <input type="text" id="dnd-custom" placeholder="예: figma.exe · 라이브">
           <button class="mini" id="btn-dnd-add">추가</button>
         </div>
       </div>
@@ -1013,8 +1040,8 @@
     </div>
 
     <p class="foot">
-      자리를 비운 동안에는 카운트다운이 멈춥니다.<br>
-      발표·전체화면·회의 중에는 알림을 붙잡아 두었다가 끝나면 이어서 실행합니다.
+      자리를 비우면 카운트다운이 멈춥니다.<br>
+      발표·전체화면·회의 중 알림은 끝난 뒤에 띄웁니다.
     </p>
   </div>
 
@@ -1085,19 +1112,18 @@
           Outlook·Microsoft 365 — 설정 → 캘린더 → 공유 및 사용 권한 → <b>«게시»</b> 후 ICS 주소 복사
         </span>
         <span class="hint">
-          Notion 캘린더 <b>앱</b>은 Google·iCloud 일정을 비춰 보여줄 뿐이라 자체 주소가 없습니다.
-          그때는 원래 계정(Google 등)의 주소를 넣으세요.
+          Notion 캘린더 <b>앱</b>은 자체 주소가 없습니다 — 원래 계정(Google 등)의 주소를 넣으세요.
         </span>
       </div>
       <div class="col">
         <span class="lbl">2. 여기에 붙여넣기</span>
         <input type="text" id="cal-url" placeholder="주소를 붙여넣으세요 (Ctrl+V)">
-        <span class="hint">캘린더 ID나 공유 주소를 붙여넣어도 알아서 바꿔줍니다.</span>
+        <span class="hint">캘린더 ID나 공유 주소도 됩니다.</span>
         <div class="helprow">
           <button class="mini ghost" id="btn-cal-file">내 PC의 .ics 파일 고르기</button>
         </div>
         <span class="hint">
-          Outlook·Thunderbird 등에서 내보낸 캘린더 파일도 그대로 씁니다. 인터넷 없이 동작합니다.
+          Outlook 등에서 내보낸 파일도 인터넷 없이 읽습니다.
         </span>
       </div>
       <div class="col">
@@ -1109,7 +1135,7 @@
     </div>
 
     <p class="foot">
-      이름은 캘린더가 가진 이름을 그대로 씁니다. 15분마다 새로 읽어옵니다.
+      캘린더 이름을 그대로 쓰고, 15분마다 새로 읽어옵니다.
     </p>
   </div>
  </div>

@@ -68,8 +68,8 @@ async function okToSpam(rule, parent) {
       : '지금 받아둔 메일 중에는 걸리는 것이 없습니다.',
     detail: (sample.length ? sample.join('\n') + '\n\n' : '')
       + `조건: ${mailrules.describe(rule)}\n\n`
-      + '화면에서만 숨기는 것이 아니라 서버의 스팸 폴더로 옮깁니다.\n'
-      + '지금 있는 것과 앞으로 오는 것 모두 옮겨지고, 웹메일에서도 사라집니다.'
+      + '서버의 스팸 폴더로 옮겨 웹메일·폰에서도 사라집니다.\n'
+      + '앞으로 오는 메일도 옮깁니다.'
   });
   return r === 0;
 }

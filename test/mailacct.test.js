@@ -94,8 +94,8 @@ const cases = [
   ['하나라도 쓸 수 있으면 빈 말', [E('회사', null), E('개인', 'locked')], ''],
   ['다 못 풂 — 이름 없이', [E('회사', 'locked'), E('개인', 'locked')], LOCKED],
   ['하나뿐인 계정이 못 풂', [E('회사', 'locked')], LOCKED],
-  ['다 꺼짐', [E('회사', 'off'), E('개인', 'off')], '메일 계정이 모두 꺼져 있습니다 (설정 › 메일에서 켜세요)'],
-  ['하나뿐인 계정이 꺼짐', [E('회사', 'off')], '메일 계정이 꺼져 있습니다 (설정 › 메일에서 켜세요)'],
+  ['다 꺼짐', [E('회사', 'off'), E('개인', 'off')], '메일 계정이 모두 꺼져 있습니다 — 설정 › 메일에서 켜세요'],
+  ['하나뿐인 계정이 꺼짐', [E('회사', 'off')], '메일 계정이 꺼져 있습니다 — 설정 › 메일에서 켜세요'],
   ['저장 불가', [E('회사', 'nostore'), E('개인', 'nostore')], '이 PC에서는 비밀번호를 안전하게 저장할 수 없습니다'],
   ['저장 불가가 가장 먼저 (꺼짐·빈칸과 섞여도)', [E('회사', 'off'), E('개인', 'nostore'), E('옛', 'incomplete')],
     '이 PC에서는 비밀번호를 안전하게 저장할 수 없습니다'],
@@ -177,8 +177,9 @@ console.log('\n[6] 비밀번호를 자격 증명 관리자에 둔 뒤');
   const broken = checks.slice(1);
   ok(acct.summary(broken) === LOCKED && acct.tally(broken) === '비밀번호 못 풂 2', '못 쓰는 것만 남으면 «다시 넣기»를 하라고 한다',
     { summary: acct.summary(broken), tally: acct.tally(broken) });
-  ok(/Windows 자격 증명/.test(acct.hint('locked')) && /서명·설정은 그대로/.test(acct.hint('locked')),
-    'locked 설명이 윈도우 자격 증명 문제도 까닭으로 든다', acct.hint('locked'));
+  ok(/서명·설정은 남습니다/.test(acct.hint('locked')), 'locked 설명이 다시 넣어도 서명·설정은 남는다고 말한다', acct.hint('locked'));
+  ok(/이 PC에서 풀리지 않습니다/.test(acct.hint('locked')),
+    'locked 설명이 까닭(이 PC에서 못 풂)을 든다', acct.hint('locked'));
   ok(!/wincred|Hibi\/mail/.test(acct.summary(broken) + acct.hint('locked') + acct.label('locked')), '할 말에 저장 위치 이름이 새지 않는다');
 }
 

@@ -148,7 +148,7 @@ app.whenReady().then(async () => {
   const why = mailhub.noAccountMessage();
   ok(why === '«회사» 계정의 저장된 비밀번호를 이 PC에서 풀 수 없습니다 — 설정 › 메일에서 «비밀번호 다시 넣기»를 눌러 주세요',
     '할 말 — 켜 둔 계정의 못 풂을 이름과 함께', why);
-  ok(mailhub.noAccountMessage(home.id) === '메일 계정이 꺼져 있습니다 (설정 › 메일에서 켜세요)',
+  ok(mailhub.noAccountMessage(home.id) === '메일 계정이 꺼져 있습니다 — 설정 › 메일에서 켜세요',
     '계정 하나를 두고 물으면 그 계정의 까닭', mailhub.noAccountMessage(home.id));
   ok(/지워졌습니다/.test(mailhub.noAccountMessage('없는-id')), '없는 계정을 두고 물으면 «지워졌습니다»', mailhub.noAccountMessage('없는-id'));
 
@@ -233,7 +233,7 @@ app.whenReady().then(async () => {
     '«회사» 줄 — «비밀번호 다시 필요»가 빨강(.bad)으로', c0 && { cls: c0.cls, val: c0.val, bad: c0.valBad });
   ok(c0 && c0.fix && c0.open && c0.expanded === 'false' && !c0.form,
     '«비밀번호 다시 넣기» 단추가 있고 입력칸은 접혀 있다', c0 && { open: c0.open, expanded: c0.expanded, form: c0.form });
-  ok(c0 && /풀리지 않습니다/.test(c0.hint) && /서명·설정은 그대로/.test(c0.hint), '아랫줄 설명이 까닭과 고친 뒤 무엇이 남는지 말한다', c0 && c0.hint);
+  ok(c0 && /풀리지 않습니다/.test(c0.hint) && /서명·설정은 남습니다/.test(c0.hint), '아랫줄 설명이 까닭과 고친 뒤 무엇이 남는지 말한다', c0 && c0.hint);
   ok(h0 && /\boff\b/.test(h0.cls) && !/\bneed\b/.test(h0.cls) && h0.val === '' && !h0.fix,
     '꺼진 «개인» 줄은 예전 모습 그대로 (까닭 글자·고치는 줄 없음)', h0 && { cls: h0.cls, val: h0.val, fix: h0.fix });
   ok(s0.noteShown && s0.noteKind === 'bad' && s0.note === why, '목록 맨 위에 메인이 만든 말 그대로 한 줄', { note: s0.note, shown: s0.noteShown });

@@ -148,14 +148,14 @@ function paint() {
   if (bare) {
     const d = document.createElement('div');
     d.className = 'none';
-    d.append('아직 관심 종목이 없습니다. 아래에 이름을 쳐보세요 — «삼성», «에코프», «엔비디아»처럼 일부만 쳐도 찾아줍니다.');
+    d.append('관심 종목이 없습니다. 아래에 이름 일부를 쳐 보세요.');
     d.append(document.createElement('br'));
     // 옆 프로젝트에 목록이 이미 있으면 한 번에 가져올 수 있게 — 가져온 뒤로는 서로 상관없다
     const imp = document.createElement('button');
     imp.className = 'mini ghost';
     imp.style.marginTop = '8px';
     imp.textContent = 'algo-trader에서 가져오기';
-    imp.title = '그쪽 watchlist.json을 한 번 복사해 옵니다 (그 뒤로는 따로 관리됩니다)';
+    imp.title = 'watchlist.json 한 번 복사';
     imp.onclick = async () => {
       imp.disabled = true;
       say('가져오는 중…');

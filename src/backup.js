@@ -36,7 +36,9 @@ let host = {
   // 지금 메일 보기 창에 떠 있는 메일들 [{ accountId, mailbox, uid, messageId }] — 서버 정리가 그 메일은 옮기지 않는다
   openMailKeys: () => [],
   // 사용자가 이 앱에서 방금 «안 읽음»으로 되돌린 메일인가 ({ accountId, mailbox, uid }) — mailhub 의 읽음 장부를 본다
-  markedUnread: () => false
+  markedUnread: () => false,
+  // 자동 전달이 도는 중인가 — 그동안 서버 정리는 시작하지 않는다 (전달이 아직 못 받은 메일을 옮기지 않게)
+  forwardBusy: () => false
 };
 
 // 서버 정리의 시간표. 시험이 init({ tidyTiming })으로 줄여 쓴다.
@@ -168,7 +170,7 @@ function tidyDays() {
 
 /** 무엇을 옮기는지 한 마디 — 확인 창·답·기록이 같은 말을 쓰게 */
 function tidyWhat(days) {
-  return days === 0 ? 'PC에 저장이 확인된 읽은 메일' : `받은 지 ${days}일 지난 메일`;
+  return days === 0 ? '읽은 메일' : `받은 지 ${days}일 지난 메일`;
 }
 
 const minutesOf = (ms) => Math.max(1, Math.round(ms / 60_000));
@@ -223,7 +225,7 @@ function tidyWhy() {
   const s = store.settings;
   if (s.mailAutoBackup !== true) return '«자동으로 백업»을 켜야 쓸 수 있습니다.';
   if (!s.mailBackupDir) return '저장할 폴더를 먼저 골라야 쓸 수 있습니다.';
-  if (s.mailEnabled !== true) return '위쪽 «메일 확인하기»가 꺼져 있어 쓸 수 없습니다.';
+  if (s.mailEnabled !== true) return '«메일 확인하기»를 켜야 쓸 수 있습니다.';
   return '';
 }
 
@@ -321,7 +323,8 @@ async function autoBackupNew({ now = false } = {}) {
  */
 async function runTidy(dir, accounts) {
   // 첫 await 전에 자리를 잡는다. autoBackupNew 가 autoBackup.running 을 놓은 바로 그 틱이다
-  if (!tidyOn() || tidy.running || backup.running || Date.now() < tidyNextAt) return;
+  // 자동 전달이 도는 중이면 이번엔 건너뛴다 — 전달이 받기 전에 받은편지함에서 옮기지 않게 (다음 자동 백업이 다시 본다)
+  if (!tidyOn() || tidy.running || backup.running || Date.now() < tidyNextAt || host.forwardBusy()) return;
   tidy.running = true;
   tidy.stop = false;
   tidy.again = false;
@@ -466,44 +469,35 @@ function tidyQuestion(n, { days, from = 30, lowering, countMs, startMs }) {
   } else if (n.complete && n.accounts === 0) {
     message = '지금 쓸 수 있는 메일 계정이 없어 세지 못했습니다.';
   } else if (n.complete && v > 0) {
-    message = `지금 기준으로 약 ${v}통을 서버의 휴지통으로 옮깁니다.`;
+    message = `${tidyWhat(days)} 약 ${v}통을 서버 휴지통으로 옮깁니다.`;
   } else if (n.complete) {
-    message = '지금 기준으로는 옮길 메일이 없습니다.';
+    message = '지금은 옮길 메일이 없습니다.';
   } else if (v > 0) {
-    message = `지금까지 센 것만 ${v}통입니다 — ${countMs / 1000}초 안에 다 세지 못했습니다.`;
+    message = `지금까지 센 ${tidyWhat(days)} ${v}통 — ${countMs / 1000}초 안에 다 세지 못했습니다.`;
   } else {
-    message = '몇 통인지 세지 못했습니다 — 서버가 느리거나 연결되지 않습니다.';
+    message = '몇 통인지 세지 못했습니다.';
   }
   // 휴지통을 저절로 비우지 않는 서버도 있다 — 설정 화면의 «휴지통 자동 비우기를 켜 두세요»와 어긋나지 않게 단정하지 않는다
-  const trashNote = '(메일 회사에 따라 일정 기간이 지나면 휴지통이 비워지기도 합니다)';
-  // Gmail 은 «중요»를 저절로 많이 붙인다 — 사용자가 직접 붙인 것만이 아니라는 것을 밝힌다
-  const keepNote = '별표·중요 표시가 붙은 메일(Gmail이 저절로 붙인 중요 표시 포함)과 임시보관함·메모·서식 폴더, 공유 폴더는 그대로 둡니다. '
-    + '서버에 꼭 남길 메일은 별표를 붙여 두세요.';
+  const undo = '웹메일·폰에서는 사라지고 PC 사본은 남습니다. 서버 휴지통이 비워지기 전까지 되찾을 수 있습니다. 되찾은 메일은 다시 옮기지 않습니다.';
   // «바로»는 날짜가 아니라 읽음으로 고른다 — 무엇이 언제 사라지고 무엇이 남는지를 먼저 말한다.
   // 언제는 «몇 분 안에»가 아니라 실제 주기로 — 메일 확인 주기를 길게 둔 사람에게는 몇십 분이다
   const detail = days === 0 ? [
-    '모든 메일 계정의 받은편지함·보낸편지함·보관함 등 백업하는 폴더에서, PC에 저장이 확인된 메일 중 «읽은» 메일을 '
-      + `새 메일 확인 때마다(지금은 약 ${tidyEveryMin()}분마다) 서버의 휴지통으로 옮깁니다. 받은 지 며칠 지났는지는 보지 않습니다.`,
-    '안 읽은 메일은 읽을 때까지 서버에 남아 위젯·폰에서 새 메일로 보입니다. 읽고 나면 다음 정리 때 옮깁니다. '
-      + '이 앱에서는 열어 보기만 해서는 읽음이 되지 않습니다 — 보기 창이나 위젯 목록에서 읽음으로 표시하거나 웹메일·폰에서 읽어야 옮깁니다.',
-    '보낸 메일은 늘 읽은 것으로 쳐서, 저장되면 곧 옮깁니다 — 보낸편지함도 비게 됩니다.',
-    `웹메일·폰의 받은편지함·보낸편지함과 이 앱의 메일 목록에서도 사라지지만 서버 휴지통에서 되찾을 수 있습니다${trashNote}. `
-      + '휴지통에서 원래 폴더로 되찾은 메일은 다시 옮기지 않습니다. PC에 저장된 파일은 그대로 남습니다.',
-    keepNote
+    `모든 계정에서 PC에 저장된 읽은 메일만 약 ${tidyEveryMin()}분마다 옮깁니다. 보낸 메일도 옮겨 보낸편지함이 빕니다.`,
+    undo,
+    '안 읽은 메일(이 앱에서 열기만 한 것 포함)과 별표·중요 메일, 임시보관함은 남깁니다.'
   ] : [
-    `모든 메일 계정의 받은편지함·보낸편지함·보관함 등 백업하는 폴더에서, PC에 저장된 것이 확인된 메일 중 받은 지 ${days}일 지난 것만 옮깁니다.`,
-    `웹메일·폰과 이 앱의 메일 목록에서도 사라지지만 서버 휴지통에서 되찾을 수 있습니다${trashNote}. `
-      + '휴지통에서 원래 폴더로 되찾은 메일은 다시 옮기지 않습니다. PC에 저장된 파일은 그대로 남습니다.',
-    keepNote
+    `모든 계정에서 PC에 저장된 ${tidyWhat(days)}을 읽음과 상관없이 옮깁니다.`,
+    undo,
+    '별표·중요 메일과 임시보관함은 남깁니다.'
   ];
   if (lowering && from === 0 && days > 0) detail.push('«바로»와 달리 안 읽은 메일도 그 기간이 지나면 옮깁니다.');
   // 읽은 뒤에 옮긴다고 약속하지 않는다 — 별표·중요 표시가 붙은 것처럼 읽어도 남기는 메일이 섞여 있다
-  if (days === 0 && n.unread > 0) detail.push(`PC에 저장된 안 읽은 ${n.unread}통은 읽을 때까지 남깁니다.`);
-  if (n.unsaved > 0) detail.push(`PC에 저장되지 않은 ${n.unsaved}통은 건드리지 않습니다 — «백업 시작»으로 먼저 저장하면 정리 대상이 됩니다.`);
-  if (n.unverified > 0) detail.push(`저장은 됐지만 같은 메일인지 확인되지 않은 ${n.unverified}통도 남깁니다.`);
+  if (days === 0 && n.unread > 0) detail.push(`안 읽은 ${n.unread}통은 읽을 때까지 남깁니다.`);
+  if (n.unsaved > 0) detail.push(`저장 안 된 ${n.unsaved}통은 남깁니다 — «백업 시작»으로 저장하면 대상이 됩니다.`);
+  if (n.unverified > 0) detail.push(`같은 메일인지 확인 안 된 ${n.unverified}통도 남깁니다.`);
   if (v > mailtidy.CAP) detail.push(`한 번에 ${mailtidy.CAP}통씩 나눠서 옮깁니다.`);
   if (errors.length) detail.push(`정리하지 못하는 곳: ${errors.slice(0, 2).join(' / ')}`);
-  if (!lowering) detail.push(`켜고 ${minutesOf(startMs)}분쯤 뒤에 시작합니다. 그 전에 끄면 아무것도 옮기지 않습니다.`);
+  if (!lowering) detail.push(`${minutesOf(startMs)}분쯤 뒤 시작 — 그 전에 끄면 옮기지 않습니다.`);
   // 켜진 채 바꾸기 — «바로»로 · «바로»에서 기간으로 · 기간 줄이기
   const lowerTitle = days === 0 ? '서버 정리 — 읽은 메일 바로 옮기기'
     : from === 0 ? '서버 정리 — 기간으로 바꾸기' : '서버 정리 — 기간 줄이기';
@@ -554,7 +548,7 @@ async function setTidy(req, parent, { fromSettings = false, countMs = T.COUNT_MS
   if (!on && !cur.on) {
     store.setGatedSettings({ mailTidyDays: days });
     return say('good', days === 0
-      ? '켜면 PC에 저장이 확인된 읽은 메일을 바로 옮깁니다. 안 읽은 메일은 읽을 때까지 남깁니다.'
+      ? '켜면 PC에 저장된 읽은 메일을 바로 옮깁니다.'
       : `켜면 받은 지 ${days}일 지난 메일부터 옮깁니다.`);
   }
   // 끄기
@@ -564,8 +558,8 @@ async function setTidy(req, parent, { fromSettings = false, countMs = T.COUNT_MS
     if (was) tidy.stop = true;
     evlog.log('메일', '서버 정리 끔');
     return say('good', was
-      ? '껐습니다 — 도는 중인 정리는 지금 묶음까지만 하고 멈춥니다.'
-      : '껐습니다 — 서버 메일을 더 옮기지 않습니다.');
+      ? '껐습니다 — 지금 묶음까지만 하고 멈춥니다.'
+      : '껐습니다.');
   }
   // 켜진 채 기간 늘리기 — 덜 옮기는 쪽이라 묻지 않는다. 도는 정리는 shouldStop 으로 멈추고 새 기간으로 다시 돈다.
   // «바로»(0)에서 기간으로는 여기 오지 않는다 — 안 읽은 오래된 메일까지 옮기게 되므로 아래에서 묻는다
@@ -627,14 +621,10 @@ async function setTidy(req, parent, { fromSettings = false, countMs = T.COUNT_MS
     + ` · 확인 때 ${Number(n && n.verified) || 0}통${n && n.complete ? '' : ' 이상'}`);
   kickTidy(startMs);
   const soon = `${minutesOf(startMs)}분쯤 뒤부터`;
-  if (!lowering) {
-    return say('good', days === 0
-      ? `켰습니다 — ${soon} ${tidyWhat(0)}을 옮깁니다. 안 읽은 메일은 읽을 때까지 남습니다. 그 전에 끄면 아무것도 옮기지 않습니다.`
-      : `켰습니다 — ${soon} 받은 지 ${days}일 지난 메일을 옮깁니다. 그 전에 끄면 아무것도 옮기지 않습니다.`);
-  }
-  if (days === 0) return say('good', `읽은 메일을 바로 옮기도록 바꿨습니다 — ${soon} 적용됩니다. 안 읽은 메일은 읽을 때까지 남습니다.`);
-  if (cur.days === 0) return say('good', `받은 지 ${days}일 지난 메일을 옮기도록 바꿨습니다 — 안 읽은 메일도 그 기간이 지나면 옮깁니다.`);
-  return say('good', `받은 지 ${days}일 지난 메일까지 옮기도록 바꿨습니다 — 곧 적용됩니다.`);
+  if (!lowering) return say('good', `켰습니다 — ${soon} 옮깁니다. 그 전에 끄면 옮기지 않습니다.`);
+  if (days === 0) return say('good', `«바로»로 바꿨습니다 — ${soon} 적용됩니다.`);
+  if (cur.days === 0) return say('good', `${days}일로 바꿨습니다 — 안 읽은 메일도 그 기간이 지나면 옮깁니다.`);
+  return say('good', `${days}일로 줄였습니다 — 곧 적용됩니다.`);
 }
 
 ipcMain.handle('mail:backup-status', () => backupStatus());
@@ -687,8 +677,7 @@ async function pickDir() {
     try { await mailtidy.carryMoved(old, p); } catch { /* 기록을 못 옮겨도 폴더 고르기는 끝낸다 */ }
   }
   if (offTidy) {
-    backup.message = `폴더를 바꿔 «서버 정리»를 껐습니다 — 이미 정리한 메일의 PC 사본은 이전 폴더(${old})에 있습니다.`
-      + ' 그 폴더를 지우지 마세요. 새 폴더로 정리하려면 다시 켜세요.';
+    backup.message = `폴더를 바꿔 «서버 정리»를 껐습니다 — 정리한 메일의 사본이 이전 폴더(${old})에 있으니 지우지 마세요.`;
     evlog.log('메일', '서버 정리 꺼짐 · 백업 폴더를 바꿈 (이전 폴더에 정리한 메일의 사본이 있음)');
   } else {
     backup.message = '';
@@ -711,8 +700,7 @@ function backupDirProblem(dir) {
   } catch (e) {
     try { fs.unlinkSync(probe); } catch { /* 없으면 그만 */ }
     if (e.code === 'EPERM' || e.code === 'EACCES') {
-      return `이 폴더에는 쓸 수 없습니다 — 윈도우가 막는 자리입니다 (${dir}).`
-        + ' 문서 폴더 안처럼 내 폴더를 고르세요.';
+      return `이 폴더에는 쓸 수 없습니다 (${dir}) — 문서 폴더 안의 폴더를 고르세요.`;
     }
     return `이 폴더를 쓸 수 없습니다 — ${e.message}`;
   }
@@ -756,8 +744,8 @@ async function startBackup() {
     const stopThis = tidy.abort;
     setTimeout(() => { if (tidy.running && stopThis && tidy.abort === stopThis) stopThis(); }, T.STOP_GRACE_MS);
   }
-  if (tidy.running) backup.waiting = '서버 정리를 멈추는 중 — 끝나면 바로 백업을 시작합니다';
-  else if (autoBackup.running) backup.waiting = '자동 백업이 끝나기를 기다리는 중 — 끝나면 바로 시작합니다';
+  if (tidy.running) backup.waiting = '서버 정리를 멈추는 중 · 끝나면 백업 시작';
+  else if (autoBackup.running) backup.waiting = '자동 백업이 끝나기를 기다리는 중';
 
   (async () => {
     try {
@@ -768,7 +756,7 @@ async function startBackup() {
       }
       if (backup.stop) { backup.message = '멈췄습니다 — 0통 저장'; return; }
       if (tidy.running || autoBackup.running) {
-        backup.message = '다른 작업이 끝나지 않아 백업을 시작하지 못했습니다. 잠시 뒤 다시 눌러주세요';
+        backup.message = '다른 작업이 끝나지 않아 시작하지 못했습니다 — 잠시 뒤 다시 누르세요';
         return;
       }
       backup.waiting = '';
@@ -806,7 +794,7 @@ async function startBackup() {
         backup.skipped = skipped;
       }
       backup.message = (backup.stop ? `멈췄습니다 — ${saved}통 저장` : `끝났습니다 — ${saved}통 저장`)
-        + (missing ? ` · ${missing}통은 서버가 원문을 주지 않았습니다` : '')
+        + (missing ? ` · ${missing}통 못 받음` : '')
         + (failed.length ? ` · 실패 ${failed.length}건: ${failed[0]}` : '');
       evlog.log('메일', `백업 ${backup.stop ? '중단' : '완료'} · ${saved}통`
         + (failed.length ? ` · 실패 ${failed.join(' / ')}` : ''));

@@ -8,6 +8,7 @@
  * OAuth를 쓰지 않는 이유는 캘린더와 같다 — 이카운트·네이버·다음은 아이디/비밀번호
  * IMAP을 그대로 제공한다. Gmail만 언젠가 OAuth가 필요해진다.
  */
+const crypto = require('crypto');
 const { ImapFlow } = require('imapflow');
 const { simpleParser } = require('mailparser');
 const { cleanHtml } = require('./htmlclean');
@@ -26,7 +27,7 @@ const PRESETS = [
     // 받는 서버(wmbox1~4.ecount.com)는 회사마다 번호가 달라 사용자가 넣지만,
     // 보내는 서버는 wsmtp.ecount.com:587로 늘 같다.
     smtpHost: 'wsmtp.ecount.com', smtpPort: 587, help: '',
-    note: '받는 서버는 이카운트 웹메일 → 외부연동가이드 → 서버 정보설정에서 확인하세요 (보내는 서버는 wsmtp.ecount.com:587)' },
+    note: '받는 서버는 이카운트 웹메일 → 외부연동가이드 → 서버 정보설정에서 확인하세요' },
   // 네이버는 준비 단계가 둘이고, 하나만 빠져도 «비밀번호가 틀렸다»처럼 보인다.
   // 2025년 6월부터 일반 비밀번호로는 아예 안 되고 애플리케이션 비밀번호가 필수다
   // (그해 11월 유예 종료). 그걸 모르면 맞는 비밀번호를 넣고도 계속 거절당한다.
@@ -35,8 +36,7 @@ const PRESETS = [
     help: 'https://nid.naver.com/user2/help/myInfo',
     setup: 'https://mail.naver.com',
     note: '① 메일 환경설정 → POP3/IMAP 설정에서 «IMAP/SMTP 사용»을 «사용함»으로 바꾸세요. '
-      + '② 2단계 인증을 켜고 애플리케이션 비밀번호를 발급해 아래 비밀번호 칸에 넣으세요 — '
-      + '2025년부터 일반 비밀번호로는 안 됩니다. 아이디는 전체 주소(id@naver.com)를 권합니다.' },
+      + '② 2단계 인증을 켜고 앱 비밀번호를 넣으세요. 아이디는 전체 주소로 넣습니다.' },
   { id: 'gmail', name: 'Gmail', host: 'imap.gmail.com', port: 993,
     smtpHost: 'smtp.gmail.com', smtpPort: 465,
     help: 'https://myaccount.google.com/apppasswords',
@@ -452,6 +452,12 @@ async function viewFromSource(source, {
     attachments: parsed.attachments || [],
     html: view.html,
     blockedRemote: view.blockedRemote,
+    // 본문에 실제로 그려지는 첨부의 번호 — 첨부 칸이 «본문 그림»과 «첨부»를 가르는 데 쓴다 (attachmentsForView).
+    // missed 는 본문이 가리켰지만 못 그린 것, twins 는 Word 가 같은 그림을 한 벌 더 실은 짝 (buildViewHtml 참고).
+    // 서버에서 받든 백업 .eml 에서 읽든 이 길 하나라 갈래가 같다. 화면에는 안 간다 (viewPayload 가 뗀다)
+    shown: view.shown,
+    missed: view.missed,
+    twins: view.twins,
     text
   };
 }
@@ -528,25 +534,156 @@ async function fetchBody(account, uid, { markSeen = true, maxChars = 8000, allow
 // 본문을 글로만 그리는 것도 같은 이유다.
 const INLINE_IMAGE_MAX = 3 * 1024 * 1024;   // 이보다 큰 그림은 목록에만 둔다
 
-/** 화면에 넘길 첨부 요약 — 원본 버퍼는 빼고, 그림만 data URL로 */
-function attachmentsForView(list) {
-  return (list || []).map((a, i) => {
-    const type = String(a.contentType || '').toLowerCase();
+/**
+ * 화면에 넘길 첨부 요약 — 원본 버퍼는 빼고, 그림만 data URL로.
+ *
+ * «본문 그림»(inline)과 «첨부»를 가른다. 예전엔 related·cid·Content-ID·disposition inline 중
+ * 하나만 있어도 본문 그림으로 셌는데, 그 표시들은 «본문에 그려진다»는 뜻이 아니다:
+ *   · Outlook 은 그냥 붙인 파일에도 Content-ID 를 단다 — 진짜 첨부가 본문 그림 쪽으로 숨었다
+ *   · Apple Mail 은 PDF 를 disposition inline 으로 보낸다 — 이것도 첨부인데 본문 그림이 됐다
+ *   · Word(Outlook)는 같은 그림을 두 번 싣는다 — <img> 로 한 번, 주석 속 VML 로 한 번.
+ *     실측: 그림 84장 중 본문에 보이는 것은 42장, 나머지 42장은 VML 만 가리킨다 (진짜 첨부 0개)
+ * 그래서 «본문에 실제로 그려지는가»(shown — buildViewHtml 이 센다)를 먼저 본다.
+ *   본문 그림 = 본문에 그려진 것, 또는 그려지진 않지만 본문에 딸린 그림(image/* · related ·
+ *              disposition 이 attachment 가 아님 — Word 의 VML 짝). 뒤의 것은 dup 으로 표시하고,
+ *              앞의 것과 바이트가 같으면 목록에서 아예 뺀다 (같은 그림을 두 번 세지 않게).
+ *   첨부     = 나머지 전부.
+ * 단, 본문이 가리켰지만 못 그린 것(missed — 3MB 넘는 그림, background="cid:…" 처럼 화면이 안 그리는 자리)은
+ * 짝이 아니라 «첨부»다. 예전엔 이것도 «본문에는 따로 안 보이는 짝»으로 접혀, 본문에도 첨부 칸에도 안 보였다.
+ * Word 가 v:shapes 로 이어 둔 짝(twins — VML 원본 ↔ 본문의 <img>)은 바이트가 달라도 같은 그림이다.
+ * 실측: 짝 42장이 전부 본문 쪽과 다른(더 큰) 그림이라 바이트 빼기가 한 번도 안 일어나 «본문 그림 84개»가 됐다.
+ * 그래서 이어진 짝은 목록에서 빼고, 본문 쪽 칸에 orig(원본의 번호)로 단다 — 화면의 «저장»이 원본을 저장한다.
+ * index 는 언제나 원래 첨부 배열의 번호다 — 저장·미리보기·열기가 그 번호로 메인의 바이트를 찾는다.
+ * 목록에서 뺀 짝도 번호는 그대로 살아 있다 (안 보일 뿐이다).
+ *
+ * @param shown 본문에 그려지는 첨부 번호들 (배열·Set). 모르면 비워 둔다 — 그때는 짝(dup)을 가리지 않는다.
+ * @param more.missed 본문이 가리켰지만 못 그린 첨부 번호들, more.twins { VML 원본 번호: 본문 <img> 번호 }
+ */
+function attachmentsForView(list, shown, more) {
+  const out = [];
+  for (const { a, i, type, inline, dup, drop, orig } of classifyAttachments(list, shown, more)) {
+    if (drop) continue;
     const isImage = type.startsWith('image/') && a.content && a.content.length <= INLINE_IMAGE_MAX;
-    // 본문에 박혀 있는 그림은 이미 본문에서 보인다 — 아래에 또 크게 깔면
-    // 본문이 밀려나고 같은 그림이 두 번 나온다. 저장은 되게 목록에는 남긴다.
-    const inline = !!(a.related || a.cid || a.contentId
-      || String(a.contentDisposition || '').toLowerCase() === 'inline');
-    return {
+    out.push({
       index: i,
-      filename: a.filename || (isImage ? `그림${i + 1}` : `첨부${i + 1}`),
+      filename: attachmentName(a, i),
       size: a.content ? a.content.length : 0,
       contentType: type,
+      // 본문 그림은 이미 본문에서 보인다 — 아래에 또 크게 깔면 본문이 밀려나고 같은 그림이
+      // 두 번 나온다. 저장은 되게 목록에는 남긴다 (화면이 접어 둔 줄에 따로 모은다).
       inline,
+      dup,
+      // Word 가 함께 실은 원본 그림의 번호 — 목록에는 안 세우고 이 칸의 «저장»이 대신 저장한다
+      ...(orig != null ? { orig } : {}),
       // data URL이라 네트워크를 타지 않는다 — 열람 사실이 새지 않는다
       dataUrl: isImage && !inline ? `data:${type};base64,${a.content.toString('base64')}` : null
-    };
+    });
+  }
+  return out;
+}
+
+/**
+ * attachmentsForView 의 판정만 — 첨부마다 { a, i, type, inline, dup, drop, orig }.
+ * 화면 목록과 «복사(다시 쓰기)»가 이것 하나로 가른다 — 두 곳이 다른 기준을 쓰면, 보기 창이 «첨부»라고
+ * 보여 준 파일이 복사본에서 빠진다 (실측 — 옛 기준(related·disposition inline)이 남아 inline PDF 가 빠졌다).
+ */
+function classifyAttachments(list, shown, { missed, twins } = {}) {
+  const known = shown != null;
+  const ids = (v) => new Set([...(v || [])].map(Number));
+  const drawn = ids(shown);
+  const tried = ids(missed);
+  const pair = twins || {};
+  const rows = (list || []).map((a, i) => {
+    const type = String(a.contentType || '').toLowerCase();
+    const disp = String(a.contentDisposition || '').toLowerCase();
+    const inBody = drawn.has(i);
+    const twin = !inBody && !tried.has(i) && type.startsWith('image/') && !!a.related && disp !== 'attachment';
+    // 이어진 짝 — 본문에 그려진 <img> 쪽이 있을 때만 (그쪽이 목록에 남아 원본을 대신 저장한다)
+    const of = known && twin && pair[i] != null && drawn.has(Number(pair[i])) ? Number(pair[i]) : null;
+    return { a, i, type, inline: inBody || twin, dup: known && twin, drop: of != null, of, orig: null };
   });
+  for (const r of rows) {
+    if (r.of != null && rows[r.of] && rows[r.of].orig == null) rows[r.of].orig = r.i;
+  }
+
+  // 같은 바이트의 짝 걸러내기 — 짝이 있을 때만 해시를 잰다 (보통 메일은 여기서 아무것도 안 한다)
+  const hashOf = (a) => (a.content ? crypto.createHash('sha1').update(a.content).digest('hex') : null);
+  if (rows.some((r) => r.dup && !r.drop)) {
+    const have = new Set();
+    for (const r of rows) {
+      if (!r.inline || r.dup) continue;
+      const h = hashOf(r.a);
+      if (h) have.add(h);
+    }
+    for (const r of rows) {
+      if (!r.dup || r.drop) continue;
+      const h = hashOf(r.a);
+      if (h && have.has(h)) r.drop = true;
+      else if (h) have.add(h);
+    }
+  }
+  return rows;
+}
+
+/**
+ * «복사(다시 쓰기)»가 실을 첨부 — 보기 창이 «첨부»라고 보여 주는 것과 같은 것 (본문 그림은 이미 본문에 들어 있다).
+ * 이름이나 바이트가 없는 것은 실을 수 없어 뺀다.
+ */
+function realAttachmentsOf(list, shown, more) {
+  return classifyAttachments(list, shown, more)
+    .filter((r) => !r.inline && r.a && r.a.content && r.a.filename)
+    .map((r) => r.a);
+}
+
+// 이름 없는 그림의 확장자 — 저장 대화상자가 확장자 없는 이름을 내밀지 않게
+const IMAGE_EXT = { jpeg: 'jpg', jpg: 'jpg', pjpeg: 'jpg', png: 'png', gif: 'gif', webp: 'webp', bmp: 'bmp', 'svg+xml': 'svg', tiff: 'tif', avif: 'avif', heic: 'heic', 'x-icon': 'ico' };
+
+/**
+ * 첨부의 보일 이름 — 이름이 없으면 그림은 «그림N.확장자», 나머지는 «첨부N».
+ * 그림이면 크기와 상관없이 «그림»이다 (3MB 넘는 본문 그림이 «첨부N»으로 불리던 것). 저장 대화상자의 기본 이름도 이것이다.
+ */
+function attachmentName(a, i) {
+  if (a && a.filename) return a.filename;
+  const type = String((a && a.contentType) || '').toLowerCase();
+  if (!type.startsWith('image/')) return `첨부${i + 1}`;
+  const ext = IMAGE_EXT[type.slice(6).split(';')[0].trim()];
+  return `그림${i + 1}${ext ? `.${ext}` : ''}`;
+}
+
+/**
+ * 보기 창에 넘길 꼴 — 메인만 쓰는 것(원문 버퍼, 본문 그림 번호들)은 떼고, 첨부는 «첨부»/«본문 그림»으로 갈라 둔다.
+ * 창 없이 부를 수 있게 여기 둔다 — mailwin 이 이 길 하나로 만들고, 시험(bodyimage·mailatts)이 같은 함수를 잰다.
+ * (예전엔 mailwin 안에서 shown 을 떼어 넘겼는데, 그 한 줄이 빠져도 어떤 시험도 몰랐다.)
+ * @param extra 창이 더 알아야 할 것 (accountId·fromSelf·seen) — 같은 이름이면 이쪽이 이긴다
+ */
+function viewPayload(m, extra = {}) {
+  const { source: _source, shown, missed, twins, ...forView } = m || {};
+  return {
+    ...forView,
+    ...extra,
+    attachments: attachmentsForView(forView.attachments, shown, { missed, twins })
+  };
+}
+
+// 그리는 HTML 가운데 «화면에 안 그려지는 곳».
+// 앞에서부터 먼저 나온 것을 걷는다: <style> 안의 <!-- 는 주석이 아니고 (Word 는 CSS 를 <!-- --> 로 싼다),
+// 주석 안의 <style> 은 꾸밈이 아니다. 안 닫은 주석은 브라우저처럼 끝까지 주석으로 본다.
+// Word 의 <![if !vml]> … <![endif]> 는 주석이 아니다 (브라우저가 그 사이를 그린다) — 건드리지 않는다.
+// 태그는 브라우저가 안쪽을 글자로만 읽는 것과 화면의 세정기(renderer/safehtml.js KILL)가 안쪽째 버리는 것이다 —
+// 두 쪽이 «무엇을 그리나»를 같게 봐야 한다 (실측 — <button><img src="cid:…"> 안의 진짜 첨부가 «본문 그림»으로 접혔다).
+//   · 글자로만 읽는 것(style·script·textarea …)은 안 닫으면 끝까지 그 안이다 (브라우저와 같게)
+//   · 버리는 것(button·select·svg …)은 닫는 태그가 있을 때만 — 안 닫은 <button> 은 브라우저가 칸 끝에서 닫는데,
+//     끝까지 걷으면 그 뒤 그림을 바꿔 넣지 못해 본문에서 사라진다. 스스로 닫은 <svg/> 도 안을 품지 않는다
+const HIDDEN_HTML = String.raw`<!--(?:-?>|[\s\S]*?(?:--!?>|$))`
+  + String.raw`|<(style|script|template|textarea|title|xmp|iframe|noembed|noframes)\b[\s\S]*?(?:<\/\1\s*>|$)`
+  + String.raw`|<(button|select|svg|math|object)\b(?:[^>]*[^/>])?>[\s\S]*?<\/\2\s*>`;
+
+/**
+ * 브라우저가 실제로 그리는 부분만 남긴 사본 — 위의 «안 그려지는 곳»을 뺀다.
+ * 세는 데만 쓴다 — 그리는 HTML 에서는 아무것도 지우지 않는다.
+ */
+function visibleHtml(html) {
+  return String(html || '').replace(new RegExp(HIDDEN_HTML, 'gi'), ' ');
 }
 
 /**
@@ -563,7 +700,7 @@ function attachmentsForView(list) {
  */
 function buildViewHtml(parsed, { allowRemote = false } = {}) {
   let html = String(parsed.html || '');
-  if (!html) return { html: '', blockedRemote: 0 };
+  if (!html) return { html: '', blockedRemote: 0, shown: [], missed: [], twins: {} };
 
   // 통째로 위험한 태그
   html = html
@@ -587,22 +724,85 @@ function buildViewHtml(parsed, { allowRemote = false } = {}) {
   // 메일에 담겨 온 그림을 본문 제자리에 넣는다.
   // 같은 그림을 가리키는 이름이 cid / contentId / 파일명으로 제각각이라 전부 받아둔다 —
   // 하나라도 어긋나면 그림이 본문에서 사라지고 첨부 목록으로 밀려난다(실제로 그랬다).
+  // 이름 → 몇 번째 첨부인가. 두 번에 나눠 넣는다 — Content-ID 가 먼저다.
+  // 한 번에 넣으면 뒤 첨부의 파일 이름이 앞 첨부의 cid 를 덮어쓴다: cid 를 파일 이름 그대로 쓰는 발송기가
+  // 같은 이름의 파일을 첨부로도 붙이면, 본문에 그 첨부가 그려지고 진짜 첨부는 «본문 그림»으로 접혔다 (실측 — 지어낸 메일).
+  // 이름이 같은 첨부가 여럿이면 본문에 딸린(related) 쪽이 먼저다.
+  const atts = parsed.attachments || [];
+  const key = (v) => {
+    let s = String(v || '').trim().replace(/^<|>$/g, '').trim();
+    // cid: 주소는 %인코딩이 맞는 꼴이다 (RFC 2392 — cid:image001.png%4001DB…). 풀어서 맞춘다
+    try { s = decodeURIComponent(s); } catch { /* % 가 그냥 글자인 이름 */ }
+    return s.toLowerCase();
+  };
   const byKey = new Map();
-  const key = (v) => String(v || '').replace(/^<|>$/g, '').trim().toLowerCase();
-  for (const a of parsed.attachments || []) {
-    if (!a.content || !String(a.contentType || '').startsWith('image/')) continue;
-    if (a.content.length > INLINE_IMAGE_MAX) continue;
-    const url = `data:${a.contentType};base64,${a.content.toString('base64')}`;
-    for (const k of [a.cid, a.contentId, a.filename]) {
-      if (k) byKey.set(key(k), url);
+  atts.forEach((a, i) => {
+    for (const k of [a.cid, a.contentId]) if (k && !byKey.has(key(k))) byKey.set(key(k), i);
+  });
+  [...atts.keys()].sort((x, y) => Number(!!atts[y].related) - Number(!!atts[x].related)).forEach((i) => {
+    const f = atts[i].filename;
+    if (f && !byKey.has(key(f))) byKey.set(key(f), i);
+  });
+  // 본문 제자리에 넣을 수 있는 것 — 메일에 담겨 온 그림, 너무 크지 않은 것
+  const drawable = (a) => !!(a && a.content && String(a.contentType || '').toLowerCase().startsWith('image/')
+    && a.content.length <= INLINE_IMAGE_MAX);
+  const urls = new Map();
+  const urlOf = (i) => {
+    if (!urls.has(i)) urls.set(i, `data:${atts[i].contentType};base64,${atts[i].content.toString('base64')}`);
+    return urls.get(i);
+  };
+
+  // 본문이 cid 로 가리키는 자리 — src·background 속성(따옴표가 있든 없든)과 CSS url(cid:…).
+  // 속성 이름 앞은 공백·따옴표·/ 여야 한다 — data-src="cid:…" 의 끝부분을 src 로 읽으면 안 된다 (화면은 data-src 를 지운다).
+  const CID_REF = String.raw`(?<=[\s"'/])(src|background)\s*=\s*(?:"\s*cid:([^"]*)"|'\s*cid:([^']*)'|cid:([^\s"'>]+))|url\(\s*["']?\s*cid:([^"')\s]+)`;
+  // 한 번 훑으며 바꿔 넣고 센다. 화면에 안 그려지는 곳(주석·<style> 등)은 바꿔 넣지도 세지도 않는다:
+  // Word 는 그림마다 주석 속 VML(<v:imagedata src="cid:…">)로 한 벌 더 싣는데, 거기까지 data URL 로 채우면
+  // 안 그려질 바이트가 창과 답장·전달의 인용문까지 간다 (실측 — 만든 HTML 2746KB 중 주석 속이 2060KB, data URL 42개.
+  // 인용문 상한을 넘겨 답장·전달이 HTML 인용 대신 글 인용으로 물러났다).
+  //   shown  — <img> 의 src 로 실제로 그려지는 첨부
+  //   referenced — 그려지든 말든 보이는 곳에서 가리킨 첨부 (shown 이 아니면 missed — 본문이 그리려다 못 그린 것)
+  //   twins  — Word 가 v:shapes 로 이어 둔 짝: 주석 속 <v:shape id=X>…<v:imagedata src="cid:A"> 와
+  //            보이는 <img src="cid:B" v:shapes="X">. A 는 B 의 원본이다 (실측 42/42 가 이렇게 이어졌다)
+  const shown = new Set();
+  const referenced = new Set();
+  const vmlShape = new Map();   // VML 모양 id → 그 모양이 가리키는 cid 열쇠
+  const imgShapes = [];         // [보이는 <img> 의 첨부 번호, 그 <img> 의 v:shapes id 들]
+  html = html.replace(new RegExp(`${HIDDEN_HTML}|${CID_REF}`, 'gi'), (m, rawTag, boxTag, attr, dq, sq, bare, inUrl, at, all) => {
+    if (attr === undefined && inUrl === undefined) {
+      if (m.startsWith('<!--')) {
+        for (const s of m.matchAll(/<v:shape\b([^>]*)>([\s\S]*?)<\/v:shape\s*>/gi)) {
+          const id = (s[1].match(/\sid\s*=\s*["']?([^"'\s>]+)/i) || [])[1];
+          const src = (s[2].match(/<v:imagedata\b[^>]*\ssrc\s*=\s*["']?\s*cid:([^"'\s>]+)/i) || [])[1];
+          if (id && src) vmlShape.set(id, key(src));
+        }
+      }
+      return m;
     }
-  }
-  html = html.replace(/src\s*=\s*["']cid:([^"']+)["']/gi, (m, cid) => {
-    const url = byKey.get(key(cid));
-    return url ? `src="${url}"` : 'src="" data-missing="1"';
+    const i = byKey.get(key(dq ?? sq ?? bare ?? inUrl));
+    if (i !== undefined) referenced.add(i);
+    if (inUrl !== undefined || attr.toLowerCase() !== 'src') return m;   // 바꿔 넣는 것은 src 뿐 (전과 같다)
+    if (i === undefined || !drawable(atts[i])) return 'src="" data-missing="1"';
+    // 그림으로 그려지는 것은 <img> 의 src 뿐이다 (<input type=image>·<v:imagedata> 는 화면이 안 그린다)
+    const start = all.lastIndexOf('<', at);
+    const end = all.indexOf('>', at);
+    const tag = all.slice(start, end < 0 ? all.length : end + 1);
+    if (/^<img[\s/]/i.test(tag)) {
+      shown.add(i);
+      const sh = tag.match(/\sv:shapes\s*=\s*["']?([^"'>]+)/i);
+      if (sh) imgShapes.push([i, sh[1].trim().split(/\s+/)]);
+    }
+    return `src="${urlOf(i)}"`;
   });
   // 끝내 못 찾은 그림은 빈 칸으로 남으니 지운다
   html = html.replace(/<img\b[^>]*data-missing="1"[^>]*>/gi, '');
+  const twins = {};
+  for (const [b, shapeIds] of imgShapes) {
+    for (const id of shapeIds) {
+      const a = vmlShape.has(id) ? byKey.get(vmlShape.get(id)) : undefined;
+      if (a !== undefined && a !== b && !shown.has(a) && twins[a] === undefined) twins[a] = b;
+    }
+  }
+  const missed = [...referenced].filter((i) => !shown.has(i));
 
   // 인터넷에서 받아오는 그림 — 허용하면 그대로 두고, 아니면 지운다.
   // (지우는 쪽이 안전하지만, 회사 메일은 정상적인 그림도 원격인 경우가 많다)
@@ -632,7 +832,8 @@ function buildViewHtml(parsed, { allowRemote = false } = {}) {
     });
   }
 
-  return { html, blockedRemote };
+  const asc = (s) => [...s].sort((x, y) => x - y);
+  return { html, blockedRemote, shown: asc(shown), missed: asc(missed), twins };
 }
 
 /** HTML만 있는 메일을 읽을 수 있는 글로 */
@@ -640,11 +841,16 @@ function htmlToText(html) {
   return String(html || '')
     .replace(/<style[\s\S]*?<\/style>/gi, '')
     .replace(/<script[\s\S]*?<\/script>/gi, '')
+    // 표 칸은 탭으로 가른다 — 그냥 지우면 «센서 모듈 | 20 | 1,200,000원»이 «센서 모듈201,200,000원»으로 붙어
+    // 수량과 금액이 한 숫자로 읽혔다 (실측 — 자동 전달 견본, HTML 만 있는 원문). 전달 메일을 읽는 AI 가 이 글을 본다
+    .replace(/<\/(td|th)>/gi, '\t')
     .replace(/<\/(p|div|tr|h[1-6]|li)>/gi, '\n')
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<[^>]+>/g, '')
     .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+    // 줄 끝에 남은 칸 구분(마지막 칸 뒤의 탭)은 지운다
+    .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
@@ -664,8 +870,8 @@ function popMistake(account) {
   if (!isPop) return null;
   // 같은 회사의 IMAP 주소를 짐작해 같이 알려준다 — 고치는 데 필요한 건 그 한 줄이다
   const guess = /^pop\d?\./.test(host) ? host.replace(/^pop\d?\./, 'imap.') : '';
-  return 'POP3 주소로 보입니다 — 이 앱은 IMAP을 씁니다.'
-    + (guess ? ` 받는 서버를 «${guess}», 포트를 993으로 바꿔보세요.` : ' 받는 서버를 IMAP 주소로, 포트를 993으로 바꿔보세요.');
+  return 'POP3 주소로 보입니다 — '
+    + (guess ? `받는 서버를 «${guess}», 포트를 993으로 바꿔 보세요.` : '받는 서버를 IMAP 주소로, 포트를 993으로 바꿔 보세요.');
 }
 
 /** 연결만 확인 — 설정 화면의 "연결 테스트" */
@@ -687,11 +893,10 @@ function friendly(e) {
     // 실제로 비밀번호를 틀린 경우보다, «앱 비밀번호가 아니라 평소 비밀번호를 넣은» 경우가
     // 훨씬 많다. 네이버·구글은 이제 앱 비밀번호가 아니면 아예 거절한다 —
     // 그걸 «비밀번호가 틀렸다»로만 말하면 맞는 걸 몇 번이고 다시 넣게 된다.
-    return '로그인이 거절됐습니다 — 평소 비밀번호 말고 «앱(애플리케이션) 비밀번호»가 필요합니다'
-      + ' (2단계 인증을 켜야 발급됩니다)';
+    return '로그인이 거절됐습니다 — 평소 비밀번호가 아닌 앱 비밀번호를 넣으세요';
   }
   if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(raw)) return '서버 주소를 찾을 수 없습니다';
-  if (/ECONNREFUSED/i.test(raw)) return '연결이 거부되었습니다 (포트를 확인하세요)';
+  if (/ECONNREFUSED/i.test(raw)) return '연결이 거부되었습니다 — 포트를 확인하세요';
   // 붙기는 했는데 IMAP 인사말이 안 온다 — 대개 IMAP이 아닌 것에 붙은 것이다
   // (POP3 주소·웹 포트 등). 「시간 초과」로만 말하면 서버 탓으로 오해한다.
   if (/greeting/i.test(raw)) {
@@ -700,9 +905,9 @@ function friendly(e) {
   if (/timeout|ETIMEDOUT/i.test(raw)) return '서버가 응답하지 않습니다';
   if (/certificate|self.signed/i.test(raw)) return '서버 인증서를 확인할 수 없습니다';
   if (/Command failed.*IMAP|not enabled|disabled/i.test(raw)) {
-    return 'IMAP이 꺼져 있을 수 있습니다 (메일 설정에서 켜세요)';
+    return 'IMAP을 쓸 수 없습니다 — 메일 설정에서 IMAP을 켜세요';
   }
   return raw.slice(0, 120);
 }
 
-module.exports = { PRESETS, preset, connect, smtpOf, fromOf, cleanHtml, fetchSummary, fetchBody, markRead, moveToSpam, moveToTrash, findJunk, findBox, pickBox, BOX_NAMES, viewFromSource, fetchSources, test, popMistake, senderOf, friendly, htmlToText, attachmentsForView, buildViewHtml };
+module.exports = { PRESETS, preset, connect, smtpOf, fromOf, cleanHtml, fetchSummary, fetchBody, markRead, moveToSpam, moveToTrash, findJunk, findBox, pickBox, BOX_NAMES, viewFromSource, fetchSources, test, popMistake, senderOf, friendly, htmlToText, attachmentsForView, realAttachmentsOf, attachmentName, viewPayload, buildViewHtml, visibleHtml };

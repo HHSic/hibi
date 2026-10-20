@@ -122,6 +122,14 @@ class FakeClient {
       readOnly: !!(opts && opts.readOnly) || !!box.readOnlyOnly,
       exists: box.msgs.length
     };
+    // uidNext: 'auto' 면 진짜 UIDNEXT 처럼 줄지 않는 값 (맨 위 메일을 지워도 내려가지 않는다), 숫자면 그 값.
+    // 없으면 키를 넣지 않는다 — UIDNEXT 를 안 주는 서버 (옛 시험과 같은 결과)
+    if (box.uidNext === 'auto') {
+      box.hiUid = Math.max(box.hiUid || 0, box.msgs.reduce((m, x) => Math.max(m, x.uid), 0));
+      this.mailbox.uidNext = box.hiUid + 1;
+    } else if (typeof box.uidNext === 'number') {
+      this.mailbox.uidNext = box.uidNext;
+    }
     return this.mailbox;
   }
 
@@ -144,6 +152,8 @@ class FakeClient {
         if (this.spec.searchIgnoresSeen) continue;
         list = list.filter((m) => m.flags.has('\\Seen') === v);
       }
+      // SINCE — 날짜(UTC 자정) 단위로 그날 이후 (자동 전달이 «켠 뒤 첫 UID»를 찾을 때)
+      else if (k === 'since') list = list.filter((m) => utcDay(m.date) >= utcDay(v));
       else if (k === 'flagged') list = list.filter((m) => m.flags.has('\\Flagged') === v);
       else if (k === 'deleted') list = list.filter((m) => m.flags.has('\\Deleted') === v);
       else if (k === 'uid') { const set = parseSet(v, box); list = list.filter((m) => set.has(m.uid)); }
@@ -165,6 +175,14 @@ class FakeClient {
       await this._wait(this.spec.delay && this.spec.delay.fetch);
       const set = parseSet(range, box);
       const list = box.msgs.filter((m) => set.has(m.uid)).sort((a, b) => a.uid - b.uid);
+      // fetchNo: 원문을 달라는 FETCH 에 그 메일이 끼면 서버가 명령째 거절한다 (Exchange «Message cannot be fetched») —
+      // imapflow 처럼 tagged NO 로 던진다. 연결은 살아 있다
+      if (query.source && list.some((m) => m.fetchNo)) {
+        const err = new Error('Command failed');
+        err.responseStatus = 'NO';
+        err.responseText = 'Message cannot be fetched';
+        throw err;
+      }
       for (const m of list) {
         const out = { uid: m.uid };
         if (query.size) out.size = Buffer.byteLength(m.raw, 'latin1');
@@ -173,6 +191,8 @@ class FakeClient {
         if (query.flags) out.flags = new Set(m.flags);
         if (query.labels && this.capabilities.has('X-GM-EXT-1')) out.labels = new Set(m.labels);
         if (query.headers) out.headers = Buffer.from(pickHeaders(m.raw, query.headers), 'latin1');
+        // 원문 — noSource 면 서버가 원문을 주지 않는 메일
+        if (query.source && !m.noSource) out.source = Buffer.from(m.raw, 'latin1');
         yield out;
         if (this.closed) throw new Error('Connection not available');
       }
@@ -256,8 +276,9 @@ for (const name of FORBIDDEN) {
 /**
  * @param spec { [계정 id]: { caps, enabled, namespaces, failConnect, noUidPlus, emptyUidMap, moveReturns,
  *   searchReturns, searchIgnoresBefore, searchIgnoresSeen, delay: { connect, search, fetch, move }, hooks: { afterSearch, afterFetch },
- *   boxes: [{ path, name, delimiter, flags, specialUse, useGuessed, uidValidity, readOnlyOnly, searchReturns, msgs }] } }
- *   msgs: [{ uid, raw, date, flags, labels, messageId, subject }]
+ *   boxes: [{ path, name, delimiter, flags, specialUse, useGuessed, uidValidity, uidNext, readOnlyOnly, searchReturns, msgs }] } }
+ *   msgs: [{ uid, raw, date, flags, labels, messageId, subject, noSource, fetchNo }]
+ *   uidNext: 'auto'(줄지 않는 UIDNEXT) | 숫자 | 없음(UIDNEXT 를 안 주는 서버)
  */
 function makeServer(spec) {
   const state = {};
@@ -266,7 +287,7 @@ function makeServer(spec) {
     for (const b of a.boxes || []) {
       const msgs = (b.msgs || []).map((m) => ({ ...m, flags: new Set(m.flags || []), labels: new Set(m.labels || []) }));
       const top = msgs.reduce((x, m) => Math.max(x, m.uid), 0);
-      state[id].set(b.path, { ...b, msgs, nextUid: Math.max(5000, top + 7) });
+      state[id].set(b.path, { ...b, msgs, nextUid: Math.max(5000, top + 7), ...(b.uidNext === 'auto' ? { hiUid: top } : {}) });
     }
   }
   const log = [];

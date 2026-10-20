@@ -58,10 +58,12 @@ function openPopup(parent, data, at) {
  * 앱 마감의 «물어보기» — 고른 단추 번호를 준다 (그만두면 null)
  * @param focusId 처음 초점을 줄 단추 번호. 색(위험)과 초점은 따로다 — 늦게 뜨는 확인 창에서
  *   무심코 누른 Enter가 위험 단추로 가지 않게. 주지 않으면 지금처럼 칠한 단추(defaultId)에 간다.
+ * @param armMs 뜬 뒤 이 시간 동안 마우스 클릭은 답으로 받지 않는다 (두 번 누른 두 번째 클릭이 막 뜬 위험 단추에
+ *   떨어지지 않게). 키보드는 초점(focusId)이 지킨다. 주지 않으면 지금처럼 바로 받는다.
  */
-async function askUser(parent, { title, message, detail, buttons, defaultId = 0, danger = false, focusId }) {
+async function askUser(parent, { title, message, detail, buttons, defaultId = 0, danger = false, focusId, armMs }) {
   const r = await openPopup(parent, {
-    kind: 'dialog', title, message, detail, buttons, defaultId, danger, focusId
+    kind: 'dialog', title, message, detail, buttons, defaultId, danger, focusId, armMs
   });
   return typeof r === 'number' ? r : null;
 }

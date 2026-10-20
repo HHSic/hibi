@@ -286,7 +286,7 @@ function paintPicker() {
     p.className = 'none';   // 모양은 compose.html .plist .none
     p.textContent = contacts.length
       ? '찾는 사람이 없습니다'
-      : '아직 비어 있습니다 — 메일을 주고받으면 쌓입니다';
+      : '주소록이 비어 있습니다';
     host.append(p);
   }
   for (const c of hits) {
@@ -779,7 +779,7 @@ function setupFrom(d) {
   const show = (a) => (a.label ? `${a.label} <${a.from}>` : a.from) || '(주소 없음)';
   $('from').value = show(cur);
   if (!cur.from) {
-    say('bad', '보내는 사람 주소가 없습니다 — 설정 → 메일에서 넣어주세요');
+    say('bad', '보내는 사람 주소가 없습니다 — 설정 › 메일에서 넣어주세요');
     $('send').disabled = true;
   }
   const sel = $('acc');
@@ -828,7 +828,7 @@ function noteRestored(d) {
   btn.className = 'act ghost';
   btn.id = 'btn-fresh';
   btn.textContent = '새로 쓰기';
-  btn.title = '이어쓰던 글을 버리고 빈 메일로 시작합니다';
+  btn.title = '쓰던 글 버리고 새로 시작';
   btn.onclick = async () => {
     if (await window.nunsseom.composeAsk('discard') !== 'discard') return;
     clearTimeout(saveTimer);

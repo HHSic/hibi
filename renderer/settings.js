@@ -405,7 +405,7 @@ function buildCustomRow(id, def, startOpen) {
       lb.textContent = '시각';
       const warn = document.createElement('span');
       warn.className = 'hint';
-      warn.textContent = '아직 시각이 없습니다 — 하나 넣기 전까지는 울리지 않아요.';
+      warn.textContent = '시각을 넣어야 울립니다.';
       dr.append(lb, warn);
       timesBox.append(dr);
     }
@@ -936,13 +936,13 @@ function renderCalendars(list, status) {
   if (old) old.remove();
   if (!status) return;
   const parts = [];
-  if (status.current) parts.push(`지금 <b>${status.current.summary}</b> 진행 중 (${fmtWhen(status.current.end)}까지)`);
+  if (status.current) parts.push(`지금 <b>${status.current.summary}</b> · ${fmtWhen(status.current.end)}까지`);
   else if (status.next) parts.push(`다음 일정 <b>${status.next.summary}</b> · ${fmtWhen(status.next.start)}`);
   else if (status.count === 0 && list && list.length) parts.push('앞뒤 이틀 안에 일정이 없습니다');
   // 못 받아왔을 때도 달력은 그대로 보인다 — 그것이 언제 것인지 말해줘야
   // «오늘 일정이 왜 안 뜨지»를 혼자 헤매지 않는다.
   if (status.stale && status.fetchedAt) {
-    parts.push(`지금 보이는 일정은 <b>${fmtWhen(status.fetchedAt)}</b>에 받아둔 것입니다 (새로 못 받았습니다)`);
+    parts.push(`새로 못 받음 · <b>${fmtWhen(status.fetchedAt)}</b>에 받은 일정`);
   }
   for (const e of status.errors || []) parts.push(`<b>${e.name || '캘린더'}</b> 읽기 실패: ${e.message}`);
   if (!parts.length) return;

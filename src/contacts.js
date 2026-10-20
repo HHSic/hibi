@@ -49,7 +49,7 @@ ipcMain.handle('mail:contacts-import', async () => {
     return {
       ok: false,
       message: r.total
-        ? `주소를 찾지 못했습니다 — ${r.total}줄을 봤지만 메일 주소가 없었습니다`
+        ? `메일 주소를 찾지 못했습니다 (${r.total}줄)`
         : '빈 파일입니다',
       contacts: store.contacts
     };
@@ -76,8 +76,8 @@ ipcMain.handle('mail:contacts-import', async () => {
     skipped: r.skipped,
     encoding,
     message: `${added}명 넣음`
-      + (updated ? ` · ${updated}명은 이미 있어 이름만 갱신` : '')
-      + (r.skipped ? ` · ${r.skipped}줄은 주소가 없어 건너뜀` : '')
+      + (updated ? ` · 기존 ${updated}명 이름 갱신` : '')
+      + (r.skipped ? ` · 주소 없는 ${r.skipped}줄 건너뜀` : '')
       + (encoding === 'cp949' ? ' · CP949로 읽음' : '')
   };
 });

@@ -61,7 +61,7 @@ function renderMailModes() {
   const host = $('mail-mode');
   host.textContent = '';
   const modes = [
-    { id: 'batch', name: '모아서', hint: '정해진 시각(10·14·17시)에만 요약해서 알립니다. 일하는 흐름을 끊지 않습니다.' },
+    { id: 'batch', name: '모아서', hint: '정해진 시각(10·14·17시)에만 모아서 알립니다.' },
     { id: 'instant', name: '바로', hint: '새 메일이 오면 곧바로 알립니다.' }
   ];
   const cur = nunsSet.data.settings.mailMode || 'batch';
@@ -84,8 +84,8 @@ function renderMailScope() {
   const host = $('mail-scope');
   host.textContent = '';
   const opts = [
-    { unread: false, name: '최근 온 메일', hint: '읽었든 안 읽었든 마지막에 온 메일을 보여줍니다.' },
-    { unread: true, name: '안 읽은 것만', hint: '안 읽은 메일만 보여줍니다. 다 읽으면 목록이 비워집니다.' }
+    { unread: false, name: '최근 온 메일', hint: '읽음과 상관없이 최근 메일을 보여줍니다.' },
+    { unread: true, name: '안 읽은 것만', hint: '안 읽은 메일만 보여줍니다.' }
   ];
   const cur = nunsSet.data.settings.mailOnlyUnread === true;
   for (const o of opts) {
@@ -366,6 +366,8 @@ function renderMailAccounts() {
       mailData.accounts = await window.nunsseom.mailUpdate(a.id, { enabled: a.enabled === false });
       await syncMailStatus();
       renderMailAccounts();
+      // 다시 켠 계정은 메인이 자동 전달의 «지금부터»를 새로 잡는다 — 계정 단추도 새 모양으로
+      loadFwd();
     };
     const del = document.createElement('button');
     del.className = 'mini ghost';
@@ -376,6 +378,8 @@ function renderMailAccounts() {
       mailData.accounts = await window.nunsseom.mailRemove(a.id);
       await syncMailStatus();
       renderMailAccounts();
+      // 지운 계정은 자동 전달에서도 빠진다 (마지막 계정이면 메인이 끈다)
+      loadFwd();
     };
     row.append(g, nm, val, sw, del);
     host.append(row);
@@ -403,6 +407,7 @@ async function loadMail() {
   renderSigAccs();
   loadBook();
   loadRules();
+  loadFwd();
 }
 
 /**
@@ -436,7 +441,7 @@ function mailForm() {
 function mailFormOk(acc) {
   if (!acc.host) { mailMsg('bad', '서버 주소를 넣으세요'); return false; }
   if (!acc.user) { mailMsg('bad', '아이디를 넣으세요'); return false; }
-  if (!acc.pass) { mailMsg('bad', '비밀번호를 넣으세요 (앱 비밀번호가 필요할 수 있어요)'); return false; }
+  if (!acc.pass) { mailMsg('bad', '비밀번호를 넣으세요'); return false; }
   return true;
 }
 
@@ -449,7 +454,7 @@ $('btn-mail-test').onclick = async () => {
     const r = await window.nunsseom.mailTest(acc);
     // 테스트는 확인만 한다. 여기서 끝난 줄 알고 떠나면 계정이 저장되지 않는다.
     mailMsg(r.ok ? 'good' : 'bad',
-      r.ok ? `${r.message} — 이제 «추가»를 눌러 저장하세요` : r.message);
+      r.ok ? `${r.message} — «추가»를 눌러 저장하세요` : r.message);
     $('btn-mail-add').classList.toggle('urge', r.ok);
   } finally {
     $('btn-mail-test').disabled = false;
@@ -595,6 +600,8 @@ $('btn-ed-save').onclick = async () => {
   renderSigAccs();
   // renderSigAccs가 안내를 지우므로 그 뒤에 적는다
   $('ed-msg').textContent = '저장했습니다';
+  // 보내는 서버·주소를 바꾼 계정은 메인이 자동 전달에서 뺀다 — 계정 단추가 옛 모습으로 남지 않게
+  loadFwd();
 };
 $('btn-ed-test').onclick = async () => {
   $('ed-msg').textContent = '확인 중…';
@@ -622,7 +629,7 @@ function renderRules() {
   for (const g of rulesData.groups) bits.push(`${g.name} ${g.count}통`);
   sum.textContent = bits.length
     ? bits.join(' · ')
-    : '위젯은 몇 줄만 보입니다. 메일 목록에서 오른쪽 클릭하면 그 자리에서 규칙이 만들어집니다.';
+    : '메일 목록에서 오른쪽 클릭하면 바로 규칙을 만듭니다.';
 
   const host = $('fl-list');
   host.textContent = '';
@@ -707,7 +714,7 @@ function renderBook() {
   if (!hits.length) {
     const p = document.createElement('div');
     p.className = 'col';
-    p.textContent = book.length ? '찾는 사람이 없습니다' : '아직 비어 있습니다 — 메일을 주고받으면 쌓입니다';
+    p.textContent = book.length ? '찾는 사람이 없습니다' : '주소록이 비어 있습니다';
     p.style.fontSize = '11.5px';
     p.style.color = 'var(--tertiary)';
     host.append(p);
@@ -819,6 +826,8 @@ $('btn-mail-add').onclick = async () => {
       $('mail-user').value = '';
       $('mail-pass').value = '';
       renderMailAccounts();
+      // 새 계정은 자동 전달의 «보낼 계정» 단추에도 나와야 한다 (켜진 채라면 고르지 않은 채로)
+      loadFwd();
     }
   } finally {
     $('btn-mail-add').disabled = false;
@@ -845,12 +854,12 @@ function paintAuto(st) {
     return;
   }
   if (!st.dir) {
-    el.textContent = '저장할 폴더를 먼저 골라야 자동 백업이 돕니다.';
+    el.textContent = '저장할 폴더를 먼저 고르세요.';
     return;
   }
   // 폴링이 없으면 새 메일이 온 것도 모른다 — «도는 중»이라고 말하면 거짓말이 된다
   if (!nunsSet.data.settings.mailEnabled) {
-    el.textContent = '위쪽 «메일 확인하기»가 꺼져 있어 새 메일을 자동 저장하지 못합니다.';
+    el.textContent = '«메일 확인하기»가 꺼져 있어 자동 저장하지 못합니다.';
     return;
   }
   if (st.autoError) {
@@ -858,8 +867,7 @@ function paintAuto(st) {
     return;
   }
   if (!st.autoAt) {
-    el.textContent = '켜졌습니다. 지금부터 오는 메일과 열어본 메일을 저장합니다'
-      + ' (지난 메일은 «백업 시작»을 눌러주세요).';
+    el.textContent = '켜졌습니다 — 지난 메일은 «백업 시작»으로 저장하세요.';
     return;
   }
   el.textContent = `자동 저장 중 · ${agoText(st.autoAt)} ${st.autoSaved}통`
@@ -892,22 +900,11 @@ function tidyTail(days) {
  *   옛 메인이라 없으면 숫자 없이 말한다
  */
 function tidyHint(days, everyMin) {
-  const every = Number.isFinite(everyMin) && everyMin > 0 ? `(지금은 약 ${everyMin}분마다)` : '';
-  const what = days === 0
-    ? `받은편지함·보낸편지함·보관함 등 백업하는 폴더에서, PC에 저장된 것이 확인된 메일 중 «읽은» 메일을 새 메일 확인 때마다${every}`
-      + ' 서버의 휴지통으로 옮깁니다. 안 읽은 메일은 읽을 때까지 서버에 남아 위젯·폰에서 새 메일로 보이고, 읽고 나면 다음 정리 때 옮깁니다.'
-      // 이 앱의 보기 창은 열어도 읽음으로 바꾸지 않는다 — 열어 읽고 닫았는데 안 옮겨지면 고장 난 줄 안다
-      + ' 이 앱에서는 열어 보기만 해서는 읽음이 되지 않습니다 — 보기 창이나 위젯 목록에서 읽음으로 표시하거나 웹메일·폰에서 읽어야 옮깁니다.'
-      + ' 보기 창이 떠 있는 동안은 창을 닫은 뒤에 옮깁니다.'
-      // 보낸 메일은 늘 \Seen 이다 — 받은 메일 이야기로만 읽히지 않게 따로 말한다
-      + ' 보낸 메일은 늘 읽은 것으로 쳐서, 저장되면 곧 옮깁니다(보낸편지함도 비게 됩니다).'
-    : `받은편지함·보낸편지함·보관함 등 백업하는 폴더에서, PC에 저장된 것이 확인된 메일 중 받은 지 ${days}일 지난 것을`
-      + ' 서버의 휴지통으로 옮깁니다. 읽었는지는 보지 않습니다.';
-  return what + ' 모든 메일 계정에 적용됩니다. 웹메일·폰과 이 앱의 메일 목록에서도 사라지지만 휴지통에서 되찾을 수 있고'
-    // 휴지통을 저절로 비우지 않는 서버도 있다 — 아래 «휴지통 자동 비우기를 켜 두세요» 안내와 어긋나지 않게
-    + '(메일 회사에 따라 일정 기간이 지나면 휴지통이 비워지기도 합니다), 원래 폴더로 되찾은 메일은 다시 옮기지 않습니다.'
-    + ' 별표·중요 표시가 붙은 메일(Gmail이 저절로 붙인 중요 표시 포함)과 임시보관함·메모·서식 폴더는 남깁니다.'
-    + ' 저장되지 않은 메일은 건드리지 않습니다.';
+  const every = Number.isFinite(everyMin) && everyMin > 0 ? `약 ${everyMin}분마다` : '새 메일 확인 때마다';
+  return days === 0
+    // 보낸 메일은 늘 \Seen 이다 — 받은 메일 이야기로만 읽히지 않게 따로 말한다
+    ? `모든 계정의 읽은 메일과 보낸 메일을 ${every} 옮깁니다. 웹메일·폰에서도 사라지고, 안 읽은·별표·중요 메일은 남깁니다.`
+    : '모든 계정에서 읽음과 상관없이 옮깁니다. 웹메일·폰에서도 사라지고, 별표·중요 메일은 남깁니다.';
 }
 
 /**
@@ -922,14 +919,14 @@ function tidyLine(t) {
   if (!t.on) return t.ready ? '' : (t.why || '');
   if (!t.ready) return `쉬는 중 — ${t.why}`;
   if (t.running) return '서버 정리 중…';
-  if (!t.at) return '켜져 있습니다. 자동 백업이 한 번 돈 뒤 정리합니다.';
+  if (!t.at) return '켜짐 · 다음 자동 백업 뒤 정리';
   return `서버 정리 · ${agoText(t.at)} · ${t.moved}통 휴지통으로`
-    + (t.unread && t.days === 0 ? ` · 안 읽은 ${t.unread}통은 읽을 때까지 남김` : '')
-    + (t.spared ? ` · 별표·중요 표시 등 ${t.spared}통은 남김` : '')
-    + (t.unsaved ? ` · 저장 안 된 ${t.unsaved}통은 남김(«백업 시작»으로 저장하면 대상)` : '')
-    + (t.unverified ? ` · 확인 안 된 ${t.unverified}통은 남김` : '')
-    + (t.more ? ' · 남은 것은 다음에 이어서' : '')
-    + (t.skippedBoxes ? ` · 폴더 ${t.skippedBoxes}곳은 확인할 수 없어 건너뜀` : '')
+    + (t.unread && t.days === 0 ? ` · 안 읽은 ${t.unread}통 남김` : '')
+    + (t.spared ? ` · 별표·중요 등 ${t.spared}통 남김` : '')
+    + (t.unsaved ? ` · 저장 안 된 ${t.unsaved}통 남김(«백업 시작» 필요)` : '')
+    + (t.unverified ? ` · 확인 안 된 ${t.unverified}통 남김` : '')
+    + (t.more ? ' · 나머지는 다음에' : '')
+    + (t.skippedBoxes ? ` · 폴더 ${t.skippedBoxes}곳 건너뜀` : '')
     + (t.error ? ` · 실패: ${t.error}` : '');
 }
 
@@ -992,7 +989,7 @@ async function setTidy(req, el) {
   tidyBusy += 1;
   if (off) tidyOffBusy = true;
   paintTidy({ tidy: t });
-  if (risky) mailMsg('wait', '확인하는 중… 옮길 메일을 세어 봅니다 (최대 20초). 확인 창이 뜨면 거기서 골라주세요.', msg);
+  if (risky) mailMsg('wait', '옮길 메일을 세는 중… (최대 20초)', msg);
   let st = null;
   try {
     st = await window.nunsseom.mailTidySet(req);
@@ -1073,6 +1070,288 @@ for (const b of $('tidy-days').querySelectorAll('button')) {
 // 그 onclick 보다 먼저 불리므로 한 박자 늦춰, setApp 이 메인에 먼저 닿게 한다
 $('mailEnabled').addEventListener('click', () => setTimeout(loadBackup, 0));
 
-// settings.js 의 첫 그리기가 이 둘을 부른다
-window.nunsSetMail = { loadMail, loadBackup };
+// ── 자동 전달 ────────────────────────────────────
+// 새로 오는 메일을 정해 둔 주소로 보낸다 (Gmail 로 모아 AI 가 읽게 하는 쓰임). 메일이 회사 밖으로 나가는 설정이라
+// 켜기·주소 더하기·계정 더하기는 메인이 정확한 주소와 계정을 보여 주고 확인 창으로 묻는다 — 여기서는 부탁만 하고 답을 그린다.
+// 누르자마자 스위치를 미리 칠하지 않는다: 확인 창에서 그만두면 스위치가 거짓말을 하게 된다 (서버 정리와 같다).
+// 꺼진 채 적은 주소·고른 계정은 메인에 보내지 않는다 — 메인은 확인 창을 지난 값만 저장하므로 켜는 부탁에 함께 싣는다.
+// setApp 으로는 이 값을 못 바꾼다 (메인 store 가 버린다) — 늘 mailFwdSet 으로만 보낸다.
+let fwdLast = null;        // 마지막으로 받은 상태 — 누를 때 «지금 값»과 견준다
+let fwdBusy = false;       // 켜기·바꾸기 답을 기다리는 중 — 그동안 또 누르면 확인 창이 겹친다
+let fwdOffBusy = false;    // 끄기 답을 기다리는 중 — 끄기는 확인 창이 떠 있는(다른 부탁을 기다리는) 사이에도 보낸다
+let fwdDirty = false;      // 받는 주소 칸을 고치는 중 — 다시 칠할 때 덮지 않는다
+let fwdPick = null;        // 꺼진 채 고른 계정 id (Set) — 화면에만 둔다. null 이면 지난번 것이나 기본값을 보인다
+let fwdTimer = null;
+let fwdMsgTimer = null;
+
+/**
+ * 받는 주소 칸 → { list, bad }. 쉼표·쌍반점·빈칸으로 나누고 소문자로, 겹친 것은 하나로.
+ * 겉모양만 본다 — 엄격한 검사는 메인이 다시 한다. '%' 는 받지 않는다 (오래된 중계 서버는 «a%b@relay» 를 b 로 보낸다).
+ * 영문인지는 소문자로 바꾸기 «전에» 본다 — 켈빈 기호(K)처럼 바꾸면 영문이 되는 글자를 막는다
+ */
+function fwdParse(text) {
+  const list = [];
+  let bad = '';
+  for (const raw of String(text || '').split(/[,;\s]+/)) {
+    if (!raw) continue;
+    const s = raw.toLowerCase();
+    if (!/^[\x21-\x7e]+$/.test(raw) || !/^[^\s@<>,;%]+@[^\s@<>,;.]+(\.[^\s@<>,;.]+)+$/.test(s)) {
+      if (!bad) bad = raw;
+      continue;
+    }
+    if (!list.includes(s)) list.push(s);
+  }
+  return { list, bad };
+}
+
+/** 켜기·바꾸기 전에 화면에서 먼저 막는 것 — 메인도 같은 말로 막는다 */
+function fwdProblem({ list, bad }, max) {
+  if (bad) return `주소 형식이 이상합니다 — ${bad.slice(0, 60)}`;
+  if (!list.length) return '받는 주소를 넣어주세요.';
+  if (list.length > max) return `받는 주소는 ${max}개까지입니다.`;
+  return '';
+}
+
+const sameList = (a, b) => a.length === b.length && a.every((x) => b.includes(x));
+
+/**
+ * 상태 한 줄 — 꺼져 있으면 왜 못 켜는지만, 켜져 있으면 마지막으로 무엇을 했는지.
+ * stale 은 «켜짐»으로 저장돼 있지만 이 PC에서 확인한 계정이 하나도 없는 것이다 (다른 PC에서 복사·로밍된 설정 등) —
+ * 메인은 보내지 않는다. 스위치는 켜진 채로 두고 껐다 켜게 한다 (켤 때 다시 묻는다)
+ */
+function fwdLine(t) {
+  if (!t.on) return t.ready ? '' : (t.why || '');
+  if (!t.ready) return `쉬는 중 — ${t.why}`;
+  if (t.stale) return '쉬는 중 — 이 PC에서 다시 켜 주세요';
+  if (t.running) return '전달 중…';
+  if (!t.at) return '켜짐 · 다음 메일 확인 때 시작';
+  const changed = t.accounts.filter((a) => a.changed).length;
+  // 이번 실행 수는 보냈을 때만 — 새 메일이 없는 폴링마다 «0통»이 앞에 서지 않게
+  return `전달 · ${agoText(t.at)}`
+    + (t.sent ? ` · ${t.sent}통` : '')
+    + (t.total > t.sent ? ` · 켠 뒤 ${t.total}통` : '')
+    + (t.skipped ? ` · 건너뜀 ${t.skipped}통` : '')
+    + (t.uncertain ? ` · 확인 안 됨 ${t.uncertain}통` : '')
+    + (t.capped ? ' · 오늘 한도 · 내일 이어서' : t.more ? ' · 나머지는 다음에' : '')
+    + (changed ? ` · 설정 바뀐 계정 ${changed}개 빠짐` : '')
+    + (t.error ? ` · 실패: ${t.error}` : '');
+}
+
+/**
+ * 받는 주소와 같은 계정 id — 제 주소로 전달하면 고리가 된다. 고를 수 없다.
+ * 켜져 있으면 메인이 확인한 주소로(a.self), 꺼져 있으면 칸에 적힌 주소로 가린다 — 메인(isSelf)처럼 보내는 주소와
+ * 주소꼴 아이디를 다 본다(a.addrs). 보내는 주소만 보면 켜기를 눌렀을 때 메인이 거절한다
+ */
+function fwdSelf(t, typed) {
+  const own = (a) => (Array.isArray(a.addrs) ? a.addrs : [a.addr]).filter(Boolean);
+  return new Set(t.accounts.filter((a) => (t.on ? a.self : own(a).some((x) => typed.includes(x)))).map((a) => a.id));
+}
+
+/**
+ * 지금 고른 계정 id. 켜져 있으면 메인이 확인한 그대로(on), 꺼져 있으면 화면에서 고른 것(fwdPick).
+ * 아직 안 골랐으면 지난번에 고른 것, 그것도 없으면 켜진 계정 전부를 보인다 — 받는 주소와 같은 계정은 늘 뺀다
+ */
+function fwdChosen(t, self) {
+  // 꺼진 채 고를 때는 꺼 둔 계정을 넣지 않는다 — 켜도 보내지 못한다 (메인도 거절한다)
+  const usable = (id) => t.on || (t.accounts.find((a) => a.id === id) || {}).enabled !== false;
+  let ids;
+  if (t.on) ids = t.accounts.filter((a) => a.on).map((a) => a.id);
+  else if (fwdPick) ids = [...fwdPick];
+  else {
+    ids = t.accounts.filter((a) => a.on && !self.has(a.id) && usable(a.id)).map((a) => a.id);
+    if (!ids.length) ids = t.accounts.filter((a) => a.enabled !== false && !self.has(a.id)).map((a) => a.id);
+  }
+  return new Set(ids.filter((id) => !self.has(id) && usable(id)));
+}
+
+/** 계정 단추 — 칠만 바꿔 누른 단추에 초점이 남게 하고, 계정이 바뀌었을 때만 다시 만든다 */
+function paintFwdAccs(t, typed, busy) {
+  const host = $('fwd-accs');
+  const key = JSON.stringify(t.accounts.map((a) => [a.id, a.name]));
+  if (host.dataset.key !== key) {
+    host.textContent = '';
+    host.dataset.key = key;
+    for (const a of t.accounts) {
+      const b = document.createElement('button');
+      b.className = 'mini ghost';
+      b.dataset.id = a.id;
+      b.textContent = a.name;
+      b.onclick = () => fwdAccClick(a.id, b);
+      host.append(b);
+    }
+  }
+  const self = fwdSelf(t, typed);
+  const chosen = fwdChosen(t, self);
+  for (const b of host.querySelectorAll('button')) {
+    const a = t.accounts.find((x) => x.id === b.dataset.id);
+    if (!a) continue;
+    const on = chosen.has(a.id);
+    // 꺼 둔 계정은 더할 수 없다. 이미 전달 중이면(켠 뒤에 껐다) 눌러서 뺄 수는 있다
+    const off = a.enabled === false && !on;
+    b.className = 'mini' + (on ? '' : ' ghost');
+    b.setAttribute('aria-pressed', String(on));
+    b.setAttribute('aria-disabled', String(self.has(a.id) || off || busy));
+    const why = self.has(a.id) ? '받는 주소와 같은 계정'
+      : off ? '꺼 둔 계정'
+        : a.changed ? '계정 설정이 바뀌어 빠짐 — 다시 누르면 확인합니다' : '';
+    if (why) b.title = why; else b.removeAttribute('title');
+  }
+}
+
+/**
+ * 스위치·받는 주소·계정 단추·상태 줄을 칠한다. #fwd-msg(부탁에 대한 답)는 건드리지 않는다 —
+ * 폴링이 2~20초마다 다시 칠하므로, 여기서 지우면 확인 창 결과가 읽기도 전에 사라진다.
+ */
+function paintFwd(t) {
+  clearTimeout(fwdTimer);
+  // 자동 전달을 모르는 메인(옛 메인)이거나 답이 없으면 감춘 채로 둔다 (마크업이 처음부터 hidden 이다)
+  if (!t || !Array.isArray(t.accounts) || !Array.isArray(t.to)) {
+    fwdLast = null;
+    $('fwd-sec').hidden = true;
+    $('fwd-group').hidden = true;
+    return;
+  }
+  fwdLast = t;
+  $('fwd-sec').hidden = false;
+  $('fwd-group').hidden = false;
+  const busy = fwdBusy || !!t.asking;
+  const sw = $('mailForwardOn');
+  sw.classList.toggle('on', !!t.on);
+  sw.setAttribute('aria-checked', String(!!t.on));
+  sw.setAttribute('aria-busy', String(busy || fwdOffBusy));
+  // 켜진 스위치는 묻는 중이어도, 답을 기다리는 중이어도, 이 PC에서 확인 안 된(stale) 설정이어도 늘 끌 수 있어야 한다
+  sw.setAttribute('aria-disabled', String(!t.on && (busy || !t.ready)));
+  // 받는 주소 칸 — 켜져 있으면 메인이 확인한 그대로를 보인다. 고치는 중이거나 쓰는 중이면 덮지 않는다.
+  // 꺼져 있으면 사용자가 적던 글이다 — 빈 칸일 때만 지난번에 확인한 주소를 채워 둔다
+  const input = $('fwd-to');
+  if (!fwdDirty && document.activeElement !== input && (t.on || !input.value)) input.value = t.to.join(', ');
+  const typed = fwdParse(input.value).list;
+  const save = $('btn-fwd-save');
+  save.hidden = !(t.on && fwdDirty && !sameList(typed, t.to));
+  save.setAttribute('aria-disabled', String(busy));
+  paintFwdAccs(t, typed, busy);
+  const line = fwdLine(t);
+  $('fwd-state').textContent = line;
+  $('fwd-state').hidden = !line;
+  // 도는 중·묻는 중이면 자주, 켜져 있으면 가끔 — 결과 줄이 멈춰 보이지 않을 만큼만
+  if (t.running || t.asking) fwdTimer = setTimeout(loadFwd, 2000);
+  else if (t.on) fwdTimer = setTimeout(loadFwd, 20000);
+}
+
+async function loadFwd() {
+  let st = null;
+  try {
+    st = await window.nunsseom.mailFwdStatus();
+  } catch {
+    st = null;   // 옛 preload(부르기가 없음)·메인 오류 — 감춘다
+  }
+  paintFwd(st);
+}
+
+/** 화면에서 막은 까닭 — 실패는 고칠 때까지 남긴다 */
+function fwdSay(kind, text) {
+  clearTimeout(fwdMsgTimer);
+  mailMsg(kind, text, $('fwd-msg'));
+}
+
+/**
+ * 메인에 부탁한다 — {on:true,to,accounts} / {to} / {accounts} / {on:false}.
+ * 켜기·주소 더하기·계정 더하기는 확인 창이 닫힌 뒤에야 답이 온다. 그동안 어디를 봐야 하는지 먼저 말한다.
+ */
+async function setFwd(req) {
+  const t = fwdLast;
+  if (!t) return;
+  // 끄기는 다른 부탁의 답을 기다리는 중에도 보낸다 (같은 끄기를 두 번 보내지는 않는다).
+  // 켜기·바꾸기는 하나씩만 — 겹치면 확인 창이 둘 뜬다
+  const off = req.on === false;
+  if (off ? fwdOffBusy : fwdBusy) return;
+  const risky = (req.on === true && !t.on)
+    || (Array.isArray(req.to) && req.to.some((x) => !t.to.includes(x)))
+    || (Array.isArray(req.accounts) && req.accounts.some((id) => !t.accounts.some((a) => a.id === id && a.on)));
+  const msg = $('fwd-msg');
+  clearTimeout(fwdMsgTimer);
+  if (off) fwdOffBusy = true; else fwdBusy = true;
+  paintFwd(t);
+  if (risky) mailMsg('wait', '확인 창에서 골라주세요.', msg);
+  let st = null;
+  try {
+    st = await window.nunsseom.mailFwdSet(req);
+  } catch {
+    st = null;   // 답이 없던 것과 같게 — 아래에서 다시 누르라고 말한다
+  } finally {
+    if (off) fwdOffBusy = false; else fwdBusy = false;
+  }
+  if (!st || !Array.isArray(st.accounts)) {
+    if (fwdLast) paintFwd(fwdLast);
+    mailMsg('bad', '응답이 없습니다 — 잠시 뒤 다시 눌러주세요.', msg);
+    return;
+  }
+  if (st.messageKind === 'good') {
+    // 받아들였다 — 칸과 고른 계정을 메인이 저장한 그대로로 되돌린다 (고치던 글·꺼진 채 고른 것은 끝났다)
+    fwdDirty = false;
+    fwdPick = null;
+    if (Array.isArray(st.to)) $('fwd-to').value = st.to.join(', ');
+  }
+  paintFwd(st);
+  // 끄기의 답이 먼저 와 걸어 둔 걷기 타이머가 뒤에 온 답을 일찍 걷지 않게
+  clearTimeout(fwdMsgTimer);
+  if (!st.message) { msg.classList.remove('show'); return; }
+  mailMsg(st.messageKind, st.message, msg);
+  // 실패는 읽고 고칠 때까지 남기고, 나머지는 잠시 뒤 걷는다
+  if (st.messageKind !== 'bad') fwdMsgTimer = setTimeout(() => msg.classList.remove('show'), 10_000);
+}
+
+/** «바꾸기»·칸의 Enter — 켜진 채 받는 주소 바꾸기. 더한 주소가 있으면 메인이 묻는다 */
+function fwdSaveTo() {
+  const t = fwdLast;
+  if (!t || !t.on || $('btn-fwd-save').getAttribute('aria-disabled') === 'true') return;
+  const parsed = fwdParse($('fwd-to').value);
+  const bad = fwdProblem(parsed, t.max || 5);
+  if (bad) { fwdSay('bad', bad); return; }
+  if (sameList(parsed.list, t.to)) { fwdDirty = false; paintFwd(t); return; }
+  setFwd({ to: parsed.list });
+}
+
+function fwdAccClick(id, b) {
+  const t = fwdLast;
+  if (!t || b.getAttribute('aria-disabled') === 'true') return;
+  const self = fwdSelf(t, fwdParse($('fwd-to').value).list);
+  const cur = fwdChosen(t, self);
+  if (cur.has(id)) cur.delete(id); else cur.add(id);
+  const ids = t.accounts.map((a) => a.id).filter((x) => cur.has(x));
+  // 꺼진 채라면 화면에만 적어 둔다 — 켤 때 한꺼번에 묻는다
+  if (!t.on) { fwdPick = new Set(ids); paintFwd(t); return; }
+  setFwd({ accounts: ids });
+}
+
+$('mailForwardOn').onclick = (e) => {
+  const t = fwdLast;
+  if (!t || e.currentTarget.getAttribute('aria-disabled') === 'true') return;
+  if (t.on) { setFwd({ on: false }); return; }
+  const parsed = fwdParse($('fwd-to').value);
+  const bad = fwdProblem(parsed, t.max || 5);
+  if (bad) { fwdSay('bad', bad); return; }
+  const self = fwdSelf(t, parsed.list);
+  const pick = fwdChosen(t, self);
+  const accounts = t.accounts.map((a) => a.id).filter((id) => pick.has(id));
+  if (!accounts.length) { fwdSay('bad', '보낼 계정을 골라주세요.'); return; }
+  setFwd({ on: true, to: parsed.list, accounts });
+};
+$('btn-fwd-save').onclick = fwdSaveTo;
+$('fwd-to').addEventListener('input', () => {
+  fwdDirty = true;
+  // «바꾸기» 단추와 받는 주소와 같은 계정 표시를 따라 바꾼다
+  if (fwdLast) paintFwd(fwdLast);
+});
+$('fwd-to').addEventListener('keydown', (e) => {
+  // 한글 입력을 끝내는 Enter 는 «바꾸기»가 아니다
+  if (e.isComposing || e.key !== 'Enter') return;
+  e.preventDefault();
+  fwdSaveTo();
+});
+// «메일 확인하기»를 끄면 메인이 자동 전달도 끈다 — 위 서버 정리와 같은 까닭으로 한 박자 늦춰 다시 읽는다
+$('mailEnabled').addEventListener('click', () => setTimeout(loadFwd, 0));
+
+// settings.js 의 첫 그리기가 앞의 둘을 부른다 (loadMail 이 끝에 loadFwd 를 부른다)
+window.nunsSetMail = { loadMail, loadBackup, loadFwd };
 })();

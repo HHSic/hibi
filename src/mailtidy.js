@@ -467,7 +467,7 @@ async function tidyAll(accounts, dir, opts = {}) {
         // 옮겼는지 모르는 묶음 — 숫자에는 넣지 않되 상태·기록에는 꼭 남긴다 (끊겨 끝날 때도)
         const unsure = (b, n, why) => {
           res.uncertain += n;
-          const msg = `${why} 마지막 묶음 ${n}통은 옮겨졌을 수 있습니다 (서버 휴지통에서 확인할 수 있습니다)`;
+          const msg = `${why} 마지막 ${n}통은 옮겨졌을 수 있습니다 — 서버 휴지통을 확인하세요`;
           // 맨 앞에 둔다 — 상태 줄은 첫 오류 하나만 보이는데, 이것이 사용자가 꼭 알아야 할 것이다
           res.errors.unshift(maskAddr(`${label} · ${b.path}: ${msg}`));
           const e = new Error(msg);
@@ -729,7 +729,7 @@ async function tidyAll(accounts, dir, opts = {}) {
         if (late) throw new Error('시간 몫을 다 썼다');
       } catch (e) {
         if (late && !aborted()) {
-          const x = new Error('정해진 시간 안에 다 보지 못했습니다 — 남은 것은 다음에 이어서 합니다');
+          const x = new Error('시간 안에 다 보지 못함');
           x.late = true;
           throw x;
         }

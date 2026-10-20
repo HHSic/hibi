@@ -306,7 +306,7 @@ function folderStrip(box, redraw) {
     }
     b.title = `${f.name} · ${f.count}통`
       + (f.unread ? ` · 안 읽음 ${f.unread}` : '')
-      + (f.id === 'hidden' ? '\n규칙이 걸러낸 것들입니다. 오른쪽 클릭해서 그 규칙을 끌 수 있어요.' : '');
+      + (f.id === 'hidden' ? '\n규칙이 숨긴 메일 · 메일을 오른쪽 클릭해 규칙 끄기' : '');
     b.onclick = (e) => {
       e.stopPropagation();
       mailFolder = f.id;
@@ -434,7 +434,7 @@ function renderMail(box) {
     const why = cur.id === 'hidden' ? whyLine(m) : null;
     if (why) nm.append(why);
     row.append(dot, nm);
-    row.title = '두 번 누르면 열립니다 · 오른쪽 클릭하면 메뉴가 나옵니다';
+    row.title = '두 번 눌러 열기 · 오른쪽 클릭 메뉴';
     attachMailRow(row, m);
     host.append(row);
   }
@@ -509,7 +509,7 @@ function paintMailPanel() {
     const why = cur.id === 'hidden' ? whyLine(m) : null;
     if (why) nm.append(why);
     row.append(nm);
-    row.title = '두 번 누르면 열립니다 · 오른쪽 클릭하면 메뉴가 나옵니다';
+    row.title = '두 번 눌러 열기 · 오른쪽 클릭 메뉴';
     attachMailRow(row, m);
     host.append(row);
   }

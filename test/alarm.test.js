@@ -102,7 +102,7 @@ app.whenReady().then(async () => {
   })()`);
   console.log('   보이는 줄:', JSON.stringify(boxes.rows));
   ok(boxes.sliderShown === 1, '«주기» 슬라이더는 감춰지고 «길이»만 남는다', boxes.sliderShown);
-  ok(boxes.rows.some((r) => r.includes('아직 시각이 없')), '시각이 없다고 알려준다');
+  ok(boxes.rows.some((r) => r.includes('시각을 넣어야 울립니다')), '시각이 없으면 넣어야 울린다고 알려준다');
 
   console.log('\n[시각 넣기]');
   ok(await clickText(wc, '.mini', '＋ 시각 추가'), '«시각 추가»를 눌렀다');

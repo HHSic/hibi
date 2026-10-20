@@ -61,6 +61,8 @@ const { slotOf, doTrash } = mailwin;
 
 const backup = require('./backup');
 const { autoBackupNew } = backup;
+// 자동 전달 — mailhub 가 이미 실었다 (폴링 끝에 부른다). 같은 모듈이다
+const autofwd = require('./autofwd');
 backup.init({
   mailAccountsForUse: () => mailhub.mailAccountsForUse(),
   // 계정이 없을 때 «왜»까지 — 꺼짐·비밀번호 못 풂·없음을 가려 말한다
@@ -73,7 +75,14 @@ backup.init({
   // 메일 보기 창에 떠 있는 메일은 서버 정리가 옮기지 않는다 — 보는 중에 서버에서 사라지지 않게
   openMailKeys: () => mailwin.openMailKeys(),
   // 방금 «안 읽음»으로 되돌린 메일도 — 느린 서버의 STORE 가 끝나기 전에 «바로»가 옮기지 않게
-  markedUnread: (k) => mailhub.seenMarks.markedUnread(k)
+  markedUnread: (k) => mailhub.seenMarks.markedUnread(k),
+  // 자동 전달이 도는 동안은 서버 정리를 미룬다 — 전달이 받기 전에 받은편지함에서 옮겨지지 않게
+  forwardBusy: () => autofwd.busy()
+});
+autofwd.init({
+  mailAccountsForUse: () => mailhub.mailAccountsForUse(),
+  // 자동 전달을 켜거나 주소·계정을 더하는 요청은 설정 창에서 온 것만 받는다
+  isSettingsWin: (wc) => isSettingsSender(wc)
 });
 // 화살표로 감싸 둔다 — 여기서 바로 값을 넘기면 아직 선언되지 않은 것이 섞인다.
 composewin.init({
@@ -453,10 +462,10 @@ function upcomingList(n) {
 function tipWhen(next) {
   if (reminders.isFixed(scheduler.cfgOf(next.id))) return `${hhmm(next.at)}에`;
   const mins = Math.max(0, Math.ceil((next.at - Date.now()) / 60_000));
-  if (mins < 60) return `약 ${mins}분 후`;
+  if (mins < 60) return `${mins}분 후`;
   const h = Math.floor(mins / 60);
   const m = mins % 60;
-  return m ? `약 ${h}시간 ${m}분 후` : `약 ${h}시간 후`;
+  return m ? `${h}시간 ${m}분 후` : `${h}시간 후`;
 }
 
 // ── 트레이 ────────────────────────────────────────────────
@@ -466,11 +475,11 @@ function updateTray() {
   const custom = store.custom;
   const up = updater.getState();
   tray.setToolTip(
-    state.paused ? 'Hibi — 일시정지됨'
-      : state.hold ? `Hibi — 방해 금지 (${state.hold}) · 알림 대기 중`
-        : state.dnd ? `Hibi — 방해 금지 (${state.dnd})`
-          : next ? `Hibi — ${reminders.meta(next.id, custom).name} ${tipWhen(next)}`
-            : 'Hibi — 켜진 알림 없음'
+    state.paused ? 'Hibi · 일시정지됨'
+      : state.hold ? `Hibi · 방해 금지 (${state.hold}) · 대기 중`
+        : state.dnd ? `Hibi · 방해 금지 (${state.dnd})`
+          : next ? `Hibi · ${reminders.meta(next.id, custom).name} ${tipWhen(next)}`
+            : 'Hibi · 켜진 알림 없음'
   );
 
   const nowSub = scheduler.activeIds().map((id) => ({
@@ -489,13 +498,15 @@ function updateTray() {
     { label: '위젯 크기 초기화', click: resetWidgetSize },
     { label: '기록 보기', click: () => openStats(null) },
     { label: '달력 보기', click: () => calhub.showCalendarPanel() },
+    // 자동 전달이 켜져 있으면 늘 보이게 — 모르게 켜진 전달을 사람이 알아챌 수 있게
+    ...(autofwd.isOn() ? [{ label: '메일 자동 전달 켜짐', click: () => openSettings('mail') }] : []),
     { label: '설정', click: openSettings },
     ...(up.status === 'ready'
       ? [{ type: 'separator' }, { label: `업데이트 ${up.newVersion} 설치하고 다시 시작`, click: installUpdate }]
       : []),
     { type: 'separator' },
     {
-      label: '이벤트 기록 (문제 재현용)',
+      label: '이벤트 기록',
       type: 'checkbox',
       checked: evlog.enabled,
       click: (item) => {
@@ -597,7 +608,7 @@ function openEventLog() {
       buttons: ['확인'],
       title: '이벤트 기록',
       message: '아직 기록이 없습니다.',
-      detail: '트레이 메뉴에서 «이벤트 기록»을 켜고 문제를 재현한 뒤 다시 열어보세요.'
+      detail: '트레이 메뉴에서 «이벤트 기록»을 먼저 켜세요.'
     });
     return;
   }
@@ -764,8 +775,9 @@ ipcMain.handle('autolaunch:set', (_e, on) => {
   return actual;
 });
 
+// 자동 전달 설정(받는 주소·지문)은 빼고 준다 — 이 처리기는 보낸 창을 보지 않는다 (설정 창은 mail:fwd-status 로 읽는다)
 ipcMain.handle('settings:get', () => ({
-  settings: { ...store.settings, autoLaunch: autolaunch.isEnabled() },
+  settings: { ...store.publicSettings(), autoLaunch: autolaunch.isEnabled() },
   reminders: store.reminders,
   custom: store.custom,
   calendars: store.calendars,

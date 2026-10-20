@@ -339,7 +339,9 @@ app.whenReady().then(async () => {
   const q = asks[asks.length - 1];
   ok(q.danger === true && q.defaultId === 0 && q.focusId === 1 && q.buttons[0] === '서버 정리 켜기' && q.buttons[1] === '그만두기',
     '확인 창 — 위험(빨강)은 켜기 단추, 초점은 «그만두기»', { danger: q.danger, defaultId: q.defaultId, focusId: q.focusId, buttons: q.buttons });
-  ok(/약 2통/.test(q.message) && /30일/.test(q.detail) && /별표/.test(q.detail), '«약 2통»을 세어 보여 준다', q.message);
+  ok(/받은 지 30일 지난 메일 약 2통/.test(q.message) && /별표/.test(q.detail) && /받은 지 30일 지난 메일을/.test(q.detail)
+    && /되찾은 메일은 다시 옮기지 않습니다/.test(q.detail),
+  '«약 2통»을 세어 보여 준다 — 기간과 «되찾은 메일은 다시 옮기지 않음»은 몇 통인지 못 세도 보이게 detail 에', q.message);
   ok(during.filter((e) => e.cmd === 'mailboxOpen').every((e) => e.readOnly) && !during.some((e) => e.cmd === 'messageMove'),
     '세는 동안 폴더는 모두 읽기 전용, 옮기기 0', during.filter((e) => e.cmd === 'mailboxOpen').map((e) => e.readOnly));
 
@@ -384,7 +386,7 @@ app.whenReady().then(async () => {
   store.setGatedSettings({ mailServerTidy: true });
   n = asks.length;
   r = await set({ on: false }, { fromSettings: false });
-  ok(r.tidy.on === false && /껐습니다 — 서버 메일을 더 옮기지 않습니다/.test(r.tidy.message) && asks.length === n, '끄기는 묻지 않는다', S(r));
+  ok(r.tidy.on === false && r.tidy.message === '껐습니다.' && asks.length === n, '끄기는 묻지 않는다', S(r));
   r = await set({ on: false });
   ok(r.tidy.message === '' && r.tidy.messageKind === '', '같은 요청을 다시 → message 는 빈 글', S(r));
   r = await set({ days: 90 });
@@ -410,6 +412,7 @@ app.whenReady().then(async () => {
   r = await set({ on: true }, { countMs: 200 });
   const q13 = asks[asks.length - 1];
   ok(asks.length === n + 1 && /세지 못했습니다/.test(q13.message), '200ms 안에 못 세면 «세지 못했습니다»라고 묻는다', q13.message);
+  ok(/받은 지 \d+일 지난 메일을/.test(q13.detail), '…몇 통인지 몰라도 무엇을 옮기는지(기간)는 detail 에 있다', q13.detail);
   const late = server.clients.slice(c13);
   ok(late.length >= 1 && late.every((c) => c.closed), '늦은 세기의 연결은 끊는다', late.map((c) => c.closed));
   setDelay('a1', undefined);
@@ -667,7 +670,7 @@ app.whenReady().then(async () => {
     answer = 0;
     r = await set({ on: true });
     ok(asks.length === n && r.tidy.on === false && r.tidy.messageKind === 'bad' && /tidy-moved\.json/.test(r.tidy.message)
-      && !/서버가 느리거나/.test(r.tidy.message), '서버 탓으로 묻지 않고, 묻지도 켜지도 않고 그 까닭(정리 기록)을 말한다', S(r));
+      && !/세지 못했습니다/.test(r.tidy.message), '서버 탓으로 묻지 않고, 묻지도 켜지도 않고 그 까닭(정리 기록)을 말한다', S(r));
     if (keep) fs.writeFileSync(movedFile, keep);
     else fs.rmSync(movedFile, { force: true });
   }
@@ -770,17 +773,17 @@ app.whenReady().then(async () => {
       && q25.danger === true && q25.focusId === 1, '확인 창 — «바로»로 바꾸기 (빨강) · 초점은 «그만두기»', q25 && { title: q25.title, buttons: q25.buttons });
     ok(q25 && /약 1통/.test(q25.message), '…«약 1통» — 읽고 저장이 확인된 것만 센다 (받은 지 하루 된 것도, 안 읽은 것은 빼고)', q25 && q25.message);
     const d25 = (q25 && q25.detail) || '';
-    ok(/PC에 저장이 확인된 메일 중 «읽은» 메일을 새 메일 확인 때마다\(지금은 약 10분마다\) 서버의 휴지통으로 옮깁니다/.test(d25)
-      && /안 읽은 메일은 읽을 때까지 서버에 남아/.test(d25)
-      && /웹메일·폰의 받은편지함/.test(d25) && /휴지통에서 되찾을 수 있습니다/.test(d25)
-      && /별표·중요/.test(d25) && /임시보관함/.test(d25),
-    '…읽은 메일을 메일 확인 때마다(실제 주기로 말한다) 휴지통으로 · 안 읽은 것은 남음 · 웹메일·폰에서도 사라지지만 되찾을 수 있음 · 별표·임시보관함은 남김', d25);
-    ok(/열어 보기만 해서는 읽음이 되지 않습니다/.test(d25) && /보기 창이나 위젯 목록에서 읽음으로 표시하거나/.test(d25),
+    ok(/PC에 저장된 읽은 메일만 약 10분마다 옮깁니다/.test(d25) && /서버 휴지통으로 옮깁니다/.test((q25 && q25.message) || '')
+      && /안 읽은 메일\(이 앱에서 열기만 한 것 포함\)과 별표·중요 메일, 임시보관함은 남깁니다/.test(d25)
+      && /웹메일·폰에서는 사라지고/.test(d25) && /되찾을 수 있습니다/.test(d25),
+    '…읽은 메일을 메일 확인 때마다(실제 주기로 말한다) 휴지통으로 · 안 읽은 것은 남음 · 웹메일·폰에서도 사라지지만 되찾을 수 있음 · 별표·중요는 남김', d25);
+    ok(/임시보관함/.test(d25), '…임시보관함은 남긴다고 말한다 (임시보관함 메일도 읽음이라 옮겨질까 걱정하지 않게)', d25);
+    ok(/이 앱에서 열기만 한 것 포함/.test(d25),
       '…이 앱에서 열어 보기만 해서는 읽음이 되지 않는다고 말한다 (열어 읽고 닫았는데 안 옮겨져 고장 난 줄 알지 않게)', d25);
-    ok(/보낸 메일은 늘 읽은 것으로 쳐서/.test(d25) && /보낸편지함도 비게 됩니다/.test(d25), '…보낸 메일은 저장되면 곧 옮겨 보낸편지함도 빈다고 말한다', d25);
-    ok(/메일 회사에 따라 일정 기간이 지나면 휴지통이 비워지기도 합니다/.test(d25) && !/정한 기간이 지나면 비워집니다/.test(d25)
-      && /Gmail이 저절로 붙인 중요 표시/.test(d25), '…휴지통이 저절로 비워진다고 단정하지 않고, Gmail 이 저절로 붙인 중요 표시도 남긴다고 말한다', d25);
-    ok(new RegExp(`PC에 저장된 안 읽은 ${w0.unread}통은 읽을 때까지 남깁니다`).test(d25) && !/읽은 뒤에 옮깁니다/.test(d25),
+    ok(/보낸 메일도 옮겨 보낸편지함이 빕니다/.test(d25), '…보낸 메일은 저장되면 곧 옮겨 보낸편지함도 빈다고 말한다', d25);
+    ok(/휴지통이 비워지기 전까지 되찾을 수 있습니다/.test(d25) && !/정한 기간이 지나면 비워집니다/.test(d25),
+      '…휴지통이 저절로 비워진다고 단정하지 않는다', d25);
+    ok(new RegExp(`안 읽은 ${w0.unread}통은 읽을 때까지 남깁니다`).test(d25) && !/읽은 뒤에 옮깁니다/.test(d25),
       `…저장된 안 읽은 ${w0.unread}통은 읽을 때까지 남긴다고만 말한다 (읽어도 남기는 메일이 있어 «읽은 뒤에 옮김»을 약속하지 않는다)`, d25);
     const cnt25 = server.log.slice(mk25);
     ok(cnt25.filter((e) => e.cmd === 'mailboxOpen').every((e) => e.readOnly) && !cnt25.some((e) => e.cmd === 'messageMove')
@@ -791,7 +794,7 @@ app.whenReady().then(async () => {
 
     // 받아들이면 0 — 30으로 바뀌지 않고 저장·상태·디스크에 0.
     // 30일 정리가 도는 중에 받아들인다 — 그 실행은 다음 확인 지점에서 멈춰야 한다. 30일 정리는 안 읽은 오래된 메일(4050)도
-    // 옮기는데, 사용자는 방금 «안 읽은 메일은 읽을 때까지 남습니다»라는 답을 받았다
+    // 옮기는데, 사용자는 방금 확인 창에서 «안 읽은 메일은 남깁니다»를 보고 받아들였다
     await quickBackup();   // 정리 시각을 당긴다 — 다음 자동 백업 끝에 30일 정리가 돈다
     let release25 = null;
     const held25 = new Promise((res) => { release25 = res; });
@@ -803,7 +806,7 @@ app.whenReady().then(async () => {
     answer = 0;
     r = await set({ days: 0 });
     ok(r.tidy.on === true && r.tidy.days === 0 && store.settings.mailTidyDays === 0 && store.reloadFromDisk().settings.mailTidyDays === 0
-      && /읽은 메일을 바로 옮기도록 바꿨습니다/.test(r.tidy.message) && /안 읽은 메일은 읽을 때까지 남습니다/.test(r.tidy.message),
+      && /^«바로»로 바꿨습니다 — \d+분쯤 뒤부터 적용됩니다\.$/.test(r.tidy.message),
     '«바로»로 바꾸기 → 0 이 상태·설정·디스크까지 그대로', S(r));
     ok(lines.some((l) => /서버 정리 «바로»로 바꿈 · 읽은 메일 바로/.test(l)), '…기록에 «바로»로 바꿈', lines.filter((l) => /바로/.test(l)));
     release25();
@@ -957,18 +960,18 @@ app.whenReady().then(async () => {
     r = await set({ on: false });
     n = asks.length;
     r = await set({ days: 0 });
-    ok(asks.length === n && r.tidy.on === false && r.tidy.days === 0 && store.settings.mailTidyDays === 0 && /켜면 PC에 저장이 확인된 읽은 메일을 바로/.test(r.tidy.message),
+    ok(asks.length === n && r.tidy.on === false && r.tidy.days === 0 && store.settings.mailTidyDays === 0 && /켜면 PC에 저장된 읽은 메일을 바로/.test(r.tidy.message),
       '꺼진 채 0(바로)을 고르면 묻지 않고, 0 이 그대로 남는다', S(r));
     addMail(A1, 4030, { daysAgo: 0.01, seen: true });
     answer = 1;
     r = await set({ on: true });
     const q25c = asks[asks.length - 1];
-    ok(asks.length === n + 1 && r.tidy.on === false && r.tidy.days === 0 && q25c.title === '서버 정리 켜기' && /«읽은» 메일/.test(q25c.detail)
-      && /약 1통/.test(q25c.message) && /켜고 \d+분쯤 뒤에 시작합니다/.test(q25c.detail), '«바로»로 켜기도 묻는다 — 읽고 저장된 것만 세고, 유예를 말한다. 그만두면 꺼진 채 0', { ...S(r), msg: q25c.message });
+    ok(asks.length === n + 1 && r.tidy.on === false && r.tidy.days === 0 && q25c.title === '서버 정리 켜기' && /읽은 메일만/.test(q25c.detail)
+      && /읽은 메일 약 1통/.test(q25c.message) && /\d+분쯤 뒤 시작 — 그 전에 끄면 옮기지 않습니다/.test(q25c.detail), '«바로»로 켜기도 묻는다 — 읽고 저장된 것만 세고, 유예를 말한다. 그만두면 꺼진 채 0', { ...S(r), msg: q25c.message });
     answer = 0;
     const at25d = T().at;
     r = await set({ on: true }, { startMs: 300 });
-    ok(r.tidy.on === true && r.tidy.days === 0 && /켰습니다 — .*읽은 메일을 옮깁니다\. 안 읽은 메일은 읽을 때까지 남습니다/.test(r.tidy.message), '…받아들이면 켜진다', S(r));
+    ok(r.tidy.on === true && r.tidy.days === 0 && /^켰습니다 — \d+분쯤 뒤부터 옮깁니다\. 그 전에 끄면 옮기지 않습니다\.$/.test(r.tidy.message), '…받아들이면 켜진다', S(r));
     await backup.autoBackupNew({ now: true });
     ok(T().at === at25d && inbox('a1').includes(4030), '켠 뒤 유예 안에는 «바로»도 돌지 않는다', inbox('a1'));
     ok(await until(() => T().at > at25d, 4000) && !inbox('a1').includes(4030), '…유예가 지나면 옮긴다', inbox('a1'));

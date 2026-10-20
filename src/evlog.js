@@ -13,7 +13,7 @@ const path = require('path');
 
 const FLUSH_MS = 400;
 const MAX_BUFFER = 2000;      // 폭주해도 메모리를 먹지 않게
-const MAX_FILE = 4 * 1024 * 1024;  // 기본 켜짐이라 파일이 무한정 자라지 않게
+const MAX_FILE = 4 * 1024 * 1024;  // 켜 둔 채 잊어도 파일이 무한정 자라지 않게
 
 let file = null;
 let enabled = false;

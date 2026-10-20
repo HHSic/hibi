@@ -46,9 +46,9 @@ const DEFAULT_SETTINGS = {
   radius: 26,          // 위젯 코너 반경 (DIP)
   grassWeeks: 15,      // 기록 창 잔디 기간 (주)
   autoLaunch: false,   // Windows 로그인 시 자동 실행
-  // 이벤트 기록 — 창 크기/이동 문제를 쫓는 중이라 당분간 기본 켜짐.
-  // 끄면 비용이 0이고, 켜져 있어도 파일 크기는 evlog가 상한을 지킨다.
-  eventLog: true,
+  // 이벤트 기록 — 문제를 쫓을 때만 트레이에서 켠다. 창 크기/이동 문제를 쫓던 동안 기본 켜짐이었는데,
+  // 다 잡은 뒤에도 클릭·창 이동이 계속 파일에 쌓였다. 기본은 끔 (예전 설정은 migrate 가 한 번 끈다).
+  eventLog: false,
 
   // 휴식 화면에서 «건너뛰기»와 «다 했어요»를 숨긴다.
   // 두 단추가 있으면 알림이 뜰 때마다 반사적으로 눌러 넘기게 되고, 그러면 휴식이
@@ -89,6 +89,14 @@ const DEFAULT_SETTINGS = {
   mailServerTidy: false,
   mailTidyDays: 30,        // 받은 지 며칠 지난 것부터 옮길지 — 0(바로: 읽은 것만)·7·30·90 (TIDY_DAYS)
   mailTidyLast: null,      // 마지막 정리 결과 — 앱을 다시 켜도 설정 화면이 보여 준다
+  // 자동 전달 — 새로 오는 메일을 정해 둔 주소로 보낸다 (src/mailfwd.js · src/autofwd.js).
+  // 메일이 밖으로 나가는 설정이라 일반 설정 길로 바꿀 수 없다 — FORWARD_SETTINGS 참고
+  mailForwardOn: false,
+  mailForwardTo: [],         // 받는 주소 1..5 (소문자, 확인 창을 거친 것)
+  mailForwardAccounts: [],   // 보낼 계정 id
+  mailForwardSince: {},      // { 계정 id: ms } — 그 계정의 «지금부터» (바뀌면 엔진이 기준을 다시 잡는다)
+  mailForwardFp: {},         // { 계정 id: 지문 } — 확인 창을 지난 «이 PC·이 계정 설정·이 받는 주소» (src/mailfwd.js fpOf)
+  mailForwardLast: null,     // 마지막 전달 결과 { at, sent, skipped, uncertain, more, capped, error, total }
   mailPanel: false,        // 위젯 겉면에 메일 펼쳐두기 (클릭 없이 보이게)
   mailViewSize: null,      // 메일 보기 창을 마지막으로 조절한 크기
   composeSize: null,       // 메일 쓰기 창을 마지막으로 조절한 크기
@@ -138,6 +146,88 @@ const DEFAULT_SETTINGS = {
 const TIDY_DAYS = [0, 7, 30, 90];
 const GATED_SETTINGS = ['mailServerTidy', 'mailTidyDays', 'mailBackupDir', 'mailTidyLast'];
 
+// 자동 전달 설정 — 메일이 회사 밖으로 나가는 설정이다. 켜기·주소 더하기·계정 더하기는 메인이 정확한 주소와
+// 계정을 보여 주고 물은 뒤(autofwd.js setForward) setForwardSettings 로만 쓴다. 서버 정리의 길(setGatedSettings)과
+// 나눠 둔다 — 정리 코드가 실수로 전달 키를 쓰지 못하게
+const FORWARD_SETTINGS = ['mailForwardOn', 'mailForwardTo', 'mailForwardAccounts', 'mailForwardSince',
+  'mailForwardFp', 'mailForwardLast'];
+const FWD_MAX_TO = 5;
+const ACC_ID = /^[\w.-]{1,64}$/;
+// 메일이 나가는 길 — 이 값이 바뀐 계정은 자동 전달에서 뺀다 (updateMailAccount)
+const FWD_PATH_KEYS = ['host', 'port', 'user', 'mailbox', 'smtpHost', 'smtpPort', 'fromAddress'];
+
+/**
+ * 자동 전달 받는 주소 — 영문 주소만, 소문자로. 못 쓰면 ''.
+ * 확인 창에 보인 글자가 곧 메일이 가는 곳이어야 한다.
+ *  - 소문자로 바꾸기 «전에» 영문·숫자·기호만인지 본다 — 켈빈 기호(U+212A)처럼 바꾸면 영문이 되는 글자를 막는다
+ *  - '%' 는 받지 않는다 — 오래된 중계 서버는 «me%evil.example@relay» 를 evil.example 로 보낸다
+ */
+function normFwdAddr(v) {
+  const raw = String(v == null ? '' : v).trim();
+  if (!raw || raw.length > 254 || !/^[\x21-\x7e]+$/.test(raw)) return '';
+  const s = raw.toLowerCase();
+  if (!/^[a-z0-9._+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(s)) return '';
+  const [local, domain] = s.split('@');
+  if (local.length > 64 || /^\.|\.$|\.\./.test(local)) return '';
+  const labels = domain.split('.');
+  if (labels.some((l) => !l || l.length > 63 || /^-|-$/.test(l))) return '';
+  return /^[a-z]{2,63}$/.test(labels[labels.length - 1]) ? s : '';
+}
+
+const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+const idList = (v) => (Array.isArray(v) ? v : []);
+const idMap = (v) => (isObj(v) ? v : {});
+/** 계정 키만 남긴 { id: 값 } — 50개까지. __proto__ 같은 이름은 키로 쓰지 않는다 */
+function accMap(v, val) {
+  const out = {};
+  if (!isObj(v)) return out;
+  for (const [k, x] of Object.entries(v)) {
+    if (Object.keys(out).length >= 50) break;
+    if (!ACC_ID.test(k) || k === '__proto__') continue;
+    const y = val(x);
+    if (y !== undefined) out[k] = y;
+  }
+  return out;
+}
+
+/** 메일이 나가는 길의 값들 — 견줄 수 있게 다듬는다 (포트는 숫자, 나머지는 소문자 글) */
+function fwdPathOf(a) {
+  return FWD_PATH_KEYS.map((k) => (k === 'port' || k === 'smtpPort'
+    ? Number(a[k]) || 0
+    : String(a[k] == null ? '' : a[k]).trim().toLowerCase()));
+}
+
+/**
+ * 계정을 고친 뒤 — 자동 전달하는 계정의 «메일이 나가는 길»(서버·아이디·폴더·보내는 서버·보내는 주소)이 바뀌면
+ * 전달에서 뺀다. 확인 창은 바꾸기 전의 계정을 두고 물었다. 빼기는 묻지 않는다. 다시 넣으면 다시 묻는다.
+ * 지문(mailForwardFp)은 남겨 둔다 — 화면이 «설정이 바뀌어 빠짐»을 알아보는 표시다 (어차피 지금 값과 맞지 않는다).
+ * 꺼 두었던 계정을 다시 켜면 그 계정은 «지금부터» — 꺼 둔 동안 온 메일은 보내지 않는다.
+ * 비밀번호만 바꾸는 요청({ sealed })은 아무것도 건드리지 않는다
+ */
+function fwdAfterUpdate(s, a, before, wasOff) {
+  const st = s.settings;
+  const ids = idList(st.mailForwardAccounts);
+  if (!ids.includes(a.id)) return;
+  const after = fwdPathOf(a);
+  if (after.some((v, i) => v !== before[i])) {
+    const since = { ...idMap(st.mailForwardSince) };
+    delete since[a.id];
+    const left = ids.filter((x) => x !== a.id);
+    const p = { mailForwardAccounts: left, mailForwardSince: since };
+    if (!left.length && st.mailForwardOn === true) {
+      p.mailForwardOn = false;
+      p.mailForwardFp = {};
+    }
+    s.settings = { ...st, ...p };
+    note('설정', '자동 전달에서 뺌 — 계정의 서버·주소를 바꿔서 (다시 넣으려면 다시 확인합니다)');
+    return;
+  }
+  if (wasOff && a.enabled === true) {
+    s.settings = { ...st, mailForwardSince: { ...idMap(st.mailForwardSince), [a.id]: Date.now() } };
+    note('설정', '자동 전달 — 다시 켠 계정은 지금부터 오는 메일만 보냅니다');
+  }
+}
+
 /** 기록에 남긴다 — 저장소가 기록 때문에 멈추면 안 된다 */
 function note(cat, msg) {
   try { require('./evlog').log(cat, msg); } catch {}
@@ -149,7 +239,8 @@ let cache = null;
 //  1 → 창 높이 = 카드 + 여백
 //  2 → 창 높이 = 카드 + 여백 + 호버 컨트롤 띠
 //  3 → 방해 금지 앱을 자유 입력에서 프리셋 목록 + 직접 입력으로 분리
-const LAYOUT_VERSION = 3;
+//  4 → 이벤트 기록 기본값을 끔으로 — 예전 기본값(켜짐)으로 저장된 것을 한 번 끈다
+const LAYOUT_VERSION = 4;
 
 function blank() {
   return {
@@ -232,6 +323,10 @@ function migrate(s) {
     s.settings.dndApps = rest;
   }
 
+  // 이벤트 기록은 예전 기본값(켜짐)이 그대로 저장돼 있다 — 기본값만 바꾸면 기존 사용자는 계속 켜져 있다.
+  // 한 번 끈다. 그 뒤에 트레이에서 다시 켜면 그 값을 따른다.
+  if (s.layoutVersion < 4) s.settings.eventLog = false;
+
   s.layoutVersion = LAYOUT_VERSION;
   save();
 }
@@ -313,8 +408,20 @@ module.exports = {
 
   TIDY_DAYS,
   GATED_SETTINGS,
+  FORWARD_SETTINGS,
+  FWD_MAX_TO,
+  normFwdAddr,
 
   get settings() { return load().settings; },
+  /**
+   * 창에 주는 설정 — 자동 전달 설정(받는 주소·계정·지문)은 뺀다. 설정 창은 mail:fwd-status 로만 읽고,
+   * 다른 창(메일 보기 창은 남이 쓴 본문을 그린다)에는 주소를 주지 않는다 (autofwd fwdStatus 와 같은 까닭)
+   */
+  publicSettings() {
+    const out = { ...load().settings };
+    for (const k of FORWARD_SETTINGS) delete out[k];
+    return out;
+  },
   /**
    * 일반 설정 길. 서버 정리 설정(GATED_SETTINGS)은 여기로 바꿀 수 없다 — 받은 patch 에 있으면 버린다.
    * 정리의 전제(자동 백업·메일 확인)를 끄면 정리도 끈다. 몇 달 뒤 자동 백업만 다시 켰을 때
@@ -329,9 +436,28 @@ module.exports = {
       // 값은 남기지 않는다 — 폴더 경로가 들어 있을 수 있다
       note('설정', `서버 정리 설정(${blocked.join(', ')})은 일반 설정 길로 바꿀 수 없습니다 — 무시했습니다`);
     }
+    // 자동 전달 설정도 — 값은 남기지 않는다 (받는 주소가 들어 있다)
+    const fwdBlocked = FORWARD_SETTINGS.filter((k) => Object.prototype.hasOwnProperty.call(p, k));
+    if (fwdBlocked.length) {
+      for (const k of fwdBlocked) delete p[k];
+      note('설정', `자동 전달 설정(${fwdBlocked.join(', ')})은 일반 설정 길로 바꿀 수 없습니다 — 무시했습니다`);
+    }
+    // 켜고 끄는 값은 참·거짓만 — 0·null·'' 처럼 «거짓 같은» 값이 와도 아래 규칙(정리·전달 끄기)이 빠지지 않게.
+    // mailhub 은 !mailEnabled 로 보고 메일 확인을 끄는데 여기서 === false 만 보면 전달·정리는 켜진 채 쉬다가,
+    // 다시 켤 때 묻지 않고 돈다
+    for (const k of ['mailEnabled', 'mailAutoBackup']) {
+      if (Object.prototype.hasOwnProperty.call(p, k)) p[k] = p[k] === true;
+    }
     if (s.settings.mailServerTidy === true && (p.mailAutoBackup === false || p.mailEnabled === false)) {
       p.mailServerTidy = false;
       note('설정', '서버 정리 꺼짐 — «자동으로 백업» 또는 «메일 확인하기»를 꺼서 (다시 켜려면 다시 확인합니다)');
+    }
+    // 메일 확인을 끄면 자동 전달도 끈다 — 몇 달 뒤 메일 확인만 다시 켰을 때 묻지도 않고 메일이 나가면 안 된다.
+    // 지문도 지운다 — 다시 켤 때 다시 묻는다
+    if (s.settings.mailForwardOn === true && p.mailEnabled === false) {
+      p.mailForwardOn = false;
+      p.mailForwardFp = {};
+      note('설정', '자동 전달 꺼짐 — «메일 확인하기»를 꺼서 (다시 켜려면 다시 확인합니다)');
     }
     s.settings = { ...s.settings, ...p };
     save();
@@ -366,6 +492,46 @@ module.exports = {
       } : null;
     }
     s.settings = { ...s.settings, ...p };
+    save();
+    return s.settings;
+  },
+  /**
+   * 자동 전달 설정을 쓰는 유일한 길 — autofwd.js 만 부른다 (확인 창을 거친 뒤·빼기·결과 기록).
+   * 여섯 키 말고는 무시하고 값은 여기서 다시 다듬는다.
+   */
+  setForwardSettings(patch) {
+    const s = load();
+    const src = patch && typeof patch === 'object' ? patch : {};
+    const has = (k) => Object.prototype.hasOwnProperty.call(src, k);
+    const num = (x) => Number(x) || 0;
+    const p = {};
+    if (has('mailForwardOn')) p.mailForwardOn = src.mailForwardOn === true;
+    if (has('mailForwardTo')) {
+      p.mailForwardTo = Array.isArray(src.mailForwardTo)
+        ? [...new Set(src.mailForwardTo.map(normFwdAddr).filter(Boolean))].slice(0, FWD_MAX_TO)
+        : [];
+    }
+    if (has('mailForwardAccounts')) {
+      p.mailForwardAccounts = Array.isArray(src.mailForwardAccounts)
+        ? [...new Set(src.mailForwardAccounts.filter((x) => typeof x === 'string' && ACC_ID.test(x)))].slice(0, 50)
+        : [];
+    }
+    if (has('mailForwardSince')) p.mailForwardSince = accMap(src.mailForwardSince, num);
+    if (has('mailForwardFp')) {
+      p.mailForwardFp = accMap(src.mailForwardFp, (x) => (typeof x === 'string' && /^[0-9a-f]{32}$/.test(x) ? x : undefined));
+    }
+    if (has('mailForwardLast')) {
+      const v = src.mailForwardLast;
+      p.mailForwardLast = isObj(v) ? {
+        at: num(v.at), sent: num(v.sent), skipped: num(v.skipped), uncertain: num(v.uncertain),
+        more: v.more === true, capped: v.capped === true,
+        error: typeof v.error === 'string' ? v.error.slice(0, 200) : null,
+        total: num(v.total)
+      } : null;
+    }
+    s.settings = { ...s.settings, ...p };
+    // 저장소가 마지막 방어선이다 — 받는 주소 없이 켜진 채로 두지 않는다
+    if (s.settings.mailForwardOn === true && !idList(s.settings.mailForwardTo).length) s.settings.mailForwardOn = false;
     save();
     return s.settings;
   },
@@ -524,7 +690,12 @@ module.exports = {
   updateMailAccount(id, patch) {
     const s = load();
     const a = s.mailAccounts.find((x) => x.id === id);
-    if (a) Object.assign(a, patch);
+    if (a) {
+      const before = fwdPathOf(a);
+      const wasOff = a.enabled === false;
+      Object.assign(a, patch);
+      fwdAfterUpdate(s, a, before, wasOff);
+    }
     save();
     return s.mailAccounts;
   },
@@ -669,6 +840,26 @@ module.exports = {
   removeMailAccount(id) {
     const s = load();
     s.mailAccounts = s.mailAccounts.filter((x) => x.id !== id);
+    // 자동 전달 목록·기준 시각·지문에서도 뺀다. 전달하던 계정을 모두 지웠으면 끈다
+    const st = s.settings;
+    const ids = idList(st.mailForwardAccounts);
+    const since = idMap(st.mailForwardSince);
+    const fp = idMap(st.mailForwardFp);
+    const has = (o) => Object.prototype.hasOwnProperty.call(o, id);
+    if (ids.includes(id) || has(since) || has(fp)) {
+      const left = ids.filter((x) => x !== id);
+      const ns = { ...since };
+      const nf = { ...fp };
+      delete ns[id];
+      delete nf[id];
+      const p = { mailForwardAccounts: left, mailForwardSince: ns, mailForwardFp: nf };
+      if (!left.length && st.mailForwardOn === true) {
+        p.mailForwardOn = false;
+        p.mailForwardFp = {};
+        note('설정', '자동 전달 꺼짐 — 전달하던 계정을 모두 지워서');
+      }
+      s.settings = { ...st, ...p };
+    }
     save();
     return s.mailAccounts;
   },

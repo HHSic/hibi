@@ -50,7 +50,15 @@ function problemWith(account, msg) {
   return null;
 }
 
-function transportFor(account) {
+/**
+ * @param pool 연결 하나를 이어 쓴다 — 자동 전달(src/mailfwd.js)처럼 한 번에 여러 통을 보낼 때
+ */
+/**
+ * @param pool 연결 하나를 이어 쓴다 (자동 전달)
+ * @param logger nodemailer 의 기록을 받을 곳 — 자동 전달이 «원문을 서버에 끝까지 넘겼나»를 알아본다 (mailfwd wireLogger).
+ *   없으면 아무것도 남기지 않는다
+ */
+function transportFor(account, { pool = false, logger = null } = {}) {
   const { host, port, secure } = mail.smtpOf(account);
   return nodemailer.createTransport({
     host,
@@ -64,7 +72,10 @@ function transportFor(account) {
     connectionTimeout: SEND_TIMEOUT_MS,
     greetingTimeout: SEND_TIMEOUT_MS,
     socketTimeout: SEND_TIMEOUT_MS,
-    tls: { rejectUnauthorized: true }
+    tls: { rejectUnauthorized: true },
+    // 자동 전달은 한 번에 여러 통 — 통마다 다시 로그인하면 느리고, 서버가 «로그인 시도 과다»로 계정을 잠근다
+    ...(pool ? { pool: true, maxConnections: 1, maxMessages: 100 } : {}),
+    ...(logger ? { logger } : {})
   });
 }
 
@@ -325,4 +336,4 @@ function copyFrom(src) {
   };
 }
 
-module.exports = { sendMail, verify, appendToSent, draftFrom, copyFrom, addresses, looksLikeAddress, problemWith, tidyText, quoteHtmlOf };
+module.exports = { sendMail, verify, appendToSent, draftFrom, copyFrom, addresses, looksLikeAddress, problemWith, tidyText, quoteHtmlOf, transportFor };

@@ -54,7 +54,7 @@ function openCompose(payload, carried = []) {
     // 답장을 눌렀는데 아무 일도 안 일어나고 이유도 안 나온다 — 여기서 거절한다.
     // (이 서버는 보내는 데 수십 초가 걸려서 그 사이가 짧지 않다)
     if (sendingNow) {
-      return { ok: false, message: '쓰기 창이 메일을 보내는 중입니다 — 끝나면 다시 눌러주세요' };
+      return { ok: false, message: '쓰기 창이 보내는 중입니다 — 끝나면 다시 눌러주세요' };
     }
     // 창을 반드시 보이게 한 다음에 말을 건다.
     // focus()만으로는 최소화된 창이 안 올라온다 — 그러면 답장을 눌렀는데
@@ -110,7 +110,7 @@ function startCompose({ kind = 'new', accountId, source } = {}) {
   if (!asked && kind !== 'new') {
     evlog.log('메일', `쓰기 못 열음 · 계정 ${accountId}을 목록에서 못 찾음`
       + ` (쓸 수 있는 계정: ${accounts.map((a) => a.id).join(',') || '없음'})`);
-    return { ok: false, message: '이 메일을 받은 계정을 쓸 수 없습니다 (꺼져 있거나 지워졌습니다)' };
+    return { ok: false, message: '이 메일을 받은 계정을 쓸 수 없습니다 — 설정 › 메일을 확인하세요' };
   }
   // 이어쓰는 것은 원래 쓰던 계정으로 — 그 계정이 없어졌으면 첫 계정으로 놓아둔다
   const draftAcc = kind === 'new' && store.mailDraft
@@ -152,10 +152,12 @@ ipcMain.handle('compose:open', (_e, opts) => startCompose(opts || {}));
 
 // 본문에 박힌 그림은 «첨부»가 아니다 — 이미 본문(cid/data:)에 들어 있다.
 // 그것까지 다시 실으면 그림이 두 번(본문 한 번, 첨부 한 번) 나간다.
-// mailparser는 본문이 참조하는 조각에 related=true를 단다.
+// 무엇이 «첨부»인지는 부르는 쪽이 보기 창과 같은 판정(mail.js attachmentsForView / realAttachmentsOf)으로 골라 넘긴다.
+// 예전엔 여기서 따로 related·disposition inline 으로 걸렀는데, 그 기준이 보기 창과 달라서
+// 보기 창이 «첨부 1개 scan.pdf»라고 보여 준 Apple Mail 의 inline PDF 가 복사본에서 조용히 빠졌다 (실측 — 지어낸 메일).
+// 여기서는 실을 수 있는 것(이름·바이트가 있는 것)만 남긴다.
 function realAttachments(files) {
-  return (files || []).filter((a) => a && a.content && a.filename
-    && !a.related && a.contentDisposition !== 'inline');
+  return (files || []).filter((a) => a && a.content && a.filename);
 }
 
 /**
@@ -226,7 +228,8 @@ ipcMain.handle('mail:copy', (e) => {
   return startCopy({
     accountId: v.accountId,
     view: { subject: v.subject, to: v.to, cc: v.cc, text: v.text, html: v.html },
-    files: slot.files
+    // 보기 창이 «첨부»로 보여 준 것 그대로 — 본문 그림(inline)은 이미 본문에 들어 있다. 번호는 원래 첨부 번호다
+    files: (v.attachments || []).filter((a) => !a.inline).map((a) => slot.files[a.index])
   });
 });
 
@@ -252,9 +255,8 @@ ipcMain.handle('compose:ask', async (_e, kind) => {
       defaultId: 1,
       danger: false,
       title: '메일 쓰기',
-      message: '쓰던 글을 버리고 새로 여시겠습니까?',
-      detail: '임시 저장은 한 통뿐이라 새 글을 쓰기 시작하면 지금 글은 사라집니다.\n'
-        + '지금 글을 지키려면 «그만두기»를 누르고 먼저 보내거나 닫으세요.'
+      message: '쓰던 글을 버리고 새로 열까요?',
+      detail: '되돌릴 수 없습니다.'
     });
     return r === 0 ? 'discard' : 'cancel';
   }
@@ -264,7 +266,7 @@ ipcMain.handle('compose:ask', async (_e, kind) => {
       defaultId: 1,
       title: '새로 쓰기',
       message: '이어쓰던 글을 버릴까요?',
-      detail: '빈 메일로 시작합니다. 버린 글은 되돌릴 수 없습니다.'
+      detail: '되돌릴 수 없습니다.'
     });
     return r === 0 ? 'discard' : 'cancel';
   }
@@ -355,7 +357,7 @@ ipcMain.handle('compose:send', async (_e, msg) => {
       // 화면이 준 것은 «이 id를 보내달라»는 표시뿐이다. 실물은 메인에서 꺼낸다 —
       // 화면이 뚫려도 우리가 실어둔 것만 나간다.
       const f = carriedById.get(a.id);
-      if (!f) return { ok: false, message: '복사한 첨부를 찾지 못했습니다 (다시 열어주세요)' };
+      if (!f) return { ok: false, message: '복사한 첨부를 찾지 못했습니다 — 다시 열어주세요' };
       outAtts.push({ filename: f.filename, content: f.content });
       bytes += f.size || (f.content ? f.content.length : 0);
     } else {

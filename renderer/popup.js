@@ -83,6 +83,10 @@ function drawDialog(d) {
     box.append(s);
   }
 
+  // 뜬 직후의 마우스 클릭은 답이 아니다 — 스위치를 두 번 누르면 두 번째 클릭이 막 뜬 창의 빨간 단추에 떨어진다.
+  // 키보드로 누른 것(detail 0)은 받는다 — 초점은 이미 «그만두기»에 있다
+  const armUntil = Number(d.armMs) > 0 ? performance.now() + Number(d.armMs) : 0;
+
   const row = document.createElement('div');
   row.className = 'row';
   // 버튼 순서는 부르는 쪽이 준 그대로다 — 답도 그 자리 번호로 돌려준다.
@@ -95,7 +99,9 @@ function drawDialog(d) {
     // 원래 번호 — 화면 순서는 뒤집혀 있으므로 초점을 줄 단추를 이 번호로 찾는다
     btn.dataset.i = String(b.i);
     btn.textContent = b.label;
-    btn.onclick = () => answer(b.i);
+    btn.onclick = (e) => { if (e.detail > 0 && performance.now() < armUntil) return; answer(b.i); };
+    // 막힌 클릭이 초점까지 옮기면 그 뒤 Enter 가 빨간 단추로 간다 — 그동안은 누르기(mousedown)로 초점을 옮기지 않는다
+    btn.onmousedown = (e) => { if (performance.now() < armUntil) e.preventDefault(); };
     row.append(btn);
   }
   box.append(row);

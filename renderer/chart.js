@@ -111,7 +111,7 @@ function modes() {
     // 봉을 그리기엔 촘촘해 선으로 넘어간 상태면, 눌러도 선이 나온다는 것을 미리 알린다
     if (m.id === 'candle' && tooDense) {
       b.disabled = true;
-      b.title = '이 기간은 봉이 너무 촘촘해 선으로 보여줍니다';
+      b.title = '봉이 촘촘해 선으로 표시';
     }
     b.onclick = () => {
       mode = m.id;
@@ -476,7 +476,7 @@ function draw(pts) {
 
   // 확대 중임을 알리고, 되돌리는 법을 적어 둔다 — 안 그러면 «왜 일부만 보이지»가 된다
   $('foot').textContent = zoomed
-    ? `확대 중 · ${win.length}/${pts.length}개 · 휠로 조절, 끌어서 이동, 두 번 눌러 되돌리기`
+    ? `확대 중 · ${win.length}/${pts.length}개 · 두 번 눌러 되돌리기`
     : '휠로 확대 · 끌어서 이동';
 
   summary(view);

@@ -11,12 +11,12 @@
 //   · 메인이 답하기 전에는 감춰 두고, st.tidy 가 없는 답(옛 메인)이면 계속 감춘다
 //   · 스위치는 role=switch·aria-checked·aria-describedby, 기간은 role=group(«옮기는 때») 안의 바로·7·30·90일, 기본 30일(aria-pressed)
 //   · «바로»(0)를 고르면 뒤 줄·설명이 «읽은 메일은 새 메일 확인 때마다»로 바뀌고(주기는 메인이 준 everyMin 으로),
-//     상태 줄은 «안 읽은 n통은 읽을 때까지 남김»을 말한다 — 지금 설정이 «바로»일 때만. 일부러 남긴 것(spared)도 사실로 적는다.
-//     «바로»로·«바로»에서 바꾸기는 묻는 일이라 «확인하는 중…»을 보인다. 휴지통 자동 비우기 안내는 늘 보인다
+//     상태 줄은 «안 읽은 n통 남김»을 말한다 — 지금 설정이 «바로»일 때만. 일부러 남긴 것(spared)도 사실로 적는다.
+//     «바로»로·«바로»에서 바꾸기는 묻는 일이라 «옮길 메일을 세는 중…»을 보인다. 휴지통 자동 비우기 안내는 늘 보인다
 //   · 자동 백업이 꺼졌거나 폴더가 없으면 스위치가 aria-disabled 이고 상태 줄에 까닭이 보이며, 눌러도 부탁하지 않는다
 //   · 기간 줄이기의 답을 기다리는 동안(메인이 세는 최대 20초)에도 켜진 스위치로 끌 수 있다
 //   · 막힌 기간 단추는 마우스를 올려도 눌릴 것처럼 반응하지 않는다
-//   · 누르면 mailTidySet({on}) / ({days}) — 켜기·기간 줄이기는 답을 기다리는 동안 «확인하는 중…»을 보이고,
+//   · 누르면 mailTidySet({on}) / ({days}) — 켜기·기간 줄이기는 답을 기다리는 동안 «옮길 메일을 세는 중…»을 보이고,
 //     기다리는 동안 또 눌러도 다시 부탁하지 않는다. 그만두면 꺼진 채, 받아들이면 켜진다. 같은 기간은 부탁하지 않는다
 //   · 상태 줄 글 모양 (도는 중 · 아직 안 돔 · 결과 · 쉬는 중), 응답이 없으면 «응답이 없습니다»
 //   · «백업 시작»이 기다리는 중이면 그 한 줄을 보인다. 답이 null 이어도 오류가 없다
@@ -161,6 +161,7 @@ app.whenReady().then(async () => {
       days: [...document.querySelectorAll('#tidy-days button')].map((b) => ({ d: b.dataset.days, t: b.textContent,
         pressed: b.getAttribute('aria-pressed'), ghost: b.classList.contains('ghost'), disabled: b.getAttribute('aria-disabled') })),
       hint: $('tidy-hint').textContent,
+      rowSub: $('tidy-row').querySelector('.nm i').textContent,
       state: vis($('tidy-state')) ? $('tidy-state').textContent : null,
       msg: msg.classList.contains('show')
         ? { text: msg.textContent, kind: ['good', 'bad', 'wait'].find((k) => msg.classList.contains(k)) || '' } : null,
@@ -201,8 +202,11 @@ app.whenReady().then(async () => {
   ok(u2.notes.some((t) => /휴지통도 서버 용량에 들어가는/.test(t) && /휴지통 자동 비우기/.test(t)), '휴지통도 용량에 든다 — 웹메일에서 자동 비우기를 켜라는 안내가 보인다', u2.notes);
   ok(JSON.stringify(pressed(u2)) === '["30"]' && u2.days.every((d) => d.ghost === (d.d !== '30')),
     '기본은 30일 — aria-pressed 와 칠이 같다', u2.days);
-  ok(/받은 지 30일 지난/.test(u2.hint) && /휴지통/.test(u2.hint) && /별표/.test(u2.hint) && /모든 메일 계정/.test(u2.hint),
-    '설명에 기간·휴지통·별표·모든 계정이 들어 있다', u2.hint);
+  ok(/읽음과 상관없이 옮깁니다/.test(u2.hint) && /웹메일·폰에서도 사라지고/.test(u2.hint) && /받은 지 30일 지난 메일만/.test(u2.tail),
+    '설명에 읽음과 상관없음·웹메일·폰에서도 사라짐이 들어 있다 — 기간은 뒤 줄이 말한다', { hint: u2.hint, tail: u2.tail });
+  ok(/서버 휴지통으로 옮깁니다/.test(u2.rowSub), '어디로 옮기는지(서버 휴지통)는 줄 이름이 말한다 — 설명은 되풀이하지 않는다', u2.rowSub);
+  ok(/별표/.test(u2.hint), '설명에 별표(남기는 메일)가 들어 있다', u2.hint);
+  ok(/모든 (메일 )?계정/.test(u2.hint), '설명에 모든 계정(범위)이 들어 있다', u2.hint);
   ok(u2.state === null && u2.msg === null && u2.msgRole === 'status', '꺼져 있고 쓸 수 있으면 상태 줄은 감춘다. 알림 자리는 role=status', u2);
 
   console.log('\n[가] 쓸 수 없을 때');
@@ -215,8 +219,8 @@ app.whenReady().then(async () => {
   ok(u3.days.every((d) => d.disabled === 'false'), '기간은 꺼진 채로도 고를 수 있다 (켤 때 쓸 값)', u3.days);
   const u4 = await show({ ready: false, why: '저장할 폴더를 먼저 골라야 쓸 수 있습니다.' });
   ok(u4.disabled === 'true' && u4.state === '저장할 폴더를 먼저 골라야 쓸 수 있습니다.', '폴더가 없으면 막히고 까닭이 보인다', u4);
-  const u5 = await show({ on: true, ready: false, why: '위쪽 «메일 확인하기»가 꺼져 있어 쓸 수 없습니다.' });
-  ok(u5.disabled === 'false' && u5.checked === 'true' && u5.state === '쉬는 중 — 위쪽 «메일 확인하기»가 꺼져 있어 쓸 수 없습니다.',
+  const u5 = await show({ on: true, ready: false, why: '«메일 확인하기»를 켜야 쓸 수 있습니다.' });
+  ok(u5.disabled === 'false' && u5.checked === 'true' && u5.state === '쉬는 중 — «메일 확인하기»를 켜야 쓸 수 있습니다.',
     '켜진 채 조건이 모자라면 «쉬는 중» — 그래도 끌 수는 있다', u5);
   const u6 = await show({ asking: true });
   ok(u6.disabled === 'true' && u6.busy === 'true' && u6.days.every((d) => d.disabled === 'true'),
@@ -232,18 +236,18 @@ app.whenReady().then(async () => {
   ok(statusCalls > n0, '도는 동안은 2초마다 다시 읽는다', { before: n0, after: statusCalls });
   await show({ on: true });
   // 그리는 사이 이미 떠난 2초 폴링이 «도는 중»을 한 번 더 그릴 수 있다 — 그 폴링이 끝나기를 기다린 뒤 잰다
-  const u9 = await until(async () => { const u = await ui(); return u.state === '켜져 있습니다. 자동 백업이 한 번 돈 뒤 정리합니다.' ? u : null; }, 4000);
+  const u9 = await until(async () => { const u = await ui(); return u.state === '켜짐 · 다음 자동 백업 뒤 정리' ? u : null; }, 4000);
   ok(!!u9, '켰지만 아직 안 돔', u9 && u9.state);
   await sleep(2200);
   const n1 = statusCalls;
   await sleep(2600);
   ok(statusCalls === n1, '끝나면 2초 폴링을 멈춘다 (자동 백업이 꺼진 답이라 더 묻지 않는다)', { before: n1, after: statusCalls });
   const u10 = await show({ on: true, at: Date.now() - 3 * 3600_000 - 60_000, moved: 12, kept: 3, unverified: 3 });
-  ok(u10.state === '서버 정리 · 3시간 전 · 12통 휴지통으로 · 확인 안 된 3통은 남김', '결과 — 몇 시간 전·옮긴 수·확인 안 돼 남긴 수', u10.state);
+  ok(u10.state === '서버 정리 · 3시간 전 · 12통 휴지통으로 · 확인 안 된 3통 남김', '결과 — 몇 시간 전·옮긴 수·확인 안 돼 남긴 수', u10.state);
   const u11 = await show({ on: true, at: Date.now() - 2 * 86_400_000 - 60_000, moved: 0, kept: 7, unsaved: 5, unverified: 2,
     more: true, skippedBoxes: 1, error: '계정 1: 연결 실패' });
-  ok(u11.state === '서버 정리 · 2일 전 · 0통 휴지통으로 · 저장 안 된 5통은 남김(«백업 시작»으로 저장하면 대상)'
-    + ' · 확인 안 된 2통은 남김 · 남은 것은 다음에 이어서 · 폴더 1곳은 확인할 수 없어 건너뜀 · 실패: 계정 1: 연결 실패',
+  ok(u11.state === '서버 정리 · 2일 전 · 0통 휴지통으로 · 저장 안 된 5통 남김(«백업 시작» 필요)'
+    + ' · 확인 안 된 2통 남김 · 나머지는 다음에 · 폴더 1곳 건너뜀 · 실패: 계정 1: 연결 실패',
   '결과 — 저장 안 됨·확인 안 됨·남은 것·건너뛴 폴더·실패를 다 적는다', u11.state);
   const u12 = await show({ on: false, at: Date.now() - 60_000, moved: 4 });
   ok(u12.state === null, '꺼져 있으면 지난 결과를 보이지 않는다', u12.state);
@@ -253,8 +257,8 @@ app.whenReady().then(async () => {
   setGate = gate();
   await clickSwitch();
   const w1 = await until(async () => { const u = await ui(); return u.msg && u.msg.kind === 'wait' ? u : null; }, 2000);
-  ok(!!w1 && /^확인하는 중…/.test(w1.msg.text) && w1.busy === 'true' && w1.disabled === 'true' && w1.checked === 'false',
-    '켜기를 누르면 미리 칠하지 않고 «확인하는 중…»을 보이며 스위치를 잠근다', w1);
+  ok(!!w1 && /^옮길 메일을 세는 중…/.test(w1.msg.text) && w1.busy === 'true' && w1.disabled === 'true' && w1.checked === 'false',
+    '켜기를 누르면 미리 칠하지 않고 «옮길 메일을 세는 중…»을 보이며 스위치를 잠근다', w1);
   await clickSwitch();
   await sleep(100);
   ok(setCalls.length === 1 && JSON.stringify(setCalls[0]) === '{"on":true}', '기다리는 동안 또 눌러도 다시 부탁하지 않는다 — 부탁은 {on:true} 하나', setCalls);
@@ -265,7 +269,7 @@ app.whenReady().then(async () => {
   ok(!!c1 && c1.checked === 'false' && !c1.on && c1.busy === 'false' && c1.disabled === 'false' && c1.msg.kind === 'wait',
     '확인 창에서 그만두면 꺼진 채 «그만뒀습니다»', c1);
   setReply = () => { fakeTidy.on = true; return { ...fakeStatus(), tidy: { ...fakeTidy,
-    message: '켰습니다 — 1분쯤 뒤부터 받은 지 30일 지난 메일을 옮깁니다. 그 전에 끄면 아무것도 옮기지 않습니다.', messageKind: 'good' } }; };
+    message: '켰습니다 — 1분쯤 뒤부터 옮깁니다. 그 전에 끄면 옮기지 않습니다.', messageKind: 'good' } }; };
   await clickSwitch();
   const c2 = await until(async () => { const u = await ui(); return u.checked === 'true' ? u : null; });
   ok(!!c2 && c2.on && c2.msg && c2.msg.kind === 'good' && /^켰습니다/.test(c2.msg.text) && /1분쯤 뒤/.test(c2.msg.text),
@@ -280,19 +284,19 @@ app.whenReady().then(async () => {
   await clickDays(90);
   await sleep(150);
   const d0 = await ui();
-  ok(!(d0.msg && /확인하는 중/.test(d0.msg.text)) && d0.days.every((d) => d.disabled === 'true'),
-    '켜진 채 기간 늘리기(30→90)는 묻지 않으므로 «확인하는 중…»을 보이지 않는다. 답을 기다리는 동안 단추는 잠근다', d0);
+  ok(!(d0.msg && /옮길 메일을 세는 중/.test(d0.msg.text)) && d0.days.every((d) => d.disabled === 'true'),
+    '켜진 채 기간 늘리기(30→90)는 묻지 않으므로 «옮길 메일을 세는 중…»을 보이지 않는다. 답을 기다리는 동안 단추는 잠근다', d0);
   setGate.open();
   setGate = null;
   const d1 = await until(async () => { const u = await ui(); return JSON.stringify(pressed(u)) === '["90"]' ? u : null; });
   const focus90 = await js(`document.activeElement === document.querySelector('#tidy-days [data-days="90"]')`);
-  ok(!!d1 && /90일 지난/.test(d1.hint) && d1.msg && d1.msg.kind === 'good' && focus90,
-    '90일이 눌리고 설명이 바뀌고, 누른 단추에 초점이 남는다 (단추를 다시 만들지 않는다)', { d1, focus90 });
+  ok(!!d1 && /90일 지난/.test(d1.tail) && d1.msg && d1.msg.kind === 'good' && focus90,
+    '90일이 눌리고 뒤 줄이 바뀌고, 누른 단추에 초점이 남는다 (단추를 다시 만들지 않는다)', { d1, focus90 });
   ok(JSON.stringify(setCalls[2]) === '{"days":90}', '부탁은 mailTidySet({days:90})', setCalls[2]);
   setGate = gate();
   await clickDays(7);
-  const d2 = await until(async () => { const u = await ui(); return u.msg && /확인하는 중/.test(u.msg.text) ? u : null; }, 2000);
-  ok(!!d2, '켜진 채 기간 줄이기(90→7)는 묻는 일이라 «확인하는 중…»을 보인다', d2);
+  const d2 = await until(async () => { const u = await ui(); return u.msg && /옮길 메일을 세는 중/.test(u.msg.text) ? u : null; }, 2000);
+  ok(!!d2, '켜진 채 기간 줄이기(90→7)는 묻는 일이라 «옮길 메일을 세는 중…»을 보인다', d2);
   setReply = () => ({ ...fakeStatus(), tidy: { ...fakeTidy, message: '그만뒀습니다 — 서버 메일은 그대로입니다.', messageKind: 'wait' } });
   setGate.open();
   setGate = null;
@@ -319,14 +323,14 @@ app.whenReady().then(async () => {
   setReply = (req) => {
     if (req && req.on === false) {
       fakeTidy.on = false;
-      return { ...fakeStatus(), tidy: { ...fakeTidy, message: '껐습니다 — 서버 메일을 더 옮기지 않습니다.', messageKind: 'good' } };
+      return { ...fakeStatus(), tidy: { ...fakeTidy, message: '껐습니다.', messageKind: 'good' } };
     }
     fakeTidy.days = req.days;
     return { ...fakeStatus(), tidy: { ...fakeTidy, message: `꺼져 있어 기간만 ${req.days}일로 바꿨습니다.`, messageKind: 'good' } };
   };
   const nk = setCalls.length;
   await clickDays(7);
-  const k0 = await until(async () => { const u = await ui(); return u.msg && /확인하는 중/.test(u.msg.text) ? u : null; }, 2000);
+  const k0 = await until(async () => { const u = await ui(); return u.msg && /옮길 메일을 세는 중/.test(u.msg.text) ? u : null; }, 2000);
   ok(!!k0 && k0.checked === 'true' && k0.disabled === 'false' && k0.days.every((d) => d.disabled === 'true'),
     '기간 줄이기의 답을 기다리는 동안에도 켜진 스위치는 누를 수 있다 (기간 단추는 잠김)', k0);
   await clickSwitch();
@@ -348,11 +352,11 @@ app.whenReady().then(async () => {
 
   console.log('\n[가] 끄기·응답 없음');
   setGate = gate();
-  setReply = () => { fakeTidy.on = false; return { ...fakeStatus(), tidy: { ...fakeTidy, message: '껐습니다 — 서버 메일을 더 옮기지 않습니다.', messageKind: 'good' } }; };
+  setReply = () => { fakeTidy.on = false; return { ...fakeStatus(), tidy: { ...fakeTidy, message: '껐습니다.', messageKind: 'good' } }; };
   await clickSwitch();
   await sleep(150);
   const o0 = await ui();
-  ok(!(o0.msg && /확인하는 중/.test(o0.msg.text)) && o0.checked === 'true', '끄기는 묻지 않으므로 «확인하는 중…» 없이 답을 기다린다', o0);
+  ok(!(o0.msg && /옮길 메일을 세는 중/.test(o0.msg.text)) && o0.checked === 'true', '끄기는 묻지 않으므로 «옮길 메일을 세는 중…» 없이 답을 기다린다', o0);
   setGate.open();
   setGate = null;
   const o1 = await until(async () => { const u = await ui(); return u.checked === 'false' ? u : null; });
@@ -372,42 +376,44 @@ app.whenReady().then(async () => {
   const z0 = await show({ days: 0 });
   ok(JSON.stringify(pressed(z0)) === '["0"]' && z0.days.every((d) => d.ghost === (d.d !== '0')) && z0.tail === '읽은 메일은 새 메일 확인 때마다',
     '0일이면 «바로»가 눌리고 뒤 줄이 «읽은 메일은 새 메일 확인 때마다» — «받은 지 0일»·«저장되자마자»라고 쓰지 않는다', { days: z0.days, tail: z0.tail });
-  ok(/«읽은» 메일을 새 메일 확인 때마다 서버의/.test(z0.hint) && /안 읽은 메일은 읽을 때까지 서버에 남아/.test(z0.hint) && /창을 닫은 뒤에 옮깁니다/.test(z0.hint)
-    && /휴지통에서 되찾을 수/.test(z0.hint) && /별표/.test(z0.hint) && /모든 메일 계정/.test(z0.hint) && !/0일/.test(z0.hint + z0.tail)
+  ok(/읽은 메일과 보낸 메일을 새 메일 확인 때마다 옮깁니다/.test(z0.hint) && /안 읽은·별표·중요 메일은 남깁니다/.test(z0.hint)
+    && /웹메일·폰에서도 사라지고/.test(z0.hint) && !/0일/.test(z0.hint + z0.tail)
     && !/몇 분 안에/.test(z0.hint) && !/분마다/.test(z0.hint),
-  '설명이 «바로»의 글로 바뀐다 — 읽은 것만 메일 확인 때마다 · 안 읽은 것은 남음 · 보고 있는 메일은 닫은 뒤 · 되찾기 · 별표 (주기를 모르면 숫자 없이)', z0.hint);
-  ok(/열어 보기만 해서는 읽음이 되지 않습니다/.test(z0.hint) && /보기 창이나 위젯 목록에서 읽음으로 표시하거나/.test(z0.hint)
-    && /보낸 메일은 늘 읽은 것으로 쳐서/.test(z0.hint) && /보낸편지함도 비게/.test(z0.hint) && /이 앱의 메일 목록에서도 사라지지만/.test(z0.hint),
-  '…이 앱에서 열기만 해서는 읽음이 아니라는 것 · 보낸 메일은 곧 옮겨 보낸편지함도 빈다는 것 · 이 앱의 목록에서도 사라진다는 것을 말한다', z0.hint);
-  ok(/메일 회사에 따라 일정 기간이 지나면 휴지통이 비워지기도 합니다/.test(z0.hint) && !/정한 기간이 지나면 비워집니다/.test(z0.hint)
-    && /Gmail이 저절로 붙인 중요 표시/.test(z0.hint), '…휴지통이 저절로 비워진다고 단정하지 않는다 (아래 자동 비우기 안내와 맞게). Gmail 자동 중요 표시도 남긴다고', z0.hint);
+  '설명이 «바로»의 글로 바뀐다 — 읽은 것만 메일 확인 때마다 · 안 읽은 것은 남음 · 웹메일·폰에서도 사라짐 (주기를 모르면 숫자 없이)', z0.hint);
+  ok(!/열기만/.test(z0.hint), '…열기만 한 메일 이야기는 확인 창에만 둔다 — 설정 설명은 짧게', z0.hint);
+  ok(/서버 휴지통으로 옮깁니다/.test(z0.rowSub), '…서버 휴지통으로 옮긴다는 것은 줄 이름이 말한다', z0.rowSub);
+  ok(/별표/.test(z0.hint), '…별표(남기는 메일)를 말한다', z0.hint);
+  ok(/모든 (메일 )?계정/.test(z0.hint), '…모든 계정에 적용된다고 말한다', z0.hint);
+  ok(/보낸 메일을/.test(z0.hint), '…보낸 메일도 곧 옮긴다(보낸편지함도 빈다)는 것을 말한다', z0.hint);
+  ok(!/정한 기간이 지나면 비워집니다/.test(z0.hint) && (!/되찾/.test(z0.hint) || /휴지통이 비워지/.test(z0.hint)),
+    '…휴지통이 저절로 비워진다고 단정하지 않는다 — 되찾을 수 있다고 하면 휴지통이 비워지면 못 되찾는다는 것도 (아래 자동 비우기 안내와 맞게)', z0.hint);
   ok(z0.notes.some((t) => /휴지통 자동 비우기/.test(t)), '…휴지통 자동 비우기 안내는 «바로»에서도 보인다', z0.notes);
   const z0b = await show({ days: 0, everyMin: 30 });
-  ok(/새 메일 확인 때마다\(지금은 약 30분마다\)/.test(z0b.hint), '메인이 준 실제 주기(everyMin)로 말한다 — «몇 분 안에»가 아니라 «약 30분마다»', z0b.hint);
+  ok(/보낸 메일을 약 30분마다 옮깁니다/.test(z0b.hint), '메인이 준 실제 주기(everyMin)로 말한다 — «몇 분 안에»가 아니라 «약 30분마다»', z0b.hint);
   const z1 = await show({ days: 7 });
-  ok(JSON.stringify(pressed(z1)) === '["7"]' && z1.tail === '받은 지 7일 지난 메일만' && /받은 지 7일 지난/.test(z1.hint) && !/확인 때마다/.test(z1.hint),
+  ok(JSON.stringify(pressed(z1)) === '["7"]' && z1.tail === '받은 지 7일 지난 메일만' && /읽음과 상관없이/.test(z1.hint) && !/확인 때마다/.test(z1.hint),
     '7일로 돌아오면 뒤 줄·설명도 기간 글로 돌아온다', { tail: z1.tail, hint: z1.hint });
   const z2 = await show({ on: true, days: 0, at: Date.now() - 2 * 60_000 - 5000, moved: 3, unread: 2 });
-  ok(z2.state === '서버 정리 · 2분 전 · 3통 휴지통으로 · 안 읽은 2통은 읽을 때까지 남김',
-    '«바로» 상태 줄 — 안 읽어 남긴 것은 경고가 아니라 «읽을 때까지 남김» (읽어도 남기는 메일이 있어 «읽으면 옮김»이라 약속하지 않는다)', z2.state);
+  ok(z2.state === '서버 정리 · 2분 전 · 3통 휴지통으로 · 안 읽은 2통 남김',
+    '«바로» 상태 줄 — 안 읽어 남긴 것은 경고가 아니라 «남김» (읽어도 남기는 메일이 있어 «읽으면 옮김»이라 약속하지 않는다)', z2.state);
   const z2b = await show({ on: true, days: 30, at: Date.now() - 2 * 60_000 - 5000, moved: 0, unread: 2 });
   ok(z2b.state === '서버 정리 · 2분 전 · 0통 휴지통으로',
     '«바로»에서 30일로 바꾼 뒤 남은 지난 «바로» 결과의 unread 는 말하지 않는다 (30일 정리는 안 읽은 메일도 옮긴다)', z2b.state);
   const z2c = await show({ on: true, days: 0, at: Date.now() - 2 * 60_000 - 5000, moved: 1, spared: 4 });
-  ok(z2c.state === '서버 정리 · 2분 전 · 1통 휴지통으로 · 별표·중요 표시 등 4통은 남김',
+  ok(z2c.state === '서버 정리 · 2분 전 · 1통 휴지통으로 · 별표·중요 등 4통 남김',
     '일부러 남긴 것(spared — Gmail 자동 중요 표시 등)도 사실로 적는다 — 읽은 메일이 까닭 없이 남아 보이지 않게', z2c.state);
   const z3 = await show({ on: true, days: 0, at: Date.now() - 60_000, moved: 0, unread: 0, kept: 1, unsaved: 1 });
-  ok(z3.state === '서버 정리 · 1분 전 · 0통 휴지통으로 · 저장 안 된 1통은 남김(«백업 시작»으로 저장하면 대상)',
+  ok(z3.state === '서버 정리 · 1분 전 · 0통 휴지통으로 · 저장 안 된 1통 남김(«백업 시작» 필요)',
     '…안 읽은 것·남긴 것이 없으면 그 말은 없다. 저장 안 된 것은 지금처럼', z3.state);
-  // 켜진 채 30 → 바로: 묻는 일이다 — «확인하는 중…», 미리 칠하지 않는다
+  // 켜진 채 30 → 바로: 묻는 일이다 — «옮길 메일을 세는 중…», 미리 칠하지 않는다
   await show({ on: true, days: 30 });
   setReply = (req) => { fakeTidy.days = req.days; return { ...fakeStatus(), tidy: { ...fakeTidy, message: '바꿨습니다', messageKind: 'good' } }; };
   setGate = gate();
   const nz = setCalls.length;
   await clickDays(0);
-  const z4 = await until(async () => { const u = await ui(); return u.msg && /확인하는 중/.test(u.msg.text) ? u : null; }, 2000);
+  const z4 = await until(async () => { const u = await ui(); return u.msg && /옮길 메일을 세는 중/.test(u.msg.text) ? u : null; }, 2000);
   ok(!!z4 && JSON.stringify(pressed(z4)) === '["30"]' && JSON.stringify(setCalls[nz]) === '{"days":0}',
-    '켜진 채 30→바로는 «확인하는 중…» — 부탁은 {days:0} (0이 빠지거나 30으로 바뀌지 않는다), 답이 오기 전에는 30일 그대로', { pressed: z4 && pressed(z4), sent: setCalls.slice(nz) });
+    '켜진 채 30→바로는 «옮길 메일을 세는 중…» — 부탁은 {days:0} (0이 빠지거나 30으로 바뀌지 않는다), 답이 오기 전에는 30일 그대로', { pressed: z4 && pressed(z4), sent: setCalls.slice(nz) });
   setGate.open();
   setGate = null;
   const z5 = await until(async () => { const u = await ui(); return JSON.stringify(pressed(u)) === '["0"]' ? u : null; });
@@ -415,8 +421,8 @@ app.whenReady().then(async () => {
   // 바로 → 30 도 묻는다 (안 읽은 오래된 메일까지 옮기게 되므로)
   setGate = gate();
   await clickDays(30);
-  const z6 = await until(async () => { const u = await ui(); return u.msg && /확인하는 중/.test(u.msg.text) ? u : null; }, 2000);
-  ok(!!z6 && JSON.stringify(setCalls[setCalls.length - 1]) === '{"days":30}', '켜진 채 바로→30 도 «확인하는 중…»', setCalls.slice(nz));
+  const z6 = await until(async () => { const u = await ui(); return u.msg && /옮길 메일을 세는 중/.test(u.msg.text) ? u : null; }, 2000);
+  ok(!!z6 && JSON.stringify(setCalls[setCalls.length - 1]) === '{"days":30}', '켜진 채 바로→30 도 «옮길 메일을 세는 중…»', setCalls.slice(nz));
   setGate.open();
   setGate = null;
   await until(async () => JSON.stringify(pressed(await ui())) === '["30"]');
@@ -425,13 +431,13 @@ app.whenReady().then(async () => {
   await clickDays(0);
   await sleep(150);
   const z7 = await ui();
-  ok(!(z7.msg && /확인하는 중/.test(z7.msg.text)) && JSON.stringify(setCalls[setCalls.length - 1]) === '{"days":0}',
+  ok(!(z7.msg && /옮길 메일을 세는 중/.test(z7.msg.text)) && JSON.stringify(setCalls[setCalls.length - 1]) === '{"days":0}',
     '꺼진 채 «바로»를 고르는 것은 묻지 않는다 (켤 때 묻는다)', z7.msg);
   await show({});
 
   console.log('\n[가] 백업 줄·메일 확인하기·setApp');
-  const b1 = await show({}, { running: true, waiting: '서버 정리를 멈추는 중 — 끝나면 바로 백업을 시작합니다' });
-  ok(b1.backupState === '서버 정리를 멈추는 중 — 끝나면 바로 백업을 시작합니다', '«백업 시작»이 기다리는 중이면 그 한 줄을 보인다', b1.backupState);
+  const b1 = await show({}, { running: true, waiting: '서버 정리를 멈추는 중 · 끝나면 백업 시작' });
+  ok(b1.backupState === '서버 정리를 멈추는 중 · 끝나면 백업 시작', '«백업 시작»이 기다리는 중이면 그 한 줄을 보인다', b1.backupState);
   await show({});
   // 도는 중이던 800ms 폴링이 한 번 더 그릴 수 있다 — 가라앉기를 기다린다
   await sleep(2000);
@@ -597,7 +603,7 @@ app.whenReady().then(async () => {
     '«바로»로 바꾸기 → 메인 설정·디스크까지 0, 화면도 «바로» (30으로 바뀌지 않는다)', { days: store.settings.mailTidyDays, sent: sentZ, msg: b2z && b2z.msg });
     const stZ = await js('window.nunsseom.mailBackupStatus()');
     ok(stZ.tidy.days === 0 && stZ.tidy.unread === 0, '메인 상태도 days 0 (unread 키가 있다)', { days: stZ.tidy.days, unread: stZ.tidy.unread });
-    ok(stZ.tidy.everyMin === 10 && b2z && /새 메일 확인 때마다\(지금은 약 10분마다\)/.test(b2z.hint),
+    ok(stZ.tidy.everyMin === 10 && b2z && /보낸 메일을 약 10분마다 옮깁니다/.test(b2z.hint),
       '설명의 주기는 메인이 메일 확인 주기(기본 10분)로 계산해 준 값이다', { everyMin: stZ.tidy.everyMin, hint: b2z && b2z.hint });
     const nb = asks.length;
     answer = 0;
@@ -648,7 +654,7 @@ app.whenReady().then(async () => {
     for (const type of ['keyDown', 'char', 'keyUp']) pop.webContents.sendInputEvent({ type, keyCode: type === 'char' ? '\r' : 'Enter' });
     return until(() => pjs('window.__pick.length ? window.__pick.slice() : null'), 2000);
   };
-  const tidyAsk = { kind: 'dialog', title: '서버 정리 켜기', message: '지금 기준으로 약 2통을 서버의 휴지통으로 옮깁니다.',
+  const tidyAsk = { kind: 'dialog', title: '서버 정리 켜기', message: '받은 지 30일 지난 메일 약 2통을 서버 휴지통으로 옮깁니다.',
     detail: '시험', buttons: ['서버 정리 켜기', '그만두기'], defaultId: 0, danger: true, focusId: 1 };
   const p1 = await openPopup(tidyAsk);
   const red = p1 && p1.cls.find(([t]) => t === '서버 정리 켜기');

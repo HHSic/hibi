@@ -56,7 +56,7 @@ function init({ onUpdate } = {}) {
   if (onUpdate) onStatus = onUpdate;
 
   if (!app.isPackaged) {
-    setState({ status: 'unsupported', message: '개발 모드에서는 업데이트를 확인하지 않습니다' });
+    setState({ status: 'unsupported', message: '개발 모드 · 업데이트 확인 안 함' });
     return;
   }
 
@@ -86,7 +86,7 @@ function init({ onUpdate } = {}) {
   }));
   autoUpdater.on('update-downloaded', (info) => setState({
     status: 'ready', newVersion: info.version, progress: 100,
-    message: `${info.version} 준비됨 — 다시 시작하면 적용됩니다`
+    message: `${info.version} 준비됨 · 다시 시작하면 적용`
   }));
   autoUpdater.on('error', (err) => setState({
     status: 'error', message: `확인 실패: ${String(err && err.message || err).slice(0, 120)}`

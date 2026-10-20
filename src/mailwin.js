@@ -47,8 +47,8 @@ async function doTrash(msg, parent) {
     danger: true,          // 되돌릴 수 있지만 «치우는» 일이라 색으로 알린다
     title: '휴지통으로 옮기기',
     message: String(msg.subject || '(제목 없음)').slice(0, 60),
-    detail: '서버의 휴지통으로 옮깁니다 — 웹메일에서도 받은편지함에서 사라집니다.\n'
-      + '완전히 지우는 것이 아니라, 휴지통에서 되찾을 수 있습니다.'
+    detail: '서버 휴지통으로 옮깁니다 — 웹메일·폰에서도 사라집니다.\n'
+      + '휴지통에서 되찾을 수 있습니다.'
   });
   if (r0 !== 0) return { moved: false, cancelled: true };
 
@@ -189,16 +189,16 @@ function openMailView(msg) {
         // Gmail 은 같은 메일이 라벨 폴더에 다른 UID 로도 있다 — 서버 정리가 Message-ID 로도 알아보게
         slot.msg.messageId = String(forView.messageId || '');
         slot.files = m.attachments || [];
-        slot.payload = {
-          ...forView,
+        // 화면에 넘길 꼴은 mail.viewPayload 하나로 만든다 — 원문 버퍼와 본문 그림 번호(shown·missed·twins)를 떼고,
+        // 그 번호로 «첨부»와 «본문 그림»을 가른다 (mail.js attachmentsForView). 창 없는 시험이 같은 함수를 잰다
+        slot.payload = mail.viewPayload(m, {
           accountId: acc.id,
           // 내가 쓴 메일이면 «답장»을 감춘다 — 나에게 답장이 가는 건 뜻이 없다
           fromSelf: !!msg.fromSelf,
           // 방금 바꿔둔 값이 있으면 그것이 먼저다. 서버는 아직 옷 값을 말할 수 있는데,
           // 그걸 그대로 보여주면 «분명히 읽음으로 바꾸었는데 다시 열면 안 읽음»이 된다.
-          seen: host.seenMarks.seenOf({ accountId: acc.id, mailbox: forView.mailbox, uid: msg.uid }, forView.seen),
-          attachments: mail.attachmentsForView(slot.files)
-        };
+          seen: host.seenMarks.seenOf({ accountId: acc.id, mailbox: forView.mailbox, uid: msg.uid }, forView.seen)
+        });
         host.refreshMail();
       })
       .catch((e) => {
@@ -269,10 +269,12 @@ ipcMain.handle('mail:save-attachment', async (e, index) => {
   // 첫 창의 «첨부 저장»이 엉뚱한 파일을 내놓는다.
   const slot = slotOf(e);
   const a = slot && slot.files[index];
-  if (!a || !a.content) return { ok: false, message: '첨부를 찾을 수 없습니다' };
+  if (!a || !a.content) return { ok: false, message: '파일을 찾을 수 없습니다' };
+  // 본문 그림 칩의 «저장»도 이리 온다 — 본문 그림을 «첨부»라 부르지 않게 말을 고르고,
+  // 이름 없는 그림은 «그림N.확장자»로 (예전엔 확장자 없는 «첨부파일»이었다)
   const { canceled, filePath } = await dialog.showSaveDialog(slot.win || undefined, {
-    defaultPath: a.filename || '첨부파일',
-    title: '첨부 저장'
+    defaultPath: mail.attachmentName(a, Number(index)),
+    title: '파일 저장'
   });
   if (canceled || !filePath) return { ok: false };
   try {
@@ -298,7 +300,7 @@ const pdfWins = new Set();
 ipcMain.handle('mail:preview-attachment', async (e, index) => {
   const slot = slotOf(e);
   const a = slot && slot.files[index];
-  if (!a || !a.content) return { kind: 'none', message: '첨부를 찾을 수 없습니다' };
+  if (!a || !a.content) return { kind: 'none', message: '파일을 찾을 수 없습니다' };
 
   const kind = preview.kindOf(a);
   if (kind === 'toobig') {
@@ -429,7 +431,7 @@ function sweepPreviewDir() {
 ipcMain.handle('mail:open-attachment', async (e, index) => {
   const slot = slotOf(e);
   const a = slot && slot.files[index];
-  if (!a || !a.content) return { ok: false, message: '첨부를 찾을 수 없습니다' };
+  if (!a || !a.content) return { ok: false, message: '파일을 찾을 수 없습니다' };
 
   const can = preview.openable(a);
   if (!can.ok) return { ok: false, message: can.why };
@@ -455,7 +457,7 @@ ipcMain.handle('mail:open-attachment', async (e, index) => {
     evlog.log('메일', `첨부 열기 거절 · ${a.filename} · 인터넷 표를 못 붙였다`);
     return {
       ok: false,
-      message: '이 폴더에는 «인터넷에서 온 파일» 표시를 붙일 수 없어 열지 않았습니다 — 저장해서 열어주세요'
+      message: '보호 표시를 붙이지 못해 열지 않았습니다 — 저장해서 열어주세요'
     };
   }
 

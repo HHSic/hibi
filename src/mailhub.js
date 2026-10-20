@@ -28,6 +28,8 @@ const { prefetchBodies, knownMessages } = require('./mailbody');
 const { okToSpam } = require('./mailfilter');
 const { doTrash } = require('./mailwin');
 const { autoBackupNew } = require('./backup');
+// 자동 전달 — 새로 온 메일을 정해 둔 주소로 (autofwd 는 mailhub 를 부르지 않는다 — 순환 없음)
+const autofwd = require('./autofwd');
 
 let host = {
   state: { onBreak: false, paused: false },
@@ -193,7 +195,7 @@ function noAccountMessage(accountId, list = mailAccountProblems()) {
     const one = list.find((x) => x.account.id === accountId);
     const why = one ? mailacct.summary([one]) : '';
     if (why) return why;
-    if (!one) return '이 메일의 계정을 쓸 수 없습니다 (지워졌습니다)';
+    if (!one) return '이 메일의 계정이 지워졌습니다';
   }
   // 물어본 사이에 계정이 살아났으면 summary 는 빈 말을 준다 — 빈 알림을 띄우지 않게 막는다
   return mailacct.summary(list) || '메일 계정을 지금 쓸 수 없습니다 — 설정 › 메일을 확인하세요';
@@ -274,6 +276,8 @@ async function refreshMail({ force = false } = {}) {
       blocked: noAccountMessage(null, problems)
     });
     logSkip(problems);
+    // 자동 전달도 «지금 쓸 수 있는 계정이 없다»를 상태에 남기게 — 화면이 «켜짐 · 시작 전»에 멈춰 있지 않게
+    autofwd.forwardNew().catch(() => {});
     return;
   }
   mailState.blocked = '';
@@ -382,8 +386,10 @@ async function refreshMail({ force = false } = {}) {
     // 여기까지 왔다면 앞의 관문(꺼짐·이미 도는 중·계정 없음)을 다 지나 실제로 한 바퀴 돈 것이다
     mailLoads += 1;
   }
-  // 새로 온 것을 파일로 남긴다. 기다리지 않는다 — 메일 목록은 이미 화면에 올라가야 한다.
-  autoBackupNew();
+  // 새로 온 것 — 먼저 자동 전달, 그다음 파일로 남긴다(그 끝에 서버 정리). 기다리지 않는다 — 목록은 이미 화면에 올라갔다.
+  // 순서가 중요하다: «서버 정리 바로»가 받은편지함에서 옮긴 뒤에 전달하면 서버에서 원문을 못 받는다
+  // (그래도 놓치지는 않는다 — 정리가 옮긴 메일은 PC 백업 파일로 보낸다. 전달이 도는 동안 정리는 시작하지 않는다)
+  autofwd.forwardNew().catch(() => {}).then(() => autoBackupNew()).catch(() => {});
   // 본문도 미리 받아둔다 — 목록은 이미 올라갔고, 이건 뒤에서 천천히 해도 된다.
   // 그래야 메일을 두 번 눌렀을 때 창이 곧바로 뜬다.
   prefetchBodies();
@@ -592,7 +598,8 @@ ipcMain.handle('mail:add', async (_e, acc) => {
   await refreshMail();
   return {
     ok: true, message: t.message,
-    accounts: mailAccountsForUi(), settings: store.settings
+    // 자동 전달 설정(받는 주소·지문)은 빼고 준다 — settings:get 과 같은 까닭
+    accounts: mailAccountsForUi(), settings: store.publicSettings()
   };
 });
 ipcMain.handle('mail:update', (_e, { id, patch }) => {
@@ -637,7 +644,7 @@ ipcMain.handle('mail:repass', async (_e, req) => {
   if (!stored) return { ok: false, message: '계정을 찾을 수 없습니다 — 창을 닫았다 다시 열어 주세요' };
   if (typeof pass !== 'string' || !pass) return { ok: false, message: '비밀번호를 넣으세요' };
   if (!stored.host || !stored.user) {
-    return { ok: false, message: '서버 주소나 아이디가 비어 있어 비밀번호만으로는 고칠 수 없습니다 — 지우고 다시 추가해 주세요' };
+    return { ok: false, message: '서버 주소나 아이디가 비어 있습니다 — 지우고 다시 추가해 주세요' };
   }
   if (repassing.has(id)) return { ok: false, message: '이미 확인 중입니다 — 끝날 때까지 기다려 주세요' };
   repassing.add(id);
@@ -683,7 +690,7 @@ ipcMain.handle('mail:repass', async (_e, req) => {
       saved,
       message: saved
         ? `비밀번호를 다시 저장했습니다 · ${t.message}`
-        : '비밀번호는 맞지만 설정 파일에 저장하지 못했습니다 — 이번 실행에서만 쓰이고, 다시 켜면 또 넣어야 합니다',
+        : '비밀번호를 파일에 저장하지 못했습니다 — 앱을 다시 켜면 또 넣어야 합니다',
       accounts: mailAccountsForUi(),
       status: mailStatus()
     };
@@ -714,7 +721,7 @@ ipcMain.handle('mail:remove', (_e, id) => {
  */
 ipcMain.handle('mail:refresh', async () => {
   if (!store.settings.mailEnabled) {
-    notice('bad', '메일 확인이 꺼져 있습니다 (설정에서 켜세요)');
+    notice('bad', '«메일 확인하기»가 꺼져 있습니다 — 설정 › 메일에서 켜세요');
     return mailStatus();
   }
   if (!mailAccountsForUse().length) {
@@ -892,7 +899,8 @@ ipcMain.handle('mail:row-menu', async (e, msg) => {
       const r = startCopy({
         accountId: acc.id,
         view: { subject: m.subject, to: m.to, cc: m.cc, text: m.text, html: m.html },
-        files: m.attachments || []
+        // 보기 창이 «첨부»로 보여 주는 것과 같은 판정으로 — 본문 그림은 이미 본문에 들어 있다
+        files: mail.realAttachmentsOf(m.attachments, m.shown, { missed: m.missed, twins: m.twins })
       });
       notice(r.ok ? '' : 'bad', r.ok ? '' : r.message);
     } catch (e) {
@@ -964,21 +972,21 @@ ipcMain.handle('mail:row-menu', async (e, msg) => {
     // 정작 다른 부분(무엇을 하는가)이 눈에 안 들어온다. 어느 메일에서 연 메뉴인지는
     // 방금 오른쪽 클릭한 그 줄이 말해준다. 주소는 마우스를 올리면 나온다.
     items.push(
-      { label: '숨기기', title: `${who} 에서 오는 메일을 숨깁니다`, click: () => add('hide') },
+      { label: '숨기기', title: `${who} · 숨김`, click: () => add('hide') },
       ...(base.domain
         ? [{
           label: '전부 숨기기',
-          title: `${base.domain} — 같은 곳에서 오는 메일을 모두 숨깁니다`,
+          title: `${base.domain} · 전부 숨김`,
           click: () => add('hide', { match: base.domain })
         }]
         : []),
-      { label: '알림 안 함', title: `${who} — 목록에는 두되 알리지 않습니다`, click: () => add('mute') },
-      { label: '자동 읽음', title: `${who} — 오는 대로 읽음으로 표시합니다`, click: () => add('read') },
+      { label: '알림 안 함', title: `${who} · 목록에 두고 알림만 끔`, click: () => add('mute') },
+      { label: '자동 읽음', title: `${who} · 오면 읽음 표시`, click: () => add('read') },
       { type: 'separator' },
       {
         // 물어보는 일은 okToSpam 한 곳에서만 한다 — 입구마다 따로 두면 하나씩 빠진다
         label: '스팸으로 보내기',
-        title: `${who} — 서버의 스팸 폴더로 옮깁니다`,
+        title: `${who} · 서버 스팸 폴더로 옮김`,
         danger: true,
         click: async () => {
           const rule = { ...base, action: 'spam' };
