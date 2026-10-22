@@ -14,7 +14,9 @@ const known = {
     window.__calls.push(['preview', i]);
     return Promise.resolve({ kind: 'none', message: '시험 — 미리보기 안 함' });
   },
-  mailOpenAttachment: (i) => { window.__calls.push(['open', i]); return Promise.resolve({ ok: false }); }
+  mailOpenAttachment: (i) => { window.__calls.push(['open', i]); return Promise.resolve({ ok: false }); },
+  // 링크를 푸는 동안 알림 — 시험(메인 쪽)이 'mail:link' 로 보낸다 (진짜 preload 와 같은 통로)
+  onMailLink: (cb) => ipcRenderer.on('mail:link', (_e, s) => cb(s))
 };
 window.nunsseom = new Proxy(known, {
   get: (t, k) => {

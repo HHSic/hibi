@@ -169,6 +169,8 @@ contextBridge.exposeInMainWorld('nunsseom', {
   mailOpen: (msg) => ipcRenderer.invoke('mail:open', msg),
   mailViewData: () => ipcRenderer.invoke('mail:view-data'),
   mailViewClose: () => ipcRenderer.send('mail:view-close'),
+  // 본문 링크를 메인이 푸는 동안 ('wait' → '') — 클릭 추적 주소 너머가 영상인지 따라가 본다 (linkopen.js)
+  onMailLink: (cb) => ipcRenderer.on('mail:link', (_e, s) => cb(s)),
   // 물어보는 창 · 오른쪽 클릭 메뉴 (앱 마감으로 그린다)
   pickMenu: (items) => ipcRenderer.invoke('ui:menu', items),
   popupData: () => ipcRenderer.invoke('popup:data'),

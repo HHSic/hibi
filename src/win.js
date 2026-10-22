@@ -6,7 +6,7 @@
 
 const path = require('path');
 const { pathToFileURL } = require('url');
-const { screen, nativeTheme, shell, BrowserWindow } = require('electron');
+const { screen, nativeTheme, shell, BrowserWindow, session } = require('electron');
 const store = require('./store');
 const glass = require('./glass');
 
@@ -92,6 +92,20 @@ function openWeb(url) {
   return true;
 }
 
+/**
+ * 윈도우 통합 인증(NTLM·Negotiate)을 묻지 않고 싣는 기본값을 끈다 — 앱 시작 때 한 번.
+ *
+ * 크로미움은 윈도우가 «인트라넷»으로 보는 곳(localhost·점 없는 한 낱말 이름)에 내 계정으로 인증을 건다.
+ * 실측(화면 밖 창, 지어낸 서버가 401 WWW-Authenticate: Negotiate, NTLM 으로 답함): 메일 보기 창 꼴(file:// 페이지)의
+ * <img src="http://한낱말이름/x.gif"> 하나에 Authorization: NTLM·Negotiate 가 묻지도 않고 실렸다. 원격 그림은 기본으로
+ * 켜져 있으니 메일을 여는 순간 같은 망의 가짜 응답자(LLMNR)에게 핸드셰이크가 간다. 플레이어 세션도 같았다.
+ * 이 앱의 창은 사내 인증이 필요한 페이지를 열지 않는다 (달력·주식·메일은 node 의 http·tls 로 따로 간다).
+ * 이 값은 세션 하나가 아니라 네트워크 서비스 전체에 걸린다 — 실측: 이 한 줄로 기본 세션·플레이어·다른 파티션이 모두 멈췄다.
+ */
+function blockWindowsLogin() {
+  try { session.defaultSession.allowNTLMCredentialsForDomains('none.invalid'); } catch { /* 앱 준비 전 — 다음 시작 때 */ }
+}
+
 // 우리 화면 파일이 놓인 곳. 여기 아래가 아니면 «우리 페이지»가 아니다.
 const OURS = pathToFileURL(path.join(__dirname, '..', 'renderer') + path.sep).href.toLowerCase();
 
@@ -119,16 +133,20 @@ function isOurPage(url) {
  * 우리 페이지 밖으로 못 나가게 막는다.
  * 메일 본문의 링크를 창 안에서 열면 그 순간 이 창이 브라우저가 된다 —
  * 주소창도 뒤로가기도 없는 브라우저. 바깥 주소는 기본 브라우저에 넘긴다.
+ *
+ * opts.openUrl 을 주면 바깥 주소를 그리로 보낸다 — 메일 보기 창은 영상 링크를 앱 안 플레이어로 보낸다
+ * (linkopen.js). 창이 우리 페이지에 못박히는 것은 그대로다. 주소를 어떻게 열지만 바뀐다.
  */
-function lockToOurPage(win) {
+function lockToOurPage(win, opts = {}) {
   const ours = isOurPage;
+  const open = opts.openUrl || openWeb;
   win.webContents.on('will-navigate', (e, url) => {
     if (ours(url)) return;
     e.preventDefault();
-    openWeb(url);
+    open(url);
   });
   win.webContents.setWindowOpenHandler(({ url }) => {
-    openWeb(url);
+    open(url);
     return { action: 'deny' };
   });
   win.webContents.on('will-attach-webview', (e) => e.preventDefault());
@@ -173,5 +191,5 @@ function cascadeFrom(width, height, from) {
 module.exports = {
   PRELOAD, page, PAD, PAD_H, clamp,
   SCRIM, effScrim, glassState, glassQuery, broadcastGlass,
-  lockToOurPage, openWeb, isOurPage, maxSize, cascadeFrom
+  lockToOurPage, openWeb, isOurPage, maxSize, cascadeFrom, blockWindowsLogin
 };

@@ -14,6 +14,7 @@ const glass = require('./glass');
 const evlog = require('./evlog');
 const mail = require('./mail');
 const preview = require('./preview');
+const linkopen = require('./linkopen');
 const contactcsv = require('./contactcsv');
 const { askUser } = require('./popup');
 const { autoBackupOne } = require('./backup');
@@ -210,7 +211,10 @@ function openMailView(msg) {
   // 메일 본문은 남이 쓴 것이다. 그 안의 링크로 이 창이 이동해 버리면 그 사이트가
   // preload 다리(메일 보내기·파일 첨부)를 그대로 쥐다. 창은 우리 페이지에 못박고
   // 바깥 주소는 기본 브라우저로 보낸다.
-  lockToOurPage(win);
+  // 다만 영상 링크는 앱 안 플레이어(다리 없는 따로 창)로 — 소식지의 «썸네일 그림 + 클릭 추적 주소»는
+  // 눌렀을 때 리다이렉트를 따라가 봐야 영상인지 안다 (linkopen.js — 알려진 추적·단축 주소만 앱이 따라가 본다).
+  // 푸는 동안 창이 «여는 중…»을 띄운다.
+  lockToOurPage(win, { openUrl: linkopen.opener(win) });
   win.loadFile(page('mailview.html'), {
     query: glassQuery({ radius: '20',
       remote: store.settings.mailRemoteImages !== false ? '1' : '' })

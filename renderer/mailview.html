@@ -216,6 +216,17 @@
   }
   .shots img { cursor: zoom-in; }
 
+  /* 링크를 푸는 동안 — 클릭 추적 주소 너머가 영상인지 메인이 따라가 본다 (몇 초 걸릴 수 있다).
+     본문 위에 떠 있는 작은 알약 하나. 누르는 것을 가리지 않게 마우스는 통과시킨다 */
+  .linknote {
+    position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 10;
+    font-size: 11.5px; padding: 6px 12px; border-radius: 999px; white-space: nowrap;
+    background: var(--scrim); color: var(--label);
+    box-shadow: inset 0 0 0 0.5px var(--hairline), 0 4px 14px rgba(0, 0, 0, 0.3);
+    pointer-events: none;
+  }
+  .linknote[hidden] { display: none; }
+
   /* 가장자리 리사이즈 — 위젯과 같은 방식 (네이티브는 투명 창에서 폭주한다) */
   .rz { position: absolute; z-index: 9; }
   .rz-n { left: 12px; right: 12px; top: -4px; height: 10px; cursor: ns-resize; }
@@ -265,6 +276,7 @@
   <img id="lightbox-img" alt="">
   <div class="hint">아무 데나 누르면 닫힙니다</div>
 </div>
+<div class="linknote" id="linknote" role="status" aria-live="polite" hidden></div>
 <div class="rz rz-n" data-dir="n"></div>
 <div class="rz rz-s" data-dir="s"></div>
 <div class="rz rz-w" data-dir="w"></div>
@@ -716,6 +728,22 @@
       }
     };
   }
+
+  // 본문 링크를 메인이 푸는 동안 «여는 중…» — 금방 끝나면 깜빡이지 않게 조금 기다렸다 띄우고,
+  // 끝났다는 말이 안 와도 8초 뒤엔 걷는다 (메인이 넘어지면 알약이 남아 있게 된다)
+  let linkShow = 0;
+  let linkHide = 0;
+  window.nunsseom.onMailLink((s) => {
+    const note = $('linknote');
+    clearTimeout(linkShow);
+    clearTimeout(linkHide);
+    if (s !== 'wait') { note.hidden = true; return; }
+    linkShow = setTimeout(() => {
+      note.textContent = '여는 중…';
+      note.hidden = false;
+      linkHide = setTimeout(() => { note.hidden = true; }, 8000);
+    }, 200);
+  });
 
   window.nunsseom.mailViewData().then((m) => {
     if (!m || m.error) {

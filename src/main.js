@@ -19,7 +19,7 @@ const glass = require('./glass');
 // 창을 만들 때 쓰는 것들은 win.js 로 옮겼다.
 // 이름을 풀어서 받는다 — 창을 만드는 함수마다 «win»이라는 지역 변수를 이미 쓰고 있어서
 // 모듈을 그 이름으로 두면 가려진다.
-const { PRELOAD, page, PAD, PAD_H, clamp, glassQuery, broadcastGlass, openWeb, lockToOurPage } = require('./win');
+const { PRELOAD, page, PAD, PAD_H, clamp, glassQuery, broadcastGlass, openWeb, lockToOurPage, blockWindowsLogin } = require('./win');
 
 // 물어보는 창·오른쪽 클릭 메뉴는 popup.js 가 그린다 (윈도우 기본 대화상자를 안 쓴다)
 const { askUser } = require('./popup');
@@ -907,6 +907,8 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', () => { if (widgetWin) { widgetWin.show(); widgetWin.focus(); } });
 
   app.whenReady().then(() => {
+    // 창이 뜨기 전에 — 메일 본문의 원격 그림이 윈도우 계정으로 인증을 걸지 않게 (win.js)
+    blockWindowsLogin();
     evlog.init(app.getPath('userData'));
     tray = new Tray(nativeImage.createFromPath(ICON));
     if (store.settings.eventLog) setEventLog(true);
