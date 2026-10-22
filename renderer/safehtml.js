@@ -320,8 +320,29 @@
     root.append(frag);
     host.replaceChildren(wrap);
     settleFloats(kept);
+    hideBroken(root);
     return root;
   };
+
+  /**
+   * 못 불러온 그림은 깨진 그림 상자 대신 감춘다. 웹메일은 이런 그림을 안 보이게 두는데, 여기서는 상자와 아이콘이
+   * 남아 «원본엔 없는 것»처럼 보였다 (실측 — 소식지 끝의 열람 추적 그림, 회사 방화벽에 막힌 그림).
+   * 크기를 정해 둔 그림(16px 이상)은 자리는 남긴다 — 표가 무너지지 않게. 나머지는 자리도 없앤다.
+   */
+  function hideBroken(root) {
+    const hide = (img) => {
+      const w = Number(img.getAttribute('width')) || 0;
+      const h = Number(img.getAttribute('height')) || 0;
+      if (w >= 16 && h >= 16) img.style.setProperty('visibility', 'hidden', 'important');
+      else img.style.setProperty('display', 'none', 'important');
+    };
+    for (const img of root.querySelectorAll('img')) {
+      if (!img.getAttribute('src')) { hide(img); continue; }
+      // 이미 실패한 것(data: 를 못 푼 것 등)은 지금, 아직 부르는 중인 것은 실패할 때
+      if (img.complete && !img.naturalWidth) hide(img);
+      else img.addEventListener('error', () => hide(img), { once: true });
+    }
+  }
 
   /**
    * 띄운 채 둔 Word 그림이 제 표 칸 안에 들어맞게 놓고, 안 되면 흐름으로 내린다.

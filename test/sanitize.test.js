@@ -472,6 +472,27 @@ app.whenReady().then(async () => {
   // 자리가 없는 칸(위 [8] 의 WORD_FLOAT)은 흐름으로 내린다 — 겹쳐 두면 아래 줄을 덮는다
   ok(f.spanPos === 'static' && f.td.h >= 266, '(대조) 자리가 없는 칸에서는 흐름으로 내려 칸이 그림만큼 자란다', { pos: f.spanPos, td: f.td.h });
 
+  console.log('\n[8-5] 못 불러온 그림은 깨진 상자 대신 감춘다');
+  // id 는 세정기가 뗀다 — class 로 찾는다. 못 푸는 data: 그림으로 «불러오기 실패»를 만든다 (바깥 주소는 시험에서 부르지 않는다)
+  const BAD = 'data:image/png;base64,AAAAAAAA';
+  const broken = await wc.executeJavaScript(`(async () => {
+    const host = document.getElementById('body');
+    host.classList.add('rich');
+    const root = window.nunsMountMail(host, window.nunsSafeHtml(${JSON.stringify(
+    `<p>앞 글</p><img class="t-small" src="${BAD}" width=1 height=0><table><tr><td><img class="t-big" src="${BAD}" width=200 height=100></td></tr></table>`
+      + `<img class="t-good" src="${PNG}" width=10 height=10><img class="t-nosrc" alt="빈 그림">`)}));
+    await new Promise((r) => setTimeout(r, 400));
+    const cs = (id) => { const el = root.querySelector('.t-' + id); const s = getComputedStyle(el); return { d: s.display, v: s.visibility, h: Math.round(el.getBoundingClientRect().height) }; };
+    const out = { small: cs('small'), big: cs('big'), good: cs('good'), nosrc: cs('nosrc') };
+    host.replaceChildren();
+    host.classList.remove('rich');
+    return out;
+  })()`);
+  ok(broken.small.d === 'none', '크기 없는(1×0) 못 불러온 그림은 자리째 감춘다 — 깨진 상자가 안 남는다', broken.small);
+  ok(broken.big.v === 'hidden' && broken.big.d !== 'none' && broken.big.h >= 90, '크기를 정한 못 불러온 그림은 자리는 두고 감춘다 (표가 안 무너진다)', broken.big);
+  ok(broken.good.d !== 'none' && broken.good.v === 'visible', '(대조) 제대로 불러온 그림은 그대로 보인다', broken.good);
+  ok(broken.nosrc.d === 'none', '주소가 없는 그림도 감춘다', broken.nosrc);
+
   // 띄운 것과 상관없는 꾸밈은 글자 하나 안 바뀐다
   const styleOf = async (html, sel) => wc.executeJavaScript(`(() => {
     const box = document.createElement('div');

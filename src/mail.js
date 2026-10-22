@@ -687,6 +687,28 @@ function visibleHtml(html) {
 }
 
 /**
+ * 열람 추적 그림인가 — 원래도 안 보이게 만든 바깥 그림.
+ * 너비나 높이가 2px 이하(속성이든 style 이든), 또는 display:none · visibility:hidden · opacity:0 으로 숨긴 것.
+ * 700×1 같은 가는 줄 그림도 걸리지만, 바깥 주소에서 받아 오는 1px 줄은 흔치 않고 빠져도 글은 그대로다.
+ */
+function isTrackerImg(tag) {
+  const attr = (name) => {
+    const m = tag.match(new RegExp(`\\b${name}\\s*=\\s*["']?\\s*([0-9.]+)`, 'i'));
+    return m ? Number(m[1]) : null;
+  };
+  const tiny = (v) => v != null && Number.isFinite(v) && v <= 2;
+  if (tiny(attr('width')) || tiny(attr('height'))) return true;
+  const style = (tag.match(/\bstyle\s*=\s*("([^"]*)"|'([^']*)')/i) || [])[2]
+    || (tag.match(/\bstyle\s*=\s*'([^']*)'/i) || [])[1] || '';
+  const px = (prop) => {
+    const m = style.match(new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*([0-9.]+)\\s*(px)?\\s*(!important)?\\s*(?:;|$)`, 'i'));
+    return m ? Number(m[1]) : null;
+  };
+  if (tiny(px('width')) || tiny(px('height')) || tiny(px('max-height')) || tiny(px('max-width'))) return true;
+  return /(?:^|;)\s*(display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0(\.0*)?\s*(?:;|$|!))/i.test(style);
+}
+
+/**
  * 메일 원래 모양대로 보여주기 위한 HTML 만들기.
  *
  * 글로만 바꾸면 그림이 아래로 몰리고 표·서식이 다 사라진다. 그래서 HTML을 쓰되,
@@ -700,7 +722,7 @@ function visibleHtml(html) {
  */
 function buildViewHtml(parsed, { allowRemote = false } = {}) {
   let html = String(parsed.html || '');
-  if (!html) return { html: '', blockedRemote: 0, shown: [], missed: [], twins: {} };
+  if (!html) return { html: '', blockedRemote: 0, blockedTrackers: 0, shown: [], missed: [], twins: {} };
 
   // 통째로 위험한 태그
   html = html
@@ -808,6 +830,18 @@ function buildViewHtml(parsed, { allowRemote = false } = {}) {
   // (지우는 쪽이 안전하지만, 회사 메일은 정상적인 그림도 원격인 경우가 많다)
   // <img>만 막으면 <image>·<input type=image>·CSS url()로 그대로 새어 나간다.
   // «열어본 사실»이 새지 않게 하는 게 목적이므로 바깥을 부르는 자리는 다 막아야 한다.
+  // 열람 추적 그림은 «인터넷 그림 보이기»를 켜도 뺀다 — 1px 짜리라 원래도 안 보이는 것이다.
+  // 소식지 맨 끝에 <img src="https://trk-mkt.…" width=1 height=0> 꼴로 붙어 온다 (실측). 부르면 «이 사람이 열었다»가
+  // 간다. 못 불러오면 종이의 img{height:auto} 가 height=0 을 덮어 깨진 그림 상자가 그대로 보였다.
+  // 바깥 주소인 것만 본다 — 메일에 담겨 온 작은 그림(data:)은 아무것도 부르지 않는다.
+  let blockedTrackers = 0;
+  html = html.replace(/<img\b[^>]*>/gi, (tag) => {
+    if (!/\bsrc\s*=\s*["']?\s*(https?:)?\/\//i.test(tag)) return tag;
+    if (!isTrackerImg(tag)) return tag;
+    blockedTrackers += 1;
+    return '';
+  });
+
   let blockedRemote = 0;
   if (!allowRemote) {
     html = html.replace(/<(img|image|input|video|audio|source|iframe|embed)\b[^>]*>/gi, (tag, name) => {
@@ -833,7 +867,7 @@ function buildViewHtml(parsed, { allowRemote = false } = {}) {
   }
 
   const asc = (s) => [...s].sort((x, y) => x - y);
-  return { html, blockedRemote, shown: asc(shown), missed: asc(missed), twins };
+  return { html, blockedRemote, blockedTrackers, shown: asc(shown), missed: asc(missed), twins };
 }
 
 /** HTML만 있는 메일을 읽을 수 있는 글로 */

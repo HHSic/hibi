@@ -373,6 +373,33 @@ console.log('\n[4] viewFromSource — 지어낸 Outlook 꼴 .eml 하나로 끝�
   ok(JSON.stringify(carried.map((a) => a.filename)) === JSON.stringify(list.filter((a) => !a.inline).map((a) => a.filename)),
     '  같은 메일에서 «복사»가 실을 첨부 = 보기 창의 «첨부» (report.pdf)', carried.map((a) => a.filename));
 
+  console.log('\n[9] 열람 추적 그림 — «인터넷 그림 보이기»를 켜도 뺀다');
+  // 소식지 끝에 붙어 오는 1px 바깥 그림 (실측 — <img src="https://trk-mkt.…" width=1 height=0>)
+  const TRACK = [
+    ['width=1 height=0 (따옴표 없음)', '<img src="https://trk.example/open?id=1" width=1 height=0>'],
+    ['style 1px', '<img src="https://trk.example/p.gif" style="width:1px;height:1px">'],
+    ['height="0"', '<img src="//trk.example/p.gif" width="600" height="0">'],
+    ['display:none', '<img src="https://trk.example/p.gif" style="border:0; display:none">'],
+    ['visibility:hidden', "<img src='https://trk.example/p.gif' style='visibility:hidden'>"],
+  ];
+  for (const [name, tag] of TRACK) {
+    const r = mail.buildViewHtml({ html: `<p>본문</p>${tag}`, attachments: [] }, { allowRemote: true });
+    ok(!/<img/i.test(r.html) && r.blockedTrackers === 1 && /본문/.test(r.html), `${name} → 뺀다`, r.html);
+  }
+  const KEEP = [
+    ['보통 그림 700×375', '<img src="https://imgur.com/a.png" width="700" height="375" style="display: block; border: 0px;">'],
+    ['너비만 20', '<img src="https://x.example/a.png" width="20">'],
+    ['opacity:0.5', '<img src="https://x.example/a.png" style="opacity:0.5">'],
+    ['메일에 담겨 온 1px 그림 (data:)', '<img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width=1 height=1>'],
+  ];
+  for (const [name, tag] of KEEP) {
+    const r = mail.buildViewHtml({ html: `<p>본문</p>${tag}`, attachments: [] }, { allowRemote: true });
+    ok(/<img/i.test(r.html) && r.blockedTrackers === 0, `${name} → 둔다`, r.html);
+  }
+  // 꺼 두면 바깥 그림은 원래대로 다 막힌다 — 추적 그림은 그 전에 빠지므로 «인터넷 그림 N개»에 세지 않는다
+  const off = mail.buildViewHtml({ html: `${TRACK[0][1]}<img src="https://imgur.com/a.png" width="700" height="375">`, attachments: [] }, { allowRemote: false });
+  ok(!/<img/i.test(off.html) && off.blockedTrackers === 1 && off.blockedRemote === 1, '꺼 두면: 추적 1 · 인터넷 그림 1 (따로 센다)', off);
+
   console.log(bad ? `\n${bad}개 실패` : '\n모두 통과');
   process.exit(bad ? 1 : 0);
 })().catch((e) => { console.error('시험 터짐:', (e && e.stack) || e); process.exit(1); });
