@@ -287,6 +287,27 @@ console.log('\n[3] attachmentsForView — 본문 그림 / 첨부');
   const nr = mail.buildViewHtml({ html: '<img src="cid:nr@1">', attachments: nonRel });
   ok(JSON.stringify(mail.realAttachmentsOf(nonRel, nr.shown, nr).map((a) => a.filename)) === '["notes.txt"]',
     '  related 가 아니어도 본문에 그려진 그림은 복사본에 두 번 싣지 않는다');
+  ok(JSON.stringify(mail.bodyPicsOf(nonRel, nr.shown, nr).map((a) => a.filename)) === '["nonrel.png"]'
+    && JSON.stringify(mail.bodyPicsOf(list, shown).map((a) => a.filename)) === '["image002.jpg"]',
+  '  bodyPicsOf — 본문에 그려진 그림만 (VML 짝·첨부는 빼고)');
+
+  // 이름 없는 첨부 — 보기 창은 «첨부N»으로 보여 준다. 답장·전달·복사도 그 이름으로 싣는다 (예전엔 말 없이 빠졌다)
+  const noName = [
+    att({ contentType: 'application/octet-stream', contentDisposition: 'attachment', content: IMG_A }),
+    att({ contentType: 'message/rfc822', content: IMG_B }),
+    att({ contentType: 'text/calendar', content: IMG_C }),
+    att({ contentType: 'application/pdf', contentDisposition: 'attachment', content: IMG_A }),
+    att({ filename: 'n.pdf', contentType: 'application/pdf', contentDisposition: 'attachment', content: IMG_B })
+  ];
+  const nv = mail.attachmentsForView(noName, []);
+  const nc = mail.realAttachmentsOf(noName, []);
+  ok(JSON.stringify(nv.filter((a) => !a.inline).map((a) => a.filename)) === '["첨부1","첨부2.eml","첨부3.ics","첨부4","n.pdf"]',
+    '이름 없는 첨부의 보기 창 이름 — 첨부N · 첨부된 메일 .eml · 회의 초대 .ics', nv.map((a) => a.filename));
+  ok(JSON.stringify(nc.map((a) => a.filename)) === JSON.stringify(nv.filter((a) => !a.inline).map((a) => a.filename))
+    && nc.every((a, k) => a.content === noName[k].content) && nc[4] === noName[4] && noName.slice(0, 4).every((a) => a.filename === undefined),
+  '  realAttachmentsOf 도 같은 이름으로 싣는다 (바이트 그대로 · 이름 있는 것은 원본 그대로 · 원본은 안 고친다)', nc.map((a) => a.filename));
+  ok(mail.realAttachmentsOf([att({ filename: 'gone.pdf', contentType: 'application/pdf', contentDisposition: 'attachment' })], []).length === 1,
+    '  바이트가 없는 것도 넘긴다 — 싣는 쪽이 «못 실었습니다»로 센다');
 }
 
 console.log('\n[4] viewFromSource — 지어낸 Outlook 꼴 .eml 하나로 끝에서 끝까지');
@@ -364,10 +385,13 @@ console.log('\n[4] viewFromSource — 지어낸 Outlook 꼴 .eml 하나로 끝�
   // «복사»도 보기 창과 같은 판정으로 — 보기 창에서는 화면 목록의 «첨부», 목록 메뉴에서는 realAttachmentsOf
   const composeSrc = fs.readFileSync(path.join(ROOT, 'src', 'composewin.js'), 'utf8');
   const hubSrc = fs.readFileSync(path.join(ROOT, 'src', 'mailhub.js'), 'utf8');
-  ok(/files: \(v\.attachments \|\| \[\]\)\.filter\(\(a\) => !a\.inline\)\.map\(\(a\) => slot\.files\[a\.index\]\)/.test(composeSrc)
-    && /files: mail\.realAttachmentsOf\(m\.attachments, m\.shown, \{ missed: m\.missed, twins: m\.twins \}\)/.test(hubSrc)
+  // 보기 창 쪽은 viewFiles(slot) 하나 — «복사»·«답장»·«전달»(mail:copy·mail:reply·mail:forward)이 같이 쓴다
+  ok(/const viewFiles = \(slot\) => viewPick\(slot, \(a\) => !a\.inline\);/.test(composeSrc)
+    && /\(slot\.payload\.attachments \|\| \[\]\)\.filter\(keep\)\.map\(\(a\) => \{\s*const f = slot\.files\[a\.index\];\s*return f && \{ \.\.\.f, filename: f\.filename \|\| a\.filename \};/.test(composeSrc)
+    && (composeSrc.match(/files: viewFiles\(slot\)/g) || []).length === 2
+    && (hubSrc.match(/files: mail\.realAttachmentsOf\(m\.attachments, m\.shown, \{ missed: m\.missed, twins: m\.twins \}\)/g) || []).length === 2
     && !/a\.related|contentDisposition !== 'inline'/.test(composeSrc),
-  '«복사»(보기 창·목록 메뉴)는 보기 창과 같은 판정으로 첨부를 고른다 — 옛 기준(related·disposition inline)은 없다');
+  '«복사»·«답장»·«전달»(보기 창·목록 메뉴)은 보기 창과 같은 판정으로 첨부를 고른다 — 옛 기준(related·disposition inline)은 없다');
   // 목록 메뉴의 «복사»가 실을 것 = 보기 창의 «첨부»
   const carried = mail.realAttachmentsOf(view.attachments, view.shown, view);
   ok(JSON.stringify(carried.map((a) => a.filename)) === JSON.stringify(list.filter((a) => !a.inline).map((a) => a.filename)),

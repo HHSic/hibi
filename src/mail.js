@@ -625,27 +625,50 @@ function classifyAttachments(list, shown, { missed, twins } = {}) {
   return rows;
 }
 
+/** 이름이 없으면 보기 창과 같은 이름을 단 사본 — 이름이 있으면 원본 그대로 */
+const namedPart = (r) => (r.a.filename ? r.a : { ...r.a, filename: attachmentName(r.a, r.i) });
+
 /**
- * «복사(다시 쓰기)»가 실을 첨부 — 보기 창이 «첨부»라고 보여 주는 것과 같은 것 (본문 그림은 이미 본문에 들어 있다).
- * 이름이나 바이트가 없는 것은 실을 수 없어 뺀다.
+ * 복사·답장·전달이 실을 첨부 — 보기 창이 «첨부»라고 보여 주는 것과 같은 것 (본문 그림은 이미 본문에 들어 있다).
+ * 이름 없는 것(첨부된 메일·회의 초대·이름 없는 PDF)도 보기 창에는 «첨부N»으로 보이므로 그 이름을 달아 싣는다 —
+ * 예전엔 이름 없는 것을 빼서, 보기 창에서 «첨부 2개»를 보고 전달해도 0개가 갔다.
+ * 바이트가 없는 것도 그대로 넘긴다 — 싣는 쪽(composewin carryOf)이 «못 실었습니다»로 센다.
  */
 function realAttachmentsOf(list, shown, more) {
   return classifyAttachments(list, shown, more)
-    .filter((r) => !r.inline && r.a && r.a.content && r.a.filename)
-    .map((r) => r.a);
+    .filter((r) => !r.inline && r.a)
+    .map(namedPart);
+}
+
+/**
+ * 본문에 그려진 그림 (Word 의 VML 짝은 빼고) — 답장·전달의 인용문이 너무 커서 그림을 덜어냈을 때
+ * 그 그림을 첨부로 싣는 데 쓴다 (send.quoteOf 의 dropped).
+ */
+function bodyPicsOf(list, shown, more) {
+  return classifyAttachments(list, shown, more)
+    .filter((r) => r.inline && !r.dup && !r.drop && r.a)
+    .map(namedPart);
 }
 
 // 이름 없는 그림의 확장자 — 저장 대화상자가 확장자 없는 이름을 내밀지 않게
 const IMAGE_EXT = { jpeg: 'jpg', jpg: 'jpg', pjpeg: 'jpg', png: 'png', gif: 'gif', webp: 'webp', bmp: 'bmp', 'svg+xml': 'svg', tiff: 'tif', avif: 'avif', heic: 'heic', 'x-icon': 'ico' };
 
+// 이름 없이 흔히 오는 것 — Outlook «첨부로 전달»(message/rfc822)·회의 초대(text/calendar).
+// 확장자가 없으면 저장해도 못 열고, 답장·전달로 실어 보내면 받는 쪽도 무엇인지 모른다.
+const PART_EXT = { 'message/rfc822': 'eml', 'text/calendar': 'ics' };
+
 /**
- * 첨부의 보일 이름 — 이름이 없으면 그림은 «그림N.확장자», 나머지는 «첨부N».
+ * 첨부의 보일 이름 — 이름이 없으면 그림은 «그림N.확장자», 나머지는 «첨부N»(첨부된 메일·회의 초대는 .eml·.ics).
  * 그림이면 크기와 상관없이 «그림»이다 (3MB 넘는 본문 그림이 «첨부N»으로 불리던 것). 저장 대화상자의 기본 이름도 이것이다.
+ * 답장·전달·복사가 실어 보낼 때도 이 이름이다 — 보기 창에서 본 이름 그대로.
  */
 function attachmentName(a, i) {
   if (a && a.filename) return a.filename;
   const type = String((a && a.contentType) || '').toLowerCase();
-  if (!type.startsWith('image/')) return `첨부${i + 1}`;
+  if (!type.startsWith('image/')) {
+    const ext = PART_EXT[type.split(';')[0].trim()];
+    return `첨부${i + 1}${ext ? `.${ext}` : ''}`;
+  }
   const ext = IMAGE_EXT[type.slice(6).split(';')[0].trim()];
   return `그림${i + 1}${ext ? `.${ext}` : ''}`;
 }
@@ -944,4 +967,4 @@ function friendly(e) {
   return raw.slice(0, 120);
 }
 
-module.exports = { PRESETS, preset, connect, smtpOf, fromOf, cleanHtml, fetchSummary, fetchBody, markRead, moveToSpam, moveToTrash, findJunk, findBox, pickBox, BOX_NAMES, viewFromSource, fetchSources, test, popMistake, senderOf, friendly, htmlToText, attachmentsForView, realAttachmentsOf, attachmentName, viewPayload, buildViewHtml, visibleHtml };
+module.exports = { PRESETS, preset, connect, smtpOf, fromOf, cleanHtml, fetchSummary, fetchBody, markRead, moveToSpam, moveToTrash, findJunk, findBox, pickBox, BOX_NAMES, viewFromSource, fetchSources, test, popMistake, senderOf, friendly, htmlToText, attachmentsForView, realAttachmentsOf, bodyPicsOf, attachmentName, viewPayload, buildViewHtml, visibleHtml };

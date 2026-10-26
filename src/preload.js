@@ -151,6 +151,7 @@ contextBridge.exposeInMainWorld('nunsseom', {
   composeDraftClear: () => ipcRenderer.send('compose:draft-clear'),
   composeAsk: (kind) => ipcRenderer.invoke('compose:ask', kind),
   composeAcceptReplace: (p) => ipcRenderer.send('compose:accept-replace', p),
+  composeDropReplace: (carryKey) => ipcRenderer.send('compose:drop-replace', carryKey),
   composeSetAccount: (id) => ipcRenderer.send('compose:set-account', id),
   onComposeReplace: (cb) => ipcRenderer.on('compose:replace', (_e, p) => cb(p)),
   composeBounds: () => ipcRenderer.invoke('compose:bounds'),
@@ -177,6 +178,9 @@ contextBridge.exposeInMainWorld('nunsseom', {
   popupSize: (s) => ipcRenderer.send('popup:size', s),
   popupPick: (v) => ipcRenderer.send('popup:pick', v),
 
+  // 답장·전달·복사는 메인이 이 창의 메일(원문 첨부까지)로 초안을 만든다 — 화면은 «눌렀다»만 알린다
+  mailReply: () => ipcRenderer.invoke('mail:reply'),
+  mailForward: () => ipcRenderer.invoke('mail:forward'),
   mailCopy: () => ipcRenderer.invoke('mail:copy'),
   mailTrash: () => ipcRenderer.invoke('mail:trash'),
   mailSaveAttachment: (i) => ipcRenderer.invoke('mail:save-attachment', i),

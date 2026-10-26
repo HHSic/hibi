@@ -5,7 +5,9 @@ const params = new URLSearchParams(location.search);
 document.documentElement.style.setProperty('--inset', (params.get('inset') || '12') + 'px');
 document.documentElement.style.setProperty('--r', (params.get('radius') || '20') + 'px');
 
-let attachments = [];          // { path, filename, size }
+// { path, filename, size } — 고른 파일. 원문 첨부(복사·답장·전달)는 { id, filename, size, carried } —
+// 바이트는 메인에만 있고 여기엔 id 뿐이다. 칩을 빼면 그 id 가 안 가고, 메인은 온 id 만 싣는다.
+let attachments = [];
 let context = null;            // 답장이면 원문 정보
 let sending = false;
 
@@ -152,17 +154,23 @@ function bodyForSend() {
     `<body>${body.innerHTML}</body>`, 'text/html');
   const clone = doc.body;
   const inline = [];
+  // 같은 그림(서명 로고처럼 인용문에 두 번 나오는 것)은 cid 하나로 — 그림마다 새로 달면 같은 바이트가 여러 번 실린다
+  const cidOf = new Map();
   let n = 0;
   for (const img of clone.querySelectorAll('img')) {
     const src = img.getAttribute('src') || '';
     const m = src.match(/^data:([^;]+);base64,(.+)$/);
     if (!m) continue;
-    n += 1;
-    const cid = `img${n}@hibi`;
-    inline.push({
-      cid, contentType: m[1], base64: m[2],
-      filename: img.getAttribute('data-name') || `그림${n}.${(m[1].split('/')[1] || 'png')}`
-    });
+    let cid = cidOf.get(src);
+    if (!cid) {
+      n += 1;
+      cid = `img${n}@hibi`;
+      cidOf.set(src, cid);
+      inline.push({
+        cid, contentType: m[1], base64: m[2],
+        filename: img.getAttribute('data-name') || `그림${n}.${(m[1].split('/')[1] || 'png')}`
+      });
+    }
     img.setAttribute('src', `cid:${cid}`);
     img.removeAttribute('data-name');
   }
@@ -576,7 +584,10 @@ function draftNow() {
     references: (context && context.references) || '',
     // 경로는 안 보낸다 — 메인은 «대화상자로 골람 파일»만 보내게 되어 있고,
     // 저장해 둔 경로를 다시 믿으면 그 문이 열린다. 이름만 남긴다.
-    attachNames: attachments.map((a) => a.filename)
+    attachNames: attachments.filter((a) => !a.carried).map((a) => a.filename),
+    // 원문 첨부(답장·전달·복사)도 이름만 — id 는 이 창이 닫히면 쓸모없다. 디스크에 없는 파일이라
+    // 이어 쓸 때 «다시 붙여주세요»라고 할 수 없어 따로 적는다 (noteRestored)
+    carriedNames: attachments.filter((a) => a.carried).map((a) => a.filename)
   };
 }
 
@@ -605,14 +616,16 @@ function saveDraftNow() {
 /** 쓰던 글이 있나 — 있으면 함부로 버리지 않는다 */
 function dirty() {
   const base = context || {};
-  // 처음 채워진 값과 비교한다. 복사(다시 보내기)는 참조·첨부가 처음부터 차 있으므로,
-  // 빈 문자열과 비교하면 아무것도 안 고쳤는데도 «쓰던 글이 있다»가 되어 닫을 때마다 묻는다.
-  const startAtts = (base.reuse && Array.isArray(base.attachments)) ? base.attachments.length : 0;
+  // 처음 채워진 값과 비교한다. 복사(다시 보내기)는 참조·첨부가, 답장·전달은 원문 첨부가 처음부터
+  // 차 있으므로, 비어 있는 것과 비교하면 아무것도 안 고쳤는데도 «쓰던 글이 있다»가 되어 닫을 때마다 묻는다.
+  // 첨부는 개수가 아니라 «무엇이» 붙어 있나로 본다 — 하나 빼고 하나 붙이면 개수는 같아도 고친 것이다.
+  const keyOf = (a) => (a.carried ? `c:${a.id}` : `p:${a.path}`);
+  const startAtts = (Array.isArray(base.attachments) ? base.attachments : []).map(keyOf).join('\n');
   return $('to').value !== (base.to || '')
     || $('cc').value !== (base.cc || '') || $('bcc').value !== (base.bcc || '')
     || $('subject').value !== (base.subject || '')
     || body.innerHTML.trim() !== (base.bodyHtml || '')
-    || attachments.length !== startAtts;
+    || attachments.map(keyOf).join('\n') !== startAtts;
 }
 
 let asking = false;
@@ -706,13 +719,15 @@ $('send').onclick = send;
 
 /** 다른 곳에서 «쓰기»를 또 눌렀을 때 — 쓰던 글이 있으면 물어본다 */
 window.nunsseom.onComposeReplace(async (next) => {
-  if (sending) return;
+  // 이 초안을 안 받으면 메인에 말한다 — 안 그러면 그 원문 첨부 바이트가 창이 닫힐 때까지 메인에 남는다
+  const drop = () => window.nunsseom.composeDropReplace(next && next.carryKey);
+  if (sending) { drop(); return; }
   if (dirty()) {
-    if (asking) return;
+    if (asking) { drop(); return; }
     asking = true;
     let answer;
     try { answer = await window.nunsseom.composeAsk('replace'); } finally { asking = false; }
-    if (answer !== 'discard') return;
+    if (answer !== 'discard') { drop(); return; }
     // 새 초안이 이 칸을 차지한다 — 적어둔 것을 먼저 지우고 간다
     clearTimeout(saveTimer);
     window.nunsseom.composeDraftClear();
@@ -821,8 +836,11 @@ function noteRestored(d) {
     ? `${when.getMonth() + 1}월 ${when.getDate()}일 ${pad(when.getHours())}:${pad(when.getMinutes())}`
     : '';
   const names = (d.restoredNames || []).filter(Boolean);
+  // 원문 첨부는 디스크에 없다 — «파일 첨부»로는 못 붙인다. 붙는 길을 말한다
+  const carried = (d.restoredCarried || []).filter(Boolean);
   say('', `쓰다 만 글을 이어서 씁니다${stamp ? ` · ${stamp}` : ''}`
-    + (names.length ? ` · 첨부 ${names.length}개는 다시 붙여주세요 (${names.join(', ').slice(0, 60)})` : ''));
+    + (names.length ? ` · 첨부 ${names.length}개는 다시 붙여주세요 (${names.join(', ').slice(0, 60)})` : '')
+    + (carried.length ? ` · 원문 첨부 ${carried.length}개는 메일에서 다시 답장·전달해야 붙습니다 (${carried.join(', ').slice(0, 60)})` : ''));
 
   const btn = document.createElement('button');
   btn.className = 'act ghost';
@@ -865,6 +883,15 @@ function fill(d) {
   $('row-cc').classList.add('hide');
   $('row-bcc').classList.add('hide');
   $('btn-cc').style.display = '';
+  // 답장이면 원문의 참조가 딸려 온다 (메인이 내 주소·받는 사람을 뺐다). 펼쳐 둔다 — 접어 두면
+  // 누가 같이 받는지 모른 채 보낸다. 숨은참조 칸도 같이 편다 (참조 단추가 사라지므로 — 주소록에서 넣을 때와 같게).
+  // 이어 쓰기·복사는 아래에서 제 참조를 채운다
+  if (d.cc && !d.restored && !d.reuse) {
+    $('cc').value = d.cc;
+    $('row-cc').classList.remove('hide');
+    $('row-bcc').classList.remove('hide');
+    $('btn-cc').style.display = 'none';
+  }
   $('subject').value = d.subject || '';
   // 답장 인용문은 서식 있는 본문에 인용 블록으로 넣는다
   // 인용문은 남이 쓴 글이다. 문자열로 이어 붙이지 않고 글자 노드로 넣어
@@ -914,10 +941,11 @@ function fill(d) {
     if (d.cc) { $('row-cc').classList.remove('hide'); $('btn-cc').style.display = 'none'; }
   }
   d.bodyHtml = body.innerHTML.trim();
-  // 복사면 원문 첨부가 딸려 온다(메인이 실어 보낸다). 나머지는 빈 채로 시작한다.
-  attachments = d.reuse && Array.isArray(d.attachments) ? d.attachments.slice() : [];
+  // 복사·답장·전달이면 원문 첨부가 딸려 온다(메인이 실어 보낸다). 새 메일은 빈 채로 시작한다.
+  attachments = Array.isArray(d.attachments) ? d.attachments.slice() : [];
   renderFiles();
-  say('', '');
+  // 너무 커서·많아서 못 실은 원문 첨부가 있으면 열자마자 말한다 — 보낸 뒤에 알면 늦다
+  say(d.carryNote ? 'bad' : '', d.carryNote || '');
   context = d;
   if (d.restored) noteRestored(d);
   // 손이 멈추면 적어둔다. 붙여넣기·글자판 모두 input으로 올라온다.

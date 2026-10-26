@@ -761,6 +761,10 @@ module.exports = {
       inReplyTo: str(d.inReplyTo, 500),
       references: str(d.references, 2000),
       attachNames: (Array.isArray(d.attachNames) ? d.attachNames : [])
+        .slice(0, 20).map((n) => str(n, 120)),
+      // 답장·전달로 실었던 원문 첨부의 이름 — 바이트·id 는 안 담는다 (메인에만 있고, 창이 닫히면 버린다).
+      // 이어 쓸 때 «다시 붙여주세요»가 아니라 «메일에서 다시 답장·전달해야 붙는다»고 말하려고 따로 둔다.
+      carriedNames: (Array.isArray(d.carriedNames) ? d.carriedNames : [])
         .slice(0, 20).map((n) => str(n, 120))
     } : null;
     save();

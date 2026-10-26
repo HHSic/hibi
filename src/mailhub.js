@@ -874,11 +874,16 @@ ipcMain.handle('mail:row-menu', async (e, msg) => {
       const r = startCompose({
         kind,
         accountId: acc.id,
+        // 참조(cc)도 — 답장이면 원문의 참조가 그대로 참조로 간다 (내 주소·받는 사람은 startCompose 가 뺀다)
         source: {
-          subject: m.subject, from: m.from, fromAddress: m.fromAddress, to: m.to,
+          subject: m.subject, from: m.from, fromAddress: m.fromAddress, to: m.to, cc: m.cc,
           replyTo: m.replyTo, messageId: m.messageId, at: m.receivedAt,
           text: m.text, html: m.html
-        }
+        },
+        // 원문 첨부도 같이 — 보기 창이 «첨부»로 보여 주는 것과 같은 판정으로 (본문 그림은 이미 본문에 들어 있다)
+        files: mail.realAttachmentsOf(m.attachments, m.shown, { missed: m.missed, twins: m.twins }),
+        // 인용문이 너무 커서 본문 그림을 덜어냈을 때만 첨부로 실린다 (startCompose)
+        bodyPics: mail.bodyPicsOf(m.attachments, m.shown, { missed: m.missed, twins: m.twins })
       });
       notice(r.ok ? '' : 'bad', r.ok ? '' : r.message);
     } catch (e) {
