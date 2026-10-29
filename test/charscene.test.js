@@ -89,7 +89,8 @@ app.whenReady().then(async () => {
   store.setReminder('eye', { durationSec: 20 });
 
   console.log('\n[고양이]');
-  store.setSettings({ overlayEnter: 'cat' });
+  // 영상 길을 본다 — 만지는 고양이(설정 «고양이 만지기», 기본 켜짐)는 test/catrig.test.js 가 본다
+  store.setSettings({ overlayEnter: 'cat', catTouch: false });
   await sleep(300);
   // 사용자가 휴식 창을 닫으면 다시 띄우지 않는다 — 한 번 «다시 띄우기»를 넣었다가, 닫을 때마다
   // 또 떠서 사용자를 괴롭혔다. 밖에서 닫히면 실패로만 알린다.
@@ -151,7 +152,7 @@ app.whenReady().then(async () => {
   }
 
   console.log('\n[영상이 안 열리면 조용히 걷는다]');
-  store.setSettings({ overlayEnter: 'cat' });
+  store.setSettings({ overlayEnter: 'cat', catTouch: false });
   await sleep(300);
   ipcMain.emit('widget:break-now', {}, 'eye');
   const ov2 = await until(async () => cursorWin(), 8000, 50);

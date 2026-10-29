@@ -539,7 +539,18 @@ function renderEnter() {
     : own ? `${own.kind === 'video' ? '영상' : '그림'} · ${(own.ms / 1000).toFixed(1)}초 동안 화면을 덮습니다`
       : '';
   renderCatSpeed(cur);
+  renderCatTouch();
   renderEnterPreview(own, built);
+}
+
+/**
+ * «고양이 만지기»·«골골 소리» — 고양이 영상 대신 만지는 고양이를 앉힐지, 쓰다듬을 때 그르렁댈지 (store catTouch·catPurr).
+ * «고양이 움직임» 줄과 같이 고양이가 나올 수 있는 연출에서만 보인다. 골골 소리는 만지기를 켰을 때만
+ */
+function renderCatTouch() {
+  const show = !$('cat-speed-row').hidden;
+  $('cat-touch-row').hidden = !show;
+  $('cat-purr-row').hidden = !show || data.settings.catTouch === false;
 }
 
 /**
@@ -751,6 +762,8 @@ function bindSwitch(key) {
     if (key === 'mailEnabled' && on) window.nunsseom.mailRefresh();
     // 켜자마자 무슨 일이 일어나는지 바로 알려준다
     if (key === 'mailAutoBackup') window.nunsSetMail.loadBackup();
+    // 만지기를 끄면 골골 소리 줄을 감춘다
+    if (key === 'catTouch') { data.settings.catTouch = on; renderCatTouch(); }
   };
 }
 
@@ -1160,7 +1173,7 @@ window.nunsseom.getSettings().then((d) => {
   for (const key of ['dndEnabled', 'autoUpdate', 'calendarBusy', 'calendarAllDay',
                      'calendarLead', 'calendarShow', 'soundEnabled', 'breakNoEscape',
                      'mailEnabled', 'mailShow', 'mailRemoteImages', 'mailAutoBackup',
-                     'mailPerAccount', 'stocksEnabled']) {
+                     'mailPerAccount', 'stocksEnabled', 'catTouch', 'catPurr']) {
     bindSwitch(key);
   }
   bindAutoLaunch();

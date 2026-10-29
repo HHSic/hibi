@@ -153,6 +153,7 @@ const DISABLED_ENTER = new Set(['web']);
 /**
  * 고양이 영상 id — renderer/anim/clip.js 의 CLIPS 와 같아야 한다. 메인은 화면 쪽 파일을 못 읽어 따로 적는다
  * (test/catrandom.test.js 가 맞춰 본다). «랜덤 고양이»와 «그때그때»가 여기서 뽑는다.
+ * 고양이마다 만지는 고양이 사진 폴더(CLIPS 의 rig → assets/catrig/<rig>/)도 있어야 한다 (test/catrig.test.js 가 본다).
  */
 const CAT_ENTERS = ['cat', 'cat-loaf', 'cat-lie', 'cat-roll', 'cat-meow', 'cat-rb', 'cat-rb-hero', 'cat-black', 'cat-black-hero'];
 // 바로 앞 휴식에 나온 고양이 — «랜덤 고양이»가 같은 고양이를 두 번 연달아 내지 않게
@@ -197,6 +198,66 @@ function catRate(speed) {
   return CAT_RATES[Object.prototype.hasOwnProperty.call(CAT_RATES, speed) ? speed : CAT_SPEED_DEFAULT];
 }
 
+// ── 만지는 고양이 ────────────────────────────────────────
+// 고양이 영상 대신 같은 고양이 사진을 리그로 움직여 앉힌다 (renderer/anim/catrig.js, enter.js mountRig).
+// 어느 영상이 어느 사진 폴더(assets/catrig/<rig>/)를 쓰는지는 화면 쪽 clip.js CLIPS 의 rig 하나로만 정한다 —
+// 메인은 폴더가 있는지만 본다: 휴식 창이 달라는 rig.json 을 읽어 주고(휴식 창은 CSP 가 XHR 을 막는다),
+// 알려 온 기록의 고양이 이름을 거른다.
+const RIG_DIR = path.join(__dirname, '..', 'assets', 'catrig');
+const rigCache = new Map();
+// 사진 폴더·고양이 이름 꼴 — store.js catRigOf 와 같다
+const RIG_NAME = /^[a-z0-9][a-z0-9-]{0,31}$/;
+
+/** 이 사진 폴더의 rig.json — 이름이 이상하거나 폴더가 없거나 못 읽으면 null (없는 이름은 기억하지 않는다 — 아무 이름으로 캐시를 못 불린다) */
+function rigJson(id) {
+  if (typeof id !== 'string' || !RIG_NAME.test(id)) return null;
+  if (rigCache.has(id)) return rigCache.get(id);
+  try {
+    const r = JSON.parse(fs.readFileSync(path.join(RIG_DIR, id, 'rig.json'), 'utf8'));
+    if (!r || typeof r !== 'object' || !r.size || !r.body) return null;
+    rigCache.set(id, r);
+    return r;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 기록(쓰다듬은 횟수·친밀도)을 모으는 고양이 이름 — rig.json 의 cat, 없으면 사진 폴더 이름.
+ * 같은 고양이를 찍은 영상 둘(엎드린·늘어진 아기 고양이)은 사진 폴더가 따로지만 한 고양이로 센다 —
+ * 폴더마다 세면 같은 고양이가 기록 창에 두 마리로 나오고, 한쪽에서 친해진 것을 다른 쪽은 모른다.
+ * 화면 쪽(enter.js mountRig)도 같은 규칙으로 저장된 친밀도를 찾는다
+ */
+function catKey(id) {
+  const r = rigJson(id);
+  if (!r) return null;
+  return typeof r.cat === 'string' && RIG_NAME.test(r.cat) ? r.cat : id;
+}
+
+// 한 판(손을 떼기까지)에 이보다 많이 쓸 수는 없다 — 초당 네 번씩 8분이 넘는다. 더 크면 고장 난 값이라 버린다
+const PET_MAX = 2000;
+
+/** 휴식 창이 알린 쓰다듬기 한 판 — 아는 고양이, 1~PET_MAX 번(정수)만. 친밀도에 든 몫(credited)은 0~strokes 로 묶는다 */
+function petOf(p) {
+  if (!p || typeof p !== 'object' || !rigJson(p.rig)) return null;
+  const n = p.strokes;
+  if (!Number.isInteger(n) || n <= 0 || n > PET_MAX) return null;
+  const c = Number.isInteger(p.credited) && p.credited > 0 ? Math.min(p.credited, n) : 0;
+  return { rig: p.rig, cat: catKey(p.rig), strokes: n, credited: c };
+}
+
+/**
+ * 휴식 창에 싣는 만지는 고양이 설정 — 끄면(«고양이 만지기») null 이고 화면 쪽은 예전 영상을 띄운다.
+ * 그르렁 소리 크기는 알림음 크기(0~100)를 따른다(무음이면 소리 장치도 안 연다). 친밀도는 고양이마다 저장해 둔 값 —
+ * 리그에 넘겨 사용자를 «기억»하게 한다 (열쇠는 사진 폴더가 아니라 고양이 이름 — catKey)
+ */
+function catRigPayload(s) {
+  if (s.catTouch === false) return null;
+  const v = Number(s.soundVolume);
+  const volume = Number.isFinite(v) ? Math.max(0, Math.min(100, v)) / 100 : 0.55;
+  return { purr: s.catPurr !== false && volume > 0, volume, cats: store.catRigCats() };
+}
+
 /** 발동한 종류들을 오버레이가 그릴 수 있는 형태로 만든다 */
 function buildBreakPayload(ids) {
   const custom = store.custom;
@@ -229,6 +290,8 @@ function buildBreakPayload(ids) {
     enterAsset: enterAsset(enter),
     // 고양이 영상 재생 빠르기 (설정 «고양이 움직임»). 화면 쪽은 진짜 고양이 영상에만 쓴다 — 내 파일·다른 연출은 그대로
     catRate: catRate(s.catSpeed),
+    // 만지는 고양이 (설정 «고양이 만지기»·«골골 소리»). 고양이 연출일 때만, 연출처럼 enterOn 화면에만 앉는다
+    catRig: catRigPayload(s),
     items, grouped,
     mode: grouped || anyLong ? 'checklist' : 'single',
     // 켜면 «건너뛰기»·«다 했어요»를 숨긴다. 시간이 끝나면 tick()이 알아서 닫는다.
@@ -342,6 +405,9 @@ async function reallyOpenOverlays(ids) {
   breakPayload.endsAt = host.state.breakEndsAt;
   // 등장 연출 길이는 휴식 길이를 따라간다 (화면 쪽 enter.js 가 절반쯤으로 잡는다)
   breakPayload.durationSec = durationSec;
+  // 마우스가 있는 화면은 지금 다시 본다 — 위에서 바탕화면을 찍느라 1~2초 기다리는 사이 커서가 다른 모니터로 갔으면
+  // 연출(만지는 고양이도)이 아무도 안 보는 화면에 앉는다
+  breakPayload.enterOn = cursorDisplayId();
 
   // 미리 세워 둔 창이 다 준비됐으면 그걸 쓴다. 화면 수가 달라졌거나(모니터를 꽂았거나)
   // 아직 다 안 읽혔으면 그냥 새로 만든다 — 반쯤 준비된 창에 신호를 보내면 놓친다.
@@ -363,7 +429,8 @@ async function reallyOpenOverlays(ids) {
   for (const win of overlayWins) {
     if (win.isDestroyed()) continue;
     const go = () => {
-      if (win.isDestroyed()) return;
+      // 다 읽히기 전에 휴식이 끝났으면(끝나 가는 창은 숨긴 채 잠깐 남는다) 다시 보이지 않게
+      if (win.isDestroyed() || !overlayWins.includes(win)) return;
       win.webContents.send('overlay:begin', breakPayload);
       win.show();
     };
@@ -374,16 +441,36 @@ async function reallyOpenOverlays(ids) {
   }
 }
 
+/**
+ * 끝난 휴식의 창은 바로 숨기고, 잠깐 뒤에 없앤다.
+ * 만지는 고양이는 쓰다듬던 판을 손을 뗀 뒤(0.8초)에야 알린다 — 시간이 다 되어 창을 바로 없애면(destroy 는 unload 도
+ * 안 낸다) 끝까지 쓰다듬던 사람의 그 휴식 쓰다듬기가 통째로 사라졌다. 그래서 창마다 'overlay:ending' 을 보내 마저 알리게 하고,
+ * 그 알림을 받을 동안만 들고 있다. 숨긴 뒤라 사용자에게는 예전처럼 바로 닫힌다
+ */
+const ENDING_MS = 300;
+let endingWins = [];
+
 function closeOverlays() {
   // 목록만 믿지 않는다. 어떤 까닭으로든 목록에서 떨어져 나간 휴식 창이 있으면
   // 그 창은 단추를 눌러도 안 닫혀 사용자가 빠져나갈 길이 없어진다.
-  // 휴식 창인 것은 남김없이 치운다.
-  const all = new Set(overlayWins);
+  // 휴식 창인 것은 남김없이 치운다 (끝나 가는 창은 제때 없어진다).
+  const all = new Set();
   for (const w of BrowserWindow.getAllWindows()) {
-    if (w.isDestroyed()) continue;
+    if (w.isDestroyed() || overlayWins.includes(w) || endingWins.includes(w)) continue;
     try { if (w.webContents.getURL().includes('overlay.html')) all.add(w); } catch { /* 못 읽으면 넘어간다 */ }
   }
   for (const w of all) { try { w.destroy(); } catch { /* 이미 없다 */ } }
+  const ending = overlayWins.filter((w) => !w.isDestroyed());
+  for (const w of ending) {
+    try { w.webContents.send('overlay:ending'); w.hide(); } catch { /* 이미 없다 */ }
+  }
+  if (ending.length) {
+    endingWins = endingWins.concat(ending);
+    setTimeout(() => {
+      for (const w of ending) { try { w.destroy(); } catch { /* 이미 없다 */ } }
+      endingWins = endingWins.filter((w) => !ending.includes(w));
+    }, ENDING_MS);
+  }
   overlayWins = [];
   warmWins = warmWins.filter((w) => !w.isDestroyed());
   // 아직 찍고 있는 중일 수 있다 (기다리지 않고 창을 띄우므로).
@@ -394,6 +481,11 @@ function closeOverlays() {
   overlayShots.clear();
   breakPayload = null;
   host.state.onBreak = false;
+}
+
+/** 시험이 앱 없이 띄운 휴식 창(진짜 overlay.html 에 시험용 다리)을 이번 휴식의 창으로 넣는다 — 기록을 받고, 끝 신호를 보낸다 */
+function adoptForTest(win) {
+  overlayWins = overlayWins.filter((w) => !w.isDestroyed()).concat(win);
 }
 
 function startBreak(ids) {
@@ -432,6 +524,52 @@ ipcMain.handle('overlay:get-payload', () => breakPayload);
 ipcMain.on('overlay:snooze', () => endBreak('snoozed'));
 ipcMain.on('overlay:skip', () => endBreak('skipped'));
 ipcMain.on('overlay:done', () => endBreak('done')); // 남은 시간을 기다리지 않고 일찍 끝내기
+
+// ── 만지는 고양이 ──
+/**
+ * 휴식 창(overlay.html)이 보낸 것인가 — 쓰다듬은 횟수·친밀도는 휴식 창만 알린다.
+ * 다른 창(메일 보기 창은 남이 쓴 본문을 그린다)이 기록을 꾸며 넣지 못하게, 보낸 창이 이 모듈이 띄운 휴식 창이고
+ * 그 창의 맨 위 문서가 보냈는지 본다 (composewin.js fromComposeWin 과 같은 꼴).
+ * 페이지 주소로는 견주지 않는다 — 앱 경로에 8.3 짧은 이름(~)이나 [ ] 가 들면 getURL 과 pathToFileURL 의 글자가 달라
+ * 휴식 창도 남으로 쳤고, 만지는 고양이가 아무 표시 없이 영상으로 물러났다
+ */
+function fromOverlay(e) {
+  try {
+    const wc = e && e.sender;
+    if (!wc || wc.isDestroyed()) return false;
+    const w = BrowserWindow.fromWebContents(wc);
+    if (!w || !(overlayWins.includes(w) || warmWins.includes(w) || endingWins.includes(w))) return false;
+    const f = e.senderFrame;
+    const m = wc.mainFrame;
+    return !!f && !!m && f.processId === m.processId && f.routingId === m.routingId;
+  } catch {
+    return false;
+  }
+}
+
+ipcMain.handle('catrig:rig', (e, id) => (fromOverlay(e) ? rigJson(id) : null));
+ipcMain.on('catrig:pet', (e, p) => {
+  const m = fromOverlay(e) ? petOf(p) : null;
+  if (!m) return;
+  store.recordCatPet(m.cat, m.strokes, m.credited);
+  statswin.notifyChanged();
+});
+ipcMain.on('catrig:affinity', (e, p) => {
+  const cat = fromOverlay(e) && p && typeof p === 'object' ? catKey(p.rig) : null;
+  if (!cat) return;
+  const v = p.value;
+  if (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > 1) return;
+  store.setCatAffinity(cat, v);
+  // 다른 화면의 같은 고양이도 이 값에서 이어 간다 — 커서를 옮겨 쓰다듬으면 그 창이 처음 값에서 다시 셈해 덮어쓰지 않게.
+  // 오늘 친밀도에 든 횟수(today)도 싣는다 — 안 그러면 그 창이 하루 몫을 처음부터 다시 받아 하루 상승이 화면 수만큼 커진다
+  // (연출은 마우스가 있는 화면 하나에만 앉으니 보통은 받을 창이 없다 — 커서 화면을 못 읽어 모든 화면이 그릴 때만)
+  const rec = store.catRigCats()[cat];
+  const today = rec ? rec.today : 0;
+  for (const w of overlayWins) {
+    if (!w.isDestroyed() && w.webContents !== e.sender) w.webContents.send('catrig:affinity', { rig: p.rig, value: v, today });
+  }
+  statswin.notifyChanged();
+});
 
 // ── 내 등장 연출 ──
 // 고르기와 넣기를 나눈 이유: 영상 길이는 화면 쪽에서만 잴 수 있다.
@@ -496,5 +634,7 @@ module.exports = {
   // 시험이 쓴다 — «그때그때»·«랜덤 고양이»가 무엇을 뽑는지 (test/catrandom.test.js, charscene.test.js)
   resolveEnter, CAT_ENTERS, DISABLED_ENTER,
   // 시험이 쓴다 — 고양이 움직임 설정이 휴식 창에 실리는 빠르기 (test/catspeed.test.js)
-  catRate, CAT_RATES, buildBreakPayload
+  catRate, CAT_RATES, buildBreakPayload,
+  // 시험이 쓴다 — 만지는 고양이 사진 폴더·설정·기록 거르기, 앱 없이 띄운 휴식 창을 이번 휴식의 창으로 넣기 (test/catrig.test.js)
+  RIG_DIR, rigJson, catKey, catRigPayload, petOf, PET_MAX, adoptForTest
 };

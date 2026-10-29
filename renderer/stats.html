@@ -18,6 +18,9 @@
 <link rel="stylesheet" href="tokens.css">
 <script src="theme.js"></script>
 <script src="icons.js"></script>
+<!-- 만지는 고양이 이름 — 사진 폴더(rig)를 쓰는 고양이 영상의 이름을 설정 목록에서 찾는다 (enter.js rigName) -->
+<script src="anim/clip.js"></script>
+<script src="enter.js"></script>
 <style>
   :root {
     --accent: #5ecfb6;
@@ -183,6 +186,15 @@
   .today-line { font-size: 12px; color: var(--secondary); margin-top: 16px; }
   .today-line b { color: var(--label); font-weight: 600; }
   body.type-view #today-line { display: none; }
+
+  /* 만지는 고양이 — 기간 줄 아래 작게. 쓰다듬은 횟수와 고양이마다 친밀도(막대). 휴식 종류와 상관없어 전체 보기에서만 */
+  .cats { margin-top: 18px; padding-top: 12px; box-shadow: inset 0 0.5px 0 var(--separator); }
+  .cats[hidden], body.type-view .cats { display: none; }
+  .cats-line { font-size: 12px; color: var(--secondary); }
+  .cats-line b { color: var(--label); font-weight: 600; }
+  .aff { display: grid; grid-template-columns: 1fr 72px; align-items: center; gap: 6px 12px; margin-top: 9px; font-size: 11.5px; color: var(--secondary); }
+  .aff .bar { height: 4px; border-radius: 2px; background: var(--fill); overflow: hidden; }
+  .aff .bar i { display: block; height: 100%; border-radius: inherit; background: var(--accent-fill); }
 </style>
 </head>
 <body>
@@ -229,6 +241,12 @@
         <button data-w="26">26주</button>
         <button data-w="52">1년</button>
       </div>
+    </div>
+
+    <!-- 만지는 고양이 — 휴식 창에서 한 번이라도 만난 고양이가 있을 때만 보인다 -->
+    <div class="cats" id="cats" hidden>
+      <div class="cats-line" id="cats-line"></div>
+      <div class="aff" id="aff"></div>
     </div>
   </div>
  </div>
@@ -360,6 +378,42 @@
     });
   }
 
+  /**
+   * 만지는 고양이 — 오늘·모두 쓰다듬은 횟수, 만난 고양이마다 친밀도(0~1, 막대). 친밀도가 높은 고양이부터.
+   * 이름은 그 사진을 쓰는 고양이 영상의 이름이다 — 못 찾으면 그 고양이는 뺀다(지운 고양이의 옛 기록)
+   */
+  function paintCats(c) {
+    const box = $('cats');
+    const E = window.nunsEnter;
+    const cats = c && Array.isArray(c.cats) && E && E.rigName
+      ? c.cats.map((x) => ({ ...x, name: E.rigName(x.id) })).filter((x) => x.name).sort((a, b) => b.affinity - a.affinity)
+      : [];
+    box.hidden = !cats.length;
+    if (!cats.length) return;
+    const line = $('cats-line');
+    line.textContent = '';
+    const num = (n) => { const b = document.createElement('b'); b.textContent = `${n}번`; return b; };
+    line.append('고양이를 오늘 ', num(c.today), ' 쓰다듬었어요 · 모두 ', num(c.total));
+    const aff = $('aff');
+    aff.textContent = '';
+    for (const x of cats) {
+      const name = document.createElement('span');
+      name.textContent = x.name;
+      const bar = document.createElement('span');
+      bar.className = 'bar';
+      bar.title = `친밀도 ${Math.round(x.affinity * 100)}%`;
+      bar.setAttribute('role', 'meter');
+      bar.setAttribute('aria-label', `${x.name} 친밀도`);
+      bar.setAttribute('aria-valuemin', '0');
+      bar.setAttribute('aria-valuemax', '100');
+      bar.setAttribute('aria-valuenow', String(Math.round(x.affinity * 100)));
+      const fill = document.createElement('i');
+      fill.style.width = `${Math.round(x.affinity * 100)}%`;
+      bar.append(fill);
+      aff.append(name, bar);
+    }
+  }
+
   async function load() {
     const d = await window.nunsseom.statsData(current);
     weeks = d.weeks;
@@ -401,6 +455,7 @@
 
     paintGrass(d.grass, d.max, accent);
     paintLegend(accent);
+    paintCats(d.cats);
 
     document.querySelectorAll('#range button').forEach((b) => b.classList.toggle('on', +b.dataset.w === weeks));
   }

@@ -129,6 +129,11 @@ const DEFAULT_SETTINGS = {
   // 찍은 빠르기 그대로인데도 «너무 빠르다»는 말을 들어 기본을 느리게 둔다. 배수 표는 src/breakwin.js CAT_RATES ·
   // renderer/anim/clip.js RATES. 모르는 값은 읽는 쪽(catRate·rateOf)이 기본 'slow' 로 본다.
   catSpeed: 'slow',
+  // 만지는 고양이 — 켜면 고양이 영상 대신 같은 고양이의 사진을 리그(renderer/anim/catrig.js)로 움직여 앉힌다.
+  // 커서를 따라보고, 쓰다듬으면 반응하고, 날이 갈수록 친해진다. 끄면 예전 영상 그대로.
+  // 그르렁 소리는 따로 끈다 — 크기는 알림음 크기(soundVolume)를 따른다
+  catTouch: true,
+  catPurr: true,
 
   // 알림음 — 화면만으로는 다른 창을 보고 있을 때 놓친다
   soundEnabled: true,
@@ -256,6 +261,9 @@ function blank() {
     stocksWatch: [],     // 관심 종목 [{ ticker, name, market }] — 이 앱이 직접 들고 있다
     enterCustom: [],     // 직접 넣은 등장 연출 [{ id, name, file, kind, ms }]
     stats: {},           // { 'YYYY-MM-DD': { done, skipped } }
+    // 만지는 고양이 — 고양이(사진 폴더)마다 { affinity 친밀도 0~1, lastDay 마지막으로 본 날, today 그날 친밀도에 든
+    // 쓰다듬기, pets 모두 쓰다듬은 횟수 }, 날마다 쓰다듬은 횟수, 모두 합
+    catRig: { cats: {}, days: {}, total: 0 },
     widgetPos: null,
     widgetSize: null,
     session: null        // 종료 직전 상태 (업데이트 재시작 후 이어가기용)
@@ -283,6 +291,7 @@ function load() {
       stocksWatch: Array.isArray(raw.stocksWatch) ? raw.stocksWatch : [],
       enterCustom: Array.isArray(raw.enterCustom) ? raw.enterCustom : [],
       stats: raw.stats || {},
+      catRig: catRigOf(raw.catRig),
       widgetPos: raw.widgetPos || null,
       widgetSize: raw.widgetSize || null,
       session: raw.session || null,
@@ -390,6 +399,46 @@ function newMailId(s) {
 function todayKey() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** 'YYYY-MM-DD' 두 날 사이 날 수 (b − a). 시계를 되돌려 거꾸로면 0 */
+function daysBetween(a, b) {
+  const t = (k) => { const m = String(k || '').match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) : NaN; };
+  const d = Math.round((t(b) - t(a)) / 86400000);
+  return Number.isFinite(d) && d > 0 ? d : 0;
+}
+
+/**
+ * 만지는 고양이 기록을 믿을 꼴로 — 손으로 고친 파일·옛 파일이어도 숫자만 남긴다.
+ * 친밀도가 숫자가 아니면 «모름»(null) — 휴식 창에 안 실어 리그 기본값에서 시작한다
+ */
+function catRigOf(raw) {
+  const out = { cats: {}, days: {}, total: 0 };
+  if (!raw || typeof raw !== 'object') return out;
+  const n = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : 0);
+  const cats = raw.cats && typeof raw.cats === 'object' ? raw.cats : {};
+  for (const id of Object.keys(cats)) {
+    const c = cats[id];
+    if (!c || typeof c !== 'object' || !/^[a-z0-9][a-z0-9-]{0,31}$/.test(id)) continue;
+    const a = c.affinity;
+    out.cats[id] = {
+      affinity: typeof a === 'number' && a >= 0 && a <= 1 ? a : null,
+      lastDay: typeof c.lastDay === 'string' ? c.lastDay : null,
+      today: n(c.today),
+      pets: n(c.pets)
+    };
+  }
+  const days = raw.days && typeof raw.days === 'object' ? raw.days : {};
+  for (const k of Object.keys(days)) if (/^\d{4}-\d{2}-\d{2}$/.test(k)) out.days[k] = n(days[k]);
+  out.total = n(raw.total);
+  return out;
+}
+
+/** 이 고양이 기록 (없으면 만든다). 날이 바뀌었으면 «오늘 친밀도에 든 쓰다듬기»를 새로 센다 */
+function catOf(s, id, today) {
+  const c = s.catRig.cats[id] || (s.catRig.cats[id] = { affinity: null, lastDay: null, today: 0, pets: 0 });
+  if (c.lastDay !== today) { c.lastDay = today; c.today = 0; }
+  return c;
 }
 
 module.exports = {
@@ -899,6 +948,47 @@ module.exports = {
   },
   todayStats() {
     return load().stats[todayKey()] || { done: 0, skipped: 0 };
+  },
+
+  // ── 만지는 고양이 ──
+  // 휴식 창이 알린 값만 받는다 — 보낸 창과 값은 src/breakwin.js 가 먼저 거른다. 친밀도 셈은 리그(renderer/anim/catrig.js)가 한다:
+  // 앱은 onAffinity 값을 그대로 저장하고, 며칠 만에 볼 때 식히는 것(affinityAfter)도 휴식 창이 한다 — 여기선 날 수만 센다
+  /** 휴식 창에 싣는 것 — 만난 고양이마다 친밀도, 마지막으로 본 날부터 지난 날 수, 오늘 친밀도에 든 쓰다듬기 */
+  catRigCats() {
+    const s = load();
+    const today = todayKey();
+    const out = {};
+    for (const [id, c] of Object.entries(s.catRig.cats)) {
+      if (c.affinity == null) continue;
+      out[id] = { affinity: c.affinity, daysAway: c.lastDay ? daysBetween(c.lastDay, today) : 0, today: c.lastDay === today ? c.today : 0 };
+    }
+    return out;
+  },
+  /** 쓰다듬기 한 판 — strokes 는 오늘·모두·이 고양이 횟수에, credited(경고 중 쓸기는 뺀 것)는 오늘 친밀도에 든 몫에 */
+  recordCatPet(id, strokes, credited) {
+    const s = load();
+    const today = todayKey();
+    const c = catOf(s, id, today);
+    c.today += credited;
+    c.pets += strokes;
+    s.catRig.days[today] = (s.catRig.days[today] || 0) + strokes;
+    s.catRig.total += strokes;
+    save();
+  },
+  /** 친밀도 — 리그가 셈한 값 그대로. 오늘 봤다고 적는다 */
+  setCatAffinity(id, value) {
+    const s = load();
+    catOf(s, id, todayKey()).affinity = value;
+    save();
+  },
+  /** 기록 창 — 오늘·모두 쓰다듬은 횟수, 만난 고양이마다 친밀도·쓰다듬은 횟수 */
+  catRigStats() {
+    const r = load().catRig;
+    return {
+      today: r.days[todayKey()] || 0,
+      total: r.total,
+      cats: Object.entries(r.cats).filter(([, c]) => c.affinity != null).map(([id, c]) => ({ id, affinity: c.affinity, pets: c.pets }))
+    };
   },
   /** 잔디 데이터 — typeId 가 null 이면 전체 */
   grassSeries(weeks, typeId) {

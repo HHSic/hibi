@@ -540,6 +540,8 @@
   .catspeed { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 2px; }
   .catspeed[hidden] { display: none; }
   .catspeed .hint { flex-basis: 100%; }
+  /* 고양이 만지기·골골 소리 — .row 가 display 를 주므로 hidden 속성의 기본 display:none 을 다시 세운다 */
+  .cattouch[hidden] { display: none; }
   /* 키보드로 옮겨 다닐 때 어디 있는지 — .mini 는 all: unset 이라 초점 표시가 없다 (.acct-fix 와 같은 링) */
   .catspeed .mini:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
   :root[data-theme="light"] .catspeed .mini:focus-visible { box-shadow: none; outline: 2px solid var(--accent-fill); outline-offset: 2px; }
@@ -977,6 +979,18 @@
           <span class="hint" id="cat-speed-hint"></span>
         </div>
         <div class="entprev" id="enter-preview" hidden></div>
+      </div>
+      <!-- 만지는 고양이 — «고양이 움직임»처럼 고양이가 나올 수 있는 연출을 골랐을 때만 보인다 (settings.js renderCatTouch).
+           골골 소리는 만지기를 켰을 때만 -->
+      <div class="row toggle cattouch" id="cat-touch-row" hidden>
+        <span class="nm">고양이 만지기<i>고양이가 커서를 보고, 쓰다듬으면 반응합니다</i></span>
+        <span></span>
+        <button class="sw" id="catTouch" role="switch" aria-label="고양이 만지기"></button>
+      </div>
+      <div class="row toggle cattouch" id="cat-purr-row" hidden>
+        <span class="nm">골골 소리<i>쓰다듬으면 작게 그르렁댑니다 · 알림음 크기를 따릅니다</i></span>
+        <span></span>
+        <button class="sw" id="catPurr" role="switch" aria-label="골골 소리"></button>
       </div>
       <div class="row toggle">
         <span class="nm">휴식을 끝까지<i>«건너뛰기»·«다 했어요»를 숨기고 «5분 뒤에»만 남깁니다</i></span>

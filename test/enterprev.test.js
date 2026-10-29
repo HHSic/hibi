@@ -9,6 +9,7 @@
 //   · 다른 연출로 바꾸면 돌리던 것이 멈춘다. 고양이 하나를 고르면 돌리지 않는다
 //   · «고양이 움직임» 줄은 고양이·«그때그때»에서만 보이고, 고른 빠르기가 저장되며 미리보기 영상에 바로 들어간다
 //     («랜덤 고양이»가 다음 고양이로 넘어가도 그대로)
+//   · «고양이 만지기»·«골골 소리» 스위치도 고양이에서만 보이고, 누르면 저장된다 (골골 소리는 만지기를 켰을 때만)
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -219,6 +220,36 @@ app.whenReady().then(async () => {
   const c8 = await until(async () => { const s = await sp(); return s.rate === 0.75 ? s : null; }, 2000, 50) || await sp();
   ok(c8.rate === 0.75 && c8.focus === '느리게' && JSON.stringify(c8.pressed) === '["느리게"]' && (await lastSaved()).catSpeed === 'slow',
     '키보드(Enter)로도 고르고, 누른 단추에 초점이 남는다', { c8, saved: await lastSaved() });
+
+  console.log('\n[고양이 만지기]');
+  // «고양이 움직임» 줄처럼 고양이가 나올 수 있는 연출에서만 보이고, 누르면 저장된다. 골골 소리 줄은 만지기를 켰을 때만
+  const tc = () => js(`(() => {
+    const vis = (id) => { const el = document.getElementById(id); return !el.hidden && el.getBoundingClientRect().height > 0; };
+    const sw = (id) => document.getElementById(id).getAttribute('aria-checked');
+    return { touch: vis('cat-touch-row'), purr: vis('cat-purr-row'), touchOn: sw('catTouch'), purrOn: sw('catPurr'),
+      labels: [...document.querySelectorAll('.cattouch .nm')].map((n) => n.firstChild.textContent.trim()) };
+  })()`);
+  const k1 = await tc();
+  ok(k1.touch && k1.purr && k1.touchOn === 'true' && k1.purrOn === 'true' && JSON.stringify(k1.labels) === '["고양이 만지기","골골 소리"]',
+    '고양이를 고르면 «고양이 만지기»·«골골 소리»가 켜진 채 보인다 (기본 켜짐)', k1);
+  await click('블라인드');
+  await sleep(200);
+  const k2 = await tc();
+  ok(!k2.touch && !k2.purr, '고양이가 아닌 연출이면 둘 다 감춘다', k2);
+  await click('회색 고양이');
+  await sleep(200);
+  await js(`document.getElementById('catTouch').click()`);
+  await sleep(200);
+  const k3 = await tc();
+  const k3s = await lastSaved();
+  ok(k3.touch && !k3.purr && k3.touchOn === 'false' && k3s && k3s.catTouch === false, '만지기를 끄면 저장하고 골골 소리 줄을 감춘다', { k3, saved: k3s });
+  await js(`document.getElementById('catTouch').click()`);
+  await sleep(200);
+  const k4 = await tc();
+  ok(k4.purr && k4.touchOn === 'true' && (await lastSaved()).catTouch === true, '다시 켜면 골골 소리 줄이 돌아온다', k4);
+  await js(`document.getElementById('catPurr').click()`);
+  await sleep(100);
+  ok((await lastSaved()).catPurr === false && (await tc()).purrOn === 'false', '골골 소리를 끄면 catPurr 가 저장 요청으로 나간다', await lastSaved());
 
   // 없는 파일을 일부러 연 «불러오기 실패» 말고, 미리보기 코드에서 난 오류가 없어야 한다
   const ours = errs.filter((e) => /^(settings|enter|clip)\.js$/.test(e.file));

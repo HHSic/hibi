@@ -11,6 +11,8 @@
  * 고양이만 예외로 실제 촬영 영상을 띄운다(renderer/anim/clip.js). SVG 실루엣은 «조잡하다»,
  * 코드로 그린 캔버스 고양이(anim/cat.js)는 «이상하다»는 말을 들었다 — 진짜 동물은 그림으로
  * 흉내 낼수록 어색하다. 영상이 안 열리면 옛 그림으로 물러나지 않고 조용히 비워 둔다.
+ * 설정 «고양이 만지기»가 켜져 있으면 영상 대신 같은 고양이의 사진을 리그로 움직여 앉힌다(anim/catrig.js, mountRig) —
+ * 커서를 따라보고, 쓰다듬으면 반응한다. 리그가 안 뜨면 영상으로 물러난다.
  */
 
 // 연출은 휴식 화면의 «배경»이다 — 도착해 화면을 채우고, 휴식 내내 그 자리에서 논다.
@@ -36,6 +38,11 @@ function clipFor(id) {
   if (DISABLED.has(id)) return null;
   const c = window.nunsClip;
   return c && c.CLIPS && c.CLIPS[id] ? c.CLIPS[id] : null;
+}
+
+/** 이 고양이 영상 대신 만지는 고양이를 앉힐 수 있나 — CLIPS 에 사진 폴더(rig)가 있고 리그(anim/catrig.js)가 실렸다 */
+function rigFor(clip) {
+  return clip && clip.rig && window.nunsCatRig && typeof window.nunsCatRig.mount === 'function' ? clip.rig : null;
 }
 
 /** «랜덤 고양이»가 뽑는 고양이들 — 실제 영상(anim/clip.js CLIPS)이 있는 id 전부. 메인(src/breakwin.js)의 CAT_ENTERS 와 같아야 한다 */
@@ -95,6 +102,21 @@ const ALL = [
   { id: 'random', name: '그때그때', hint: '올 때마다 다른 연출' }
 ];
 const LIST = ALL.filter((m) => !DISABLED.has(m.id));
+
+/**
+ * 영상 둘이 같은 고양이를 찍은 것 — 사진 폴더는 따로지만 기록(쓰다듬은 횟수·친밀도)은 rig.json 의 cat 이름 하나로 모은다
+ * (src/breakwin.js catKey). 기록 창은 그 이름으로 받는다. rig.json 의 cat 과 같아야 한다 (test/catrig.test.js 가 맞춰 본다)
+ */
+const CAT_NAMES = { 'tabby-kitten': '줄무늬 아기 고양이' };
+
+/** 만지는 고양이 이름 — 같은 고양이 이름(CAT_NAMES)이거나, 그 사진을 쓰는 첫 고양이 영상의 이름(위 목록). 기록 창이 친밀도 옆에 쓴다 */
+function rigName(rig) {
+  if (Object.prototype.hasOwnProperty.call(CAT_NAMES, rig)) return CAT_NAMES[rig];
+  const c = window.nunsClip;
+  const id = c && c.CLIPS ? Object.keys(c.CLIPS).find((k) => c.CLIPS[k].rig === rig) : null;
+  const m = id ? ALL.find((x) => x.id === id) : null;
+  return m ? m.name : '';
+}
 
 const NS = 'http://www.w3.org/2000/svg';
 const el = (n, at) => {
@@ -233,6 +255,101 @@ function tv(host) {
 
 const MAKERS = { web, cat, blinds, breathe, tv };
 
+// ── 만지는 고양이 ───────────────────────────────────────
+// 지금 이 창에 앉은 만지는 고양이 (창마다 하나). 휴식 창이 끝내기 전에 쓰다듬던 판을 마저 알리게 하고(pause),
+// 다른 화면에서 오른 친밀도를 받아 넣는다. 시험도 이것으로 상태를 본다
+let rigCur = null;
+
+/**
+ * 고양이 영상 자리에 만지는 고양이를 앉힌다 — 같은 자리·같은 크기(clip.js rigBox), 같은 빛(glow)·같은 들어오기(.ent-clip).
+ * rig.json·사진을 못 읽거나 WebGL 이 없으면(리그가 정지 그림으로 물러난 것도) 걷고 onFail 을 한 번 부른다 —
+ * 정지 사진보다 움직이는 영상이 낫다.
+ *
+ * 영상처럼 마우스가 있는 화면 하나에만 앉는다 (휴식 창이 그 화면에서만 play 를 부른다). 커서가 다른 모니터로 가도
+ * 따로 재우지 않는다 — 리그가 커서를 잃으면 혼자 숨쉬고 두리번거리고, 창이 가려지면 스스로 쉰다. 그림은 .curtain(pointer-events: none)
+ * 안에 있어 휴식 안내·단추를 막지 않는다 — 리그는 커서를 window 에서 듣고, 고양이 위인지는 제 그물로 가린다.
+ *
+ * o: purr(그르렁 소리), volume(0~1), cats({ 고양이 이름: { affinity, daysAway, today } } — 메인이 저장한 친밀도.
+ *    이름은 rig.json 의 cat, 없으면 사진 폴더 — 같은 고양이를 찍은 영상끼리 기록을 모은다, src/breakwin.js catKey),
+ *    rigOf(id) → Promise<rig.json 객체>(휴식 창은 CSP 가 XHR 을 막아 메인이 읽어 준다), onPet(id, info), onAffinity(id, v), debug
+ */
+function mountRig(host, clip, o, onFail) {
+  const R = window.nunsCatRig, C = window.nunsClip;
+  const id = clip.rig;
+  const hero = !!(clip.place && clip.place.mode === 'hero');
+  const root = document.documentElement;
+  const box = document.createElement('div');
+  box.className = 'ent-rig';
+  box.setAttribute('aria-hidden', 'true');
+  // 영상마다 주는 빛(까만 고양이) — 상자에 걸어 캔버스·정지 그림 어느 쪽이든 같이 받는다
+  if (clip.glow) box.style.filter = clip.glow;
+  let h = null, rig = null, world = null, dead = false;
+
+  const place = () => {
+    if (!world) return;
+    const b = C.rigBox(host.clientWidth || window.innerWidth, host.clientHeight || window.innerHeight, clip, rig, world);
+    box.style.left = `${b.x}px`;
+    box.style.top = `${b.y}px`;
+    box.style.width = `${b.w}px`;
+    box.style.height = `${b.h}px`;
+  };
+  const ctl = {
+    id, box,
+    get handle() { return h; },
+    destroy() { if (!dead) leave(); }
+  };
+  function leave() {
+    dead = true;
+    window.removeEventListener('resize', place);
+    if (hero) root.classList.remove('ent-hero');
+    if (h) h.destroy();   // 쓰다듬던 판이 있으면 여기서 onPet 으로 마저 알린다
+    box.remove();
+    if (rigCur === ctl) rigCur = null;
+  }
+  function fail() {
+    if (dead) return;
+    leave();
+    if (onFail) onFail();
+  }
+  if (rigCur) rigCur.destroy();
+  rigCur = ctl;
+  // 휴식 안내는 도착 뒤에 뜬다 — 주인공 자리는 지금 비켜 둔다 (영상과 같다)
+  if (hero) root.classList.add('ent-hero');
+  host.append(box);
+  window.addEventListener('resize', place);
+
+  Promise.resolve().then(() => o.rigOf(id)).then((r) => {
+    if (dead) return null;
+    if (!r || !r.size || !r.body) throw new Error('rig.json 없음');
+    rig = r;
+    world = R.worldOf(rig);
+    place();
+    // 친밀도 — 메인이 저장한 값. 며칠 만에 보면 리그 규칙(affinityAfter)대로 식힌다. 처음 보는 고양이는 리그 기본값
+    const cat = typeof rig.cat === 'string' && /^[a-z0-9][a-z0-9-]{0,31}$/.test(rig.cat) ? rig.cat : id;
+    const rec = (o.cats && Object.prototype.hasOwnProperty.call(o.cats, cat) && o.cats[cat]) || null;
+    const aff = rec ? (rec.daysAway > 0 ? R.affinityAfter(rec.affinity, { daysAway: rec.daysAway }) : rec.affinity) : undefined;
+    h = R.mount(box, {
+      base: `${C.RIG_DIR}${id}/`, rig,
+      sound: !!o.purr, volume: o.volume,
+      affinity: aff, todayStrokes: rec ? rec.today : 0,
+      className: hero ? 'ent-clip ent-clip-hero' : 'ent-clip',
+      debug: !!o.debug,
+      onPet: (p) => { if (o.onPet) o.onPet(id, p); },
+      onAffinity: (v) => { if (o.onAffinity) o.onAffinity(id, v); }
+    });
+    return h.ready;
+  }).then((r) => {
+    if (dead || !r) return;
+    if (r.mode !== 'webgl') { fail(); return; }
+    // 친밀도는 «마지막으로 본 날»부터 식는다 — 앉으면 «오늘 봤다»를 알린다 (식힌 값도 이때 저장된다)
+    if (o.onAffinity) o.onAffinity(id, h.getAffinity());
+  }).catch(fail);
+  return ctl;
+}
+
+/** 지금 이 창의 만지는 고양이 — 없으면 null */
+function rigNow() { return rigCur; }
+
 /**
  * 연출을 재생한다. 내용이 뜰 시점(ms)으로 resolve.
  * 움직임을 줄여 달라는 설정이면 아무것도 안 하고 바로 끝낸다 — 그 설정을 켠 사람에게
@@ -240,6 +357,7 @@ const MAKERS = { web, cat, blinds, breathe, tv };
  *
  * opts.catRate — 고양이 영상 재생 빠르기 (설정 «고양이 움직임», 메인이 buildBreakPayload 에서 정한다).
  * 진짜 고양이 영상(anim/clip.js CLIPS)에만 쓴다. 내 파일·다른 연출은 그대로 — 내용이 뜨는 때도 그대로다.
+ * opts.rig — 있으면 고양이 영상 대신 만지는 고양이를 앉힌다(mountRig 의 o). 리그가 안 뜨면 영상으로 물러난다.
  */
 function play(id, host, asset, breakSec, opts) {
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -256,6 +374,7 @@ function play(id, host, asset, breakSec, opts) {
   }
   const mine = isMine(pick) && asset && asset.url;
   const clip = mine ? null : clipFor(pick);
+  const rig = clip && opts && opts.rig && rigFor(clip) ? opts.rig : null;
   // 고양이 종류(cat-loaf 등)는 옛 그림(MAKERS)이 없고 영상만 있다 — 영상이 있으면 그걸로 띄운다
   if (reduce || (!mine && !clip && !MAKERS[pick])) return Promise.resolve(0);
 
@@ -273,7 +392,10 @@ function play(id, host, asset, breakSec, opts) {
       media(host, asset);
     } else if (clip) {
       // 영상이 안 열리면 커튼을 걷는다 — 휴식 내용은 이미 제때 뜬다
-      window.nunsClip.mount(host, clip, () => { host.className = 'curtain'; }, { rate: opts && opts.catRate });
+      const video = () => window.nunsClip.mount(host, clip, () => { host.className = 'curtain'; }, { rate: opts && opts.catRate });
+      // 만지는 고양이가 안 뜨면 영상으로
+      if (!rig) video();
+      else mountRig(host, clip, rig, video);
     } else if (scene) {
       // 휴식마다 조금씩 다르게 — 시드는 여기서 한 번 정한다 (draw 안에서는 무작위를 안 쓴다)
       window.nunsAnim.mount(host, scene, { seed: (Date.now() % 100000) + 1 });
@@ -301,4 +423,4 @@ function play(id, host, asset, breakSec, opts) {
   return Promise.resolve(coverMs(pick, asset));
 }
 
-window.nunsEnter = { LIST, play, coverMs, isMine, sceneFor, clipFor, catIds, effective, DISABLED, TOTAL, MS };
+window.nunsEnter = { LIST, play, coverMs, isMine, sceneFor, clipFor, catIds, effective, DISABLED, TOTAL, MS, rigFor, rigName, rigNow };

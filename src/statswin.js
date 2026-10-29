@@ -69,7 +69,9 @@ function statsPayloadFull(typeId) {
     max: g.max,
     streak: st,
     today: store.todayCount(sel),
-    detail: sel ? tabs.find((t) => t.id === sel) : null
+    detail: sel ? tabs.find((t) => t.id === sel) : null,
+    // 만지는 고양이 — 오늘·모두 쓰다듬은 횟수, 만난 고양이마다 친밀도 (전체 보기에서만 그린다)
+    cats: store.catRigStats()
   };
 }
 

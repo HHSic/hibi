@@ -33,11 +33,18 @@
  *                 비켜 준다 («가운데에 고양이, 글·단추는 오른쪽 아래 구석으로» 라는 요청).
  *                 이 화면에서만 html.ent-hero 를 붙여 overlay.html 의 CSS 가 내용을 옮긴다 —
  *                 연출은 마우스가 있는 화면 하나에만 그리므로, 다른 모니터는 가운데 그대로다.
+ *
+ * ── 만지는 고양이 (anim/catrig.js) ─────────────────────────
+ *   영상은 손을 대도 반응이 없다. 설정 «고양이 만지기»가 켜져 있으면 같은 고양이의 사진 한 장을 리그로 움직여
+ *   영상 대신 앉힌다 — 같은 자리, 같은 크기로 (rigBox). 어느 사진을 쓰는지는 CLIPS 의 rig 하나로만 정한다
+ *   (assets/catrig/<rig>/). 리그가 안 뜨면(WebGL 없음·그림 없음) 영상으로 물러난다 — enter.js 가 고른다.
  */
 (() => {
   /**
    * 싣고 다니는 영상. width·height 는 영상의 픽셀 크기다 — 영상이 열리기 전에도 자리를 잡으려고
    * 적어 둔다 (다시 구우면 같이 고친다 — test/catclip.test.js 가 맞는지 본다).
+   * rig — 만지는 고양이 사진 폴더 이름(assets/catrig/<rig>/). 한 영상을 두 자리가 같이 쓰면 사진도 같이 쓴다
+   * (메인 src/breakwin.js 의 CAT_ENTERS 가 모두 rig 를 가져야 한다 — test/catrig.test.js 가 본다).
    */
   const CLIPS = {
     'cat-loaf': {
@@ -47,6 +54,7 @@
       height: 600,
       fps: 25,
       place: { mode: 'hero', height: 0.8 },
+      rig: 'cat-loaf',
       arrivalMs: 700
     },
     cat: {
@@ -56,6 +64,7 @@
       fps: 25,   // 원본은 30fps 로 늘린 25fps — 되풀이 장(6장마다 3번째)을 빼고 구웠다
       // 오른쪽 아래 구석에 앉힌다. 가끔 왼쪽 — 화면 가운데의 휴식 안내 쪽 — 을 돌아본다.
       place: { mode: 'corner', anchor: 'right', side: 0.035, bottom: 0, height: 0.46 },
+      rig: 'cat',
       arrivalMs: 700
     },
     'cat-meow': {
@@ -65,6 +74,7 @@
       height: 760,
       fps: 25,   // 원본은 30fps 로 늘린 25fps — 되풀이 장을 빼고 구웠다
       place: { mode: 'corner', anchor: 'right', side: 0.035, bottom: 0, height: 0.46 },
+      rig: 'cat-meow',
       arrivalMs: 700
     },
     'cat-lie': {
@@ -74,6 +84,7 @@
       height: 494,
       fps: 25,
       place: { mode: 'corner', anchor: 'right', side: 0.035, bottom: 0, height: 0.46 },
+      rig: 'cat-lie',
       arrivalMs: 700
     },
     'cat-roll': {
@@ -83,6 +94,7 @@
       height: 426,
       fps: 25,
       place: { mode: 'corner', anchor: 'right', side: 0.035, bottom: 0, height: 0.46 },
+      rig: 'cat-roll',
       arrivalMs: 700
     },
     'cat-rb': {
@@ -97,6 +109,7 @@
       // 오른쪽 여백은 다른 고양이(0.035)보다 좁게 — 가로세로가 거의 같아서, 세로 화면(1080x1920)에서 단추 줄을
       // 피해 폭이 줄면 짧은 변의 30% 아래로 작아졌다 (영상 안에 제 여백이 조금 있어 창 끝에 붙어 보이지는 않는다)
       place: { mode: 'corner', anchor: 'right', side: 0.01, bottom: 0, height: 0.46 },
+      rig: 'grey',
       arrivalMs: 700
     },
     'cat-rb-hero': {
@@ -108,6 +121,7 @@
       fps: 30,
       cut: { top: true },
       place: { mode: 'hero', height: 0.8 },
+      rig: 'grey',
       arrivalMs: 700
     },
     'cat-black': {
@@ -120,6 +134,7 @@
       // 어두운 휴식 화면에 까만 털이 묻힌다 — 위쪽으로 치우친 옅은 뒤쪽 빛(mount 가 filter 로 입힌다)
       glow: 'drop-shadow(0 -2px 10px rgba(225, 232, 255, 0.2))',
       place: { mode: 'corner', anchor: 'right', side: 0.035, bottom: 0, height: 0.46 },
+      rig: 'cat-black',
       arrivalMs: 700
     },
     'cat-black-hero': {
@@ -131,6 +146,7 @@
       // 어두운 휴식 화면에 까만 털이 묻힌다 — 위쪽으로 치우친 옅은 뒤쪽 빛(mount 가 filter 로 입힌다)
       glow: 'drop-shadow(0 -2px 10px rgba(225, 232, 255, 0.2))',
       place: { mode: 'hero', height: 0.8 },
+      rig: 'cat-black',
       arrivalMs: 700
     }
   };
@@ -226,6 +242,62 @@
     return { x, y, w: cw, h: ch };
   }
 
+  /** 만지는 고양이 사진 폴더 — CLIPS 의 rig 가 이 아래 폴더 이름이다 (base.webp·eyes.webp·rig.json) */
+  const RIG_DIR = '../assets/catrig/';
+
+  const box4 = (a) => Array.isArray(a) && a.length === 4 && a.every(Number.isFinite) && a[2] > a[0] && a[3] > a[1];
+
+  /**
+   * 리그 사진이 영상 프레임의 어디서 왔나 — 사진 상자 [x0, y0, x1, y1] (영상 px, 화면에 보이는 방향). 모르면 null.
+   * rig.json 의 display.video 가 있으면 그것, 없으면 굽기 기록(source — 영상 크기, 잘라 낸 상자 crop, 배율 scale)으로 셈한다.
+   * 거울로 구운 고양이(display.mirror)는 굽기마다 crop 을 적은 기준이 다르다 — source.mirror·mirrored 는 뒤집은 프레임 px,
+   * flipX 는 원래 프레임 px 에서 잘라 뒤집었다. 영상 프레임 알파와 겹쳐 재 보면 이렇게 읽어야 맞는다
+   * (겹침 IoU 0.99·0.96. 반대로 읽으면 0.7~0.8 — 고양이가 영상 폭만큼 옆으로 밀려 앉는다)
+   */
+  function rigSource(rig, clip) {
+    const d = rig && rig.display && rig.display.video;
+    if (box4(d)) return d;
+    const s = rig && rig.source;
+    if (!s || !box4(s.crop) || !(s.scale > 0) || !rig.size) return null;
+    const vw = s.videoSize ? s.videoSize[0] : clip.width, vh = s.videoSize ? s.videoSize[1] : clip.height;
+    // 영상을 다른 크기로 다시 구웠으면 이 기록은 옛 영상 것이다 — 믿지 않는다
+    if (vw !== clip.width || vh !== clip.height) return null;
+    let x0 = s.crop[0], x1 = s.crop[0] + rig.size.w / s.scale;
+    if (rig.display && rig.display.mirror && (s.mirror || s.mirrored)) { const a = vw - x1; x1 = vw - x0; x0 = a; }
+    return [x0, s.crop[1], x1, s.crop[1] + rig.size.h / s.scale];
+  }
+
+  /**
+   * 만지는 고양이(anim/catrig.js)가 놓일 상자 (CSS px) — 같은 고양이 영상과 같은 자리에 같은 크기로 보이게.
+   * 영상 칸(layout)을 먼저 잡고, 리그 세계(world = nunsCatRig.worldOf(rig) — 사진 + 둘레 여백)를 그 칸의 영상 px 로 옮긴다.
+   * 세계 크기를 그대로 layout 에 넣으면 안 된다 — 영상은 고양이 둘레에 제 투명 여백이 있고 리그 세계는 여백이 달라서,
+   * 고양이가 영상보다 커지거나 작아지고 자리도 어긋난다. 사진이 어디서 왔는지 모르면 영상 칸에 비율대로 넣어 바닥에 앉힌다.
+   * 거울이면 상자째 뒤집혀 보인다(사진 왼쪽 여백이 화면 오른쪽에 온다) — 그 몫까지 옮긴다. 여백이 화면 밖으로 나가면 안으로 민다.
+   */
+  function rigBox(w, h, clip, rig, world) {
+    const b = layout(w, h, clip);
+    const src = rigSource(rig, clip);
+    let x, y, bw, bh;
+    if (src) {
+      const kx = (src[2] - src[0]) / rig.size.w, ky = (src[3] - src[1]) / rig.size.h;   // 영상 px / 사진 px
+      const sx = b.w / clip.width, sy = b.h / clip.height;                              // 화면 px / 영상 px
+      const vx = rig.display && rig.display.mirror ? src[2] - (world.x0 + world.w) * kx : src[0] + world.x0 * kx;
+      x = b.x + vx * sx;
+      y = b.y + (src[1] + world.y0 * ky) * sy;
+      bw = world.w * kx * sx;
+      bh = world.h * ky * sy;
+    } else {
+      const s = Math.min(b.w / world.w, b.h / world.h);
+      bw = world.w * s;
+      bh = world.h * s;
+      x = b.x + (b.w - bw) / 2;
+      y = b.y + b.h - bh;
+    }
+    x = Math.max(0, Math.min(x, w - bw));
+    y = Math.max(0, Math.min(y, h - bh));
+    return { x, y, w: bw, h: bh };
+  }
+
   /**
    * 휴식 창에 붙인다. 영상이 안 열리면(파일이 없거나 깨짐) 걷어 내고 onFail 을 한 번 부른다.
    * opts.rate — 재생 빠르기 (고양이 움직임 설정, rateOf). 안 주면 1 — 찍은 그대로.
@@ -300,5 +372,5 @@
     };
   }
 
-  window.nunsClip = { CLIPS, layout, mount, heroPanelWidth, RATES, DEFAULT_SPEED, speedOf, rateOf };
+  window.nunsClip = { CLIPS, layout, mount, heroPanelWidth, RATES, DEFAULT_SPEED, speedOf, rateOf, RIG_DIR, rigSource, rigBox };
 })();

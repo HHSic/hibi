@@ -37,9 +37,17 @@ contextBridge.exposeInMainWorld('nunsseom', {
   getBreakPayload: () => ipcRenderer.invoke('overlay:get-payload'),
   // 휴식 창은 미리 만들어 두고 숨겨 놓는다 — 시작 신호를 받으면 그때 그린다
   onBreakBegin: (cb) => ipcRenderer.on('overlay:begin', (_e, p) => cb(p)),
+  // 휴식이 끝났다 — 메인이 창을 숨기고 곧 닫는다. 그 전에 마저 알릴 것(쓰다듬던 판)을 알린다
+  onBreakEnding: (cb) => ipcRenderer.on('overlay:ending', () => cb()),
   snooze: () => ipcRenderer.send('overlay:snooze'),
   skip: () => ipcRenderer.send('overlay:skip'),
   finish: () => ipcRenderer.send('overlay:done'),
+  // 만지는 고양이 — rig.json 은 메인이 읽어 준다 (휴식 창은 CSP 가 XHR 을 막는다). 쓰다듬은 횟수·친밀도는 메인이 저장하고,
+  // 다른 화면에서 오른 친밀도는 메인이 나머지 휴식 창에 알린다
+  catRig: (id) => ipcRenderer.invoke('catrig:rig', id),
+  catPet: (p) => ipcRenderer.send('catrig:pet', p),
+  catAffinity: (p) => ipcRenderer.send('catrig:affinity', p),
+  onCatAffinity: (cb) => ipcRenderer.on('catrig:affinity', (_e, m) => cb(m)),
 
   // 설정
   getSettings: () => ipcRenderer.invoke('settings:get'),
