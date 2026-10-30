@@ -10,9 +10,13 @@
 //       주인공은 안내·단추와 안 겹친다. 다른 모니터는 영상처럼 비워 둔다(주인공 자리도 안 켠다). 며칠 만에 보면 친밀도를 식혀 저장한다
 //   [4] 쓰다듬기·휴식 끝 — 커서가 창 밖으로 나가도 혼자 숨쉰다. 진짜 커서로 쓰다듬다 휴식이 시간으로 끝나도(메인 endBreak)
 //       쓰다듬은 횟수가 메인 store 까지 간다. 걷으면 사라진다. 손가락으로 떼며 쓸어도 센다
+//   [4b] 혼자 두리번 — 진짜 고양이처럼 홱 돌고 멈춘다 (90% 까지 0.8초 안, 넘치지 않고, 구석 크기에서 그린 장 사이 건너뛰지 않는다).
+//       쉬는 중·도는 중 누르면 고개를 든다
 //   [5] 물러나기 — WebGL 이 없거나 사진·rig.json 이 없으면 영상으로. 설정을 끄면 영상 그대로
 //   [6] 기록 — 이번 휴식의 창이 아닌 창(휴식 창 페이지여도)·이상한 값은 버린다. 같은 고양이를 찍은 영상끼리 한 고양이로 센다.
 //       다른 화면에 친밀도와 오늘 횟수를 나눈다
+//   [6d] 오늘 친밀도에 든 횟수 — 경고 중 쓸기는 리그도 store 처럼 안 센다(창 안과 다음 휴식의 셈 바탕이 하나). 다른 화면이 알린 몫은
+//       더 클 때만 받고, 그 바탕으로 친밀도를 셈한다
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -366,6 +370,70 @@ app.whenReady().then(async () => {
     win.destroy();
   }
 
+  console.log('\n[4b] 혼자 두리번 — 홱 돌고 멈춘다');
+  {
+    // 커서가 없는 창 — 혼자 두리번만 돈다. 3.5~8초를 기다리지 않게 debug.drift 로 바로 건다(왼쪽 끝에서 가만 → 오른쪽 끝, 0.9 rad).
+    // 회색 고양이를 앱 구석 크기(1080p 에서 캔버스 476×510 기기 px)로 앉힌다 — 시험 창은 확대 0.5 라 상자를 그만큼 키운다.
+    // 한 장 걸음은 «그린 장» 사이에서 잰다(debug.stats().draws 가 바뀐 표본끼리 — 안 그린 tick 의 상태 걸음은 화면에 안 보인다).
+    // 코 둘레가 고개 1 rad 에 가로 14.5·세로 9.5 텍스처 px 가는 어림의 합(리그가 간격을 고르는 셈)을 화면 px 로.
+    // 화면 갱신은 60Hz 로 — 다른 시험 창의 30 이면 리그가 가장 빠른 단계(화면 갱신마다)를 골라도 30fps 라 큰 두리번이 한 장에 0.7px 간다
+    const win = await overlay(1920, 1080);
+    win.webContents.setFrameRate(60);
+    const d = await js(win, `(async () => {
+      const sleep = (ms) => new Promise((q) => setTimeout(q, ms));
+      const dpr = devicePixelRatio || 1, host = document.createElement('div');
+      host.style.cssText = 'position:fixed;left:0;top:0;width:' + (476 / dpr) + 'px;height:' + (510 / dpr) + 'px';
+      document.body.append(host);
+      const rig = await window.nunsseom.catRig('grey');
+      const h = window.nunsCatRig.mount(host, { base: window.nunsClip.RIG_DIR + 'grey/', rig, debug: true, sound: false });
+      const r = await h.ready;
+      await sleep(900);
+      const S = () => h.debug.stats();
+      const watch = (ms) => new Promise((done) => {
+        const smp = [], t0 = performance.now();
+        const f = () => { const t = performance.now() - t0, s = S(); smp.push([t, s.yaw, s.pitch, s.draws]); if (t < ms) requestAnimationFrame(f); else done(smp); };
+        requestAnimationFrame(f);
+      });
+      h.debug.drift(-0.45, 0);
+      await sleep(1500);
+      const Y = 0.45, y0 = S().yaw, sw = Y - y0;
+      const cv = host.querySelector('canvas'), kDev = h.debug.cfg().scale * cv.width / r.width;
+      h.debug.drift(Y, 0);
+      const smp = await watch(1600);
+      const at = (q) => { const s = smp.find((x) => (x[1] - y0) / sw >= q); return s ? s[0] : null; };
+      let over = 0, stepPx = 0, drawn = 0, last = smp[0];
+      for (let i = 1; i < smp.length; i++) {
+        over = Math.max(over, (smp[i][1] - y0) / sw - 1);
+        if (smp[i][3] === last[3]) continue;
+        stepPx = Math.max(stepPx, (Math.abs(smp[i][1] - last[1]) * 14.5 + Math.abs(smp[i][2] - last[2]) * 9.5) * kDev);
+        drawn++; last = smp[i];
+      }
+      // 누르기 끄덕임 — 손가락 톡(이마). 도는 창이 끝난 뒤(쉬는 중)와 돌기 시작 0.15초 뒤(도는 창 안)
+      const [tx, ty] = h.debug.where(rig.head.center[0], rig.head.center[1] - rig.head.ry * 0.35);
+      const nod = async () => {
+        const p0 = S().pitch;
+        for (const t of ['pointerdown', 'pointerup']) window.dispatchEvent(new PointerEvent(t, { pointerType: 'touch', pointerId: 9, isPrimary: true, clientX: tx, clientY: ty, bubbles: true }));
+        const w = await watch(1000);
+        return +Math.max(...w.map((x) => p0 - x[2])).toFixed(3);
+      };
+      const nodRest = await nod();
+      await sleep(1500);
+      h.debug.drift(0, 0);
+      await sleep(150);
+      const nodTurn = await nod();
+      return { y0, t10: at(0.1), t90: at(0.9), over, stepPx, drawn, end: smp[smp.length - 1][1] - Y, canvas: [cv.width, cv.height], nodRest, nodTurn };
+    })()`);
+    const rise = d.t10 != null && d.t90 != null ? d.t90 - d.t10 : null;
+    ok(Math.abs(d.y0 + 0.45) < 0.02 && d.t90 != null && d.t90 <= 800 && rise >= 150 && rise <= 600,
+      '혼자 두리번은 홱 돈다 — 90% 까지 0.8초 안, 10~90% 0.15~0.6초 (예전 스프링 하나는 90% 2.4초·10~90% 2.1초)', { t10: d.t10 && Math.round(d.t10), t90: d.t90 && Math.round(d.t90), rise: rise && Math.round(rise), y0: +d.y0.toFixed(4) });
+    ok(d.over < 0.02 && Math.abs(d.end) < 0.01 && d.stepPx < 0.6 && d.drawn >= 8,
+      '돌고 나면 그 자리에 멈춘다 — 넘쳐 되돌지 않고, 구석 크기에서 그린 장 사이 화면 0.6px 넘게 건너뛰지 않는다 (예전엔 안 그린 tick 을 몰아 1px 남짓)',
+      { over: +d.over.toFixed(4), end: +d.end.toFixed(4), stepPx: +d.stepPx.toFixed(2), drawn: d.drawn, canvas: d.canvas });
+    ok(d.nodRest > 0.15 && d.nodTurn > 0.15,
+      '누르면 고개를 든다 — 쉬는 중에도 두리번 도는 중에도 (빠른 두리번 스프링을 늘 걸면 0.03 rad 로 사라졌다)', { nodRest: d.nodRest, nodTurn: d.nodTurn });
+    win.destroy();
+  }
+
   console.log('\n[5] 물러나기');
   const fallback = async (setup, opts, wantVideo) => {
     const win = await overlay(1920, 1080);
@@ -482,6 +550,81 @@ app.whenReady().then(async () => {
     const want = store.catRigCats().grey.today;
     ok(b && b.affinity === 0.61 && b.today === want && want >= 4,
       '다른 화면에서 오른 친밀도와 오늘 친밀도에 든 횟수를 이 화면의 같은 고양이가 이어 받는다', { b, want });
+    wa.destroy();
+    wb.destroy();
+  }
+
+  console.log('\n[6d] 오늘 친밀도에 든 횟수 — 경고 중 쓸기는 빼고, 다른 화면과 같은 바탕');
+  {
+    // B 에는 같은 고양이가 앉아 알림만 받는다. A 에서 휴식 창처럼(메인이 실은 친밀도·오늘 몫으로) 앉혀 진짜 커서로 두 판 쓰다듬는다 —
+    // 한 판은 기분 좋을 때, 한 판은 도중에 경고(경고 중 쓸기는 친밀도에 안 든다). 리그의 오늘 몫은 store 의 오늘 몫과 같아야 한다
+    const { win: wb, s: sb } = await begin(1920, 1080, pay('cat-rb'));
+    const wa = await overlay(1920, 1080);
+    const cats = store.catRigCats();
+    const today0 = cats.grey.today, total0 = store.catRigStats().total;
+    const a = await js(wa, `(async () => {
+      const E = window.nunsEnter, host = document.getElementById('curtain');
+      const sleep = (ms) => new Promise((q) => setTimeout(q, ms));
+      window.__pets = []; window.__affs = [];
+      const o = { purr: false, volume: 0, cats: ${JSON.stringify(cats)}, debug: true,
+        rigOf: (id) => window.nunsseom.catRig(id),
+        onPet: (id, p) => { window.__pets.push(p); window.nunsseom.catPet({ rig: id, strokes: p.strokes, credited: p.credited }); },
+        onAffinity: (id, v) => { window.__affs.push(v); window.nunsseom.catAffinity({ rig: id, value: v }); } };
+      await E.play('cat-rb', host, null, 20, { rig: o });
+      for (let i = 0; i < 100 && !(E.rigNow() && E.rigNow().handle); i++) await sleep(50);
+      const h = E.rigNow().handle;
+      await h.ready;
+      await sleep(900);
+      // 경고는 길게(화내지 않게), 눈인사는 끈다 — 쓰다듬기 셈만 본다
+      h.debug.moodCfg({ warn: 1e6, greetP: 0, spontP: 0 });
+      const rig = h.debug.rig();
+      const t = h.stats();
+      return { head: h.debug.where(rig.head.center[0], rig.head.center[1] - rig.head.ry * 0.35), a0: t.affinity, today: t.todayStrokes };
+    })()`);
+    const [hx, hy] = a.head;
+    const stroke = async (ms) => {
+      const t0 = Date.now();
+      while (Date.now() - t0 < ms) {
+        const x = hx + Math.sin(((Date.now() - t0) / 900) * Math.PI * 2) * 70;
+        wa.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(x / 2), y: Math.round(hy / 2) });
+        await sleep(16);
+      }
+      wa.webContents.sendInputEvent({ type: 'mouseMove', x: 5, y: 5 });
+    };
+    const st = () => js(wa, '(() => { const t = window.nunsEnter.rigNow().handle.stats(); return { aff: t.affinity, today: t.todayStrokes, strokes: t.strokes, mood: t.mood, pets: window.__pets }; })()');
+    ok(a.today === today0, 'mount 의 todayStrokes 는 메인이 실은 오늘 몫이다', { rig: a.today, store: today0 });
+    // 한 판 — 기분 좋을 때: 쓴 만큼 다 든다
+    await stroke(2600);
+    await sleep(1800);
+    const s1 = await st();
+    const p1 = s1.pets[0] || {};
+    const want1 = await js(wa, `window.nunsCatRig.affinityAfter(${a.a0}, { strokes: ${p1.credited | 0}, todayBefore: ${a.today} })`);
+    ok(s1.pets.length === 1 && p1.strokes > 0 && p1.credited === p1.strokes && s1.today === a.today + p1.credited && Math.abs(s1.aff - want1) < 1e-9,
+      '기분 좋은 판 — 쓴 횟수가 다 오늘 몫에 들고, 친밀도는 규칙(affinityAfter, todayBefore = 오늘 몫)과 같다', { p1, today: s1.today, aff: s1.aff, want1 });
+    // 두 판 — 도중에 경고: 경고 뒤 쓸기는 횟수(onPet strokes·stats)엔 들고 오늘 몫·친밀도엔 안 든다
+    const t2 = Date.now();
+    const half = stroke(3800);
+    await sleep(1600);
+    await js(wa, 'window.nunsEnter.rigNow().handle.debug.mood("warning")');
+    await half;
+    const warned = Date.now() - t2;
+    await sleep(2200);
+    const s2 = await st();
+    const p2 = s2.pets[1] || {};
+    const want2 = await js(wa, `window.nunsCatRig.affinityAfter(${s1.aff}, { strokes: ${p2.credited | 0}, todayBefore: ${s1.today} })`);
+    ok(s2.pets.length === 2 && p2.strokes > p2.credited && p2.credited > 0 && s2.strokes === p1.strokes + p2.strokes,
+      '경고가 든 판 — onPet·stats 횟수는 경고 중 쓸기까지 세고, 친밀도에 든 몫(credited)은 그 앞까지만', { p2, strokes: s2.strokes, ms: warned });
+    ok(s2.today === s1.today + p2.credited && Math.abs(s2.aff - want2) < 1e-9,
+      '경고 중 쓸기는 리그의 오늘 몫에도 안 든다 — 친밀도는 credited 와 그 앞 오늘 몫으로 셈한 값', { today: s2.today, wantToday: s1.today + p2.credited, notStrokes: s1.today + p2.strokes, aff: s2.aff, want2 });
+    await sleep(300);
+    const g = store.catRigCats().grey;
+    ok(g.today - today0 === s2.today - a.today && g.today === s2.today && store.catRigStats().total - total0 === p1.strokes + p2.strokes,
+      '리그의 오늘 몫과 store 의 오늘 몫이 같다 — 다음 휴식도 같은 바탕에서 셈한다 (모두 횟수엔 경고 중 쓸기도 든다)', { rig: s2.today, store: g.today, today0, total: store.catRigStats().total - total0 });
+    const b = sb.none ? null : await js(wb, `(() => { const h = window.nunsEnter.rigNow().handle; const t0 = h.stats();
+      h.setAffinity(t0.affinity, 3); const t1 = h.stats(); h.setAffinity(t0.affinity, t0.todayStrokes + 50); const t2 = h.stats();
+      return { aff: t0.affinity, today: t0.todayStrokes, smaller: t1.todayStrokes, larger: t2.todayStrokes }; })()`);
+    ok(b && Math.abs(b.aff - s2.aff) < 1e-12 && b.today === g.today && b.smaller === g.today && b.larger === g.today + 50,
+      '다른 화면의 같은 고양이는 그 친밀도·오늘 몫을 이어 받는다 — 작은 몫은 무시하고 큰 몫만 받는다 (setAffinity)', { b, store: g.today, aff: s2.aff });
     wa.destroy();
     wb.destroy();
   }

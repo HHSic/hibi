@@ -84,7 +84,8 @@
  *     (setAffinity 의 todayStrokes 는 선택 — 다른 화면에서 오늘 친밀도에 든 횟수. 이 창이 센 것보다 크면 그것으로 하루 몫을 이어 간다)
  *   opts: base(텍스처 폴더 주소), textures { base, eyes }, rig(객체 — 주면 rig.json 을 안 읽는다),
  *         static, sound, volume(0~1), audioContext(남이 연 컨텍스트 — 닫지 않고 그르렁 graph 만 뗀다),
- *         affinity(0~1, 기본 0.3 — 앱이 저장한 친밀도), todayStrokes(오늘 앞서 쓰다듬은 횟수 — 하루 몫이 줄게),
+ *         affinity(0~1, 기본 0.3 — 앱이 저장한 친밀도), todayStrokes(오늘 앞서 친밀도에 든 횟수 = onPet credited 의 합 — 하루 몫이 줄게.
+ *           stats().todayStrokes 도 같은 셈이다),
  *         onPet({ zone, strokes, ms, credited }) (쓰다듬기 한 판이 끝날 때 — zone 은 가장 많이 쓸어 준 곳: head·chin·back·rump·body,
  *           credited 는 그중 친밀도에 든 횟수 — 경고 중 쓸기는 안 든다),
  *         onMood(mood) ('calm'·'content'·'warning'·'annoyed' — 바뀔 때만), onAffinity(v) (한 판이 끝날 때·화냈을 때),
@@ -210,7 +211,8 @@
   //     chest { center, rx, ry, push } — 흰 가슴 타원(push 선택, 기본 [−0.6, −0.2] × scale). 끌 수 있다
   //     amp { lift, sigh }   — (선택) 등선 들림 px(기본 5 × scale), 한숨 어깨 px(기본 0.8 × scale)
   //     period               — (선택) 보통 숨 한 번 길이(초, 기본 2.7)
-  //   lids { tiles, origin, atlas } — 꺼풀 아틀라스: 칸 자리(1/8 걸음 차례), 칸 원점(텍스처 px), 아틀라스 크기. t·tile·layer·shape 는 기록
+  //   lids { tiles, origin, atlas } — 꺼풀 아틀라스: 칸 자리(1/8 걸음 차례), 칸 원점(텍스처 px), 아틀라스 크기. t·tile·layer·shape·relid 는
+  //                            기록(shape 는 처음 굽기의 꺼풀 모양, relid 는 그 칸들에서 위 꺼풀만 다시 구운 값)
   //     lids.dimCatch [a, b] — (선택) 꺼풀이 a 에서 b 까지 내려오는 동안 각막 반사의 밝은 몫을 거둔다 — 감은 칸의 틈으로 반사 점이
   //                            비치던 고양이용. 없으면 반사는 꺼풀과 상관없다
   //   grid { cols, rows, cells } — 메시 칸, 칸 채움(줄마다 16진, 글자 하나에 4칸) — 빈 칸은 안 그리고 «고양이 위가 아니다»
@@ -367,14 +369,14 @@
   };
   // 오늘 n0 번째부터 n 번 쓰다듬었을 때 — 몫의 합(등비 합)만큼 남은 몫을 지수로 줄인다. 그래서 한 번씩 나눠 셈해도 한꺼번에
   // 셈해도 값이 같다. 리그는 쓸기마다 셈해 onAffinity 로 알린다 — 앱은 그 값을 저장하면 된다(경고 중 쓸기는 정이 안 들어
-  // onPet 의 strokes 와 친밀도에 든 횟수(credited)가 다를 수 있다. 다시 셈하려면 credited 를 쓴다).
+  // onPet 의 strokes 와 친밀도에 든 횟수(credited)가 다를 수 있다. 다시 셈하려면 credited 를 쓴다 — todayBefore 도 credited 의 합).
   // 프레임마다 부르지 않는다 — 쓸기 한 번에 한 번
   function affGain(a, n, n0) {
     if (!(n > 0)) return a;
     const g = AFF_G * (Math.exp(-n0 / AFF_N) - Math.exp(-(n0 + n) / AFF_N)) / (1 - Math.exp(-1 / AFF_N));
     return 1 - (1 - a) * Math.exp(-g);
   }
-  /** 친밀도 다음 값 — prev 0~1, o: { strokes 이번에 쓰다듬은 횟수(onPet 의 credited), todayBefore 오늘 앞서 쓰다듬은 횟수,
+  /** 친밀도 다음 값 — prev 0~1, o: { strokes 이번에 쓰다듬은 횟수(onPet 의 credited), todayBefore 오늘 앞서 친밀도에 든 횟수(credited 의 합),
    *  annoyed 화나게 한 횟수, daysAway 마지막으로 본 날부터 지난 날 수(1 = 어제) }.
    *  앱은 보통 onAffinity 값을 저장하고, 이것은 창을 열 때 daysAway(하루 지남)에만 쓴다 */
   function affinityAfter(prev, o) {
@@ -398,11 +400,19 @@
   // 커서가 멈추고 이만큼(초)은 커서 쪽을 본다, 그 뒤엔 혼자 두리번 / 고개를 커서로 돌리는 빠르기 — 친밀도 0 / 1
   // (기본 친밀도 0.3 에서 예전 값 6초·5 와 같다. 0.1 → 4.9초·4.5, 0.9 → 9.4초·6.3)
   const FOLLOW_SEC = [4.3, 10], FOLLOW_W = [4.2, 6.6];
+  // 혼자 두리번 — 진짜 고양이처럼 «홱 돌고 멈춘다». 고개 목표를 DRIFT_SEC 동안 부드럽게(smoothstep) 옮기고 고개는 스프링(DRIFT_W)으로
+  // 따라간다: 10~90% 0.35초 남짓, 90% 까지 0.55초 (영상은 0.1~0.6초, 장의 60~80% 는 거의 가만). 예전 스프링 하나(w 1.6)는
+  // 10~90% 가 2.1초라 고개가 2초 넘게 미끄러지듯 돌았다. 회색 고양이도 바뀐다(의도) — 붙든 자세 그림은 그대로.
+  // DRIFT_W 는 도는 창(DRIFT_SEC × DRIFT_END — 돌고 0.8초 가라앉을 때까지)에서만 건다. 그 밖(혼자 쉬는 동안 내내)은 예전 IDLE_W —
+  // 늘 14 로 두면 누르기 끄덕임(턱 들기)이 0.27 → 0.025 rad 로 사라지고, 쓰다듬기 자세·외면이 풀리는 길도 빨라졌다.
+  // 창을 0.8초에서 끊으면 남은 몫(폭의 0.4%)이 느린 스프링으로 넘어가 1~2% 넘쳤다. 창 안에서 누르면 턱 들기를 그만큼 세게 찬다(poke)
+  const DRIFT_SEC = 0.4, DRIFT_W = 14, DRIFT_END = 3, IDLE_W = 1.6;
   const EPS_DEV = 0.35;                    // 화면(기기 px)에서 이보다 덜 움직였으면 안 그린다
   // 숨만 쉴 땐 문턱을 이만큼 낮춘다 — 간격을 이미 숨 빠르기로 골랐으니 고른 대로 그린다. 문턱이 STEP_DEV 와 붙어
   // 있으면 0.34px 처럼 바로 아래로 떨어진 tick 을 건너뛰고 다음 장에 두 걸음을 한꺼번에 그렸다. 더 낮추면 꼭대기·바닥
   // 근처 느린 곳에서 잔걸음을 그려 장 수만 는다(한 장이 렌더러+GPU 를 꽤 먹는다 — 초당 1장에 0.5~0.7점)
   const EPS_BREATH = 0.8;
+  const EPS_DRIFT = STEP_DEV / 2 / EPS_DEV;   // 혼자 두리번이 도는 동안 코 둘레 문턱(EPS_DEV 몫) — changed()
 
   // ── 셰이더 ─────────────────────────────────────────────
   // 정점: 텍스처 px 자리(aP)를 받아 부위별 변형을 더한다. 각 변형은 매끄러운 가중치 장(場)이라
@@ -872,13 +882,17 @@
     let blinkT0 = -1, blinkDur = 0.3, blinkAmp = 1, nextBlink = 0, nextTwitch = 0, nextDrift = 0;
     let tw2T = -1, tw2Which = 0, tw2Deg = 0;   // 귀를 두 번 털 때 두 번째
     let dYaw = 0, dPitch = 0, dRoll = 0, dGx = 0, dGy = 0;
+    // 두리번 한 번 — 얼마나 왔나(DRIFT_SEC 단위, 0~DRIFT_END. -1 이면 다음 tick 에 지금 자세에서 새로), 그때 고개·끄덕임.
+    // 진행은 update 의 잘린 dt 로 쌓는다 — 벽시계로 옮기면 메인 스레드가 0.15초 넘게 멈춘 뒤 목표만 끝까지 가 있어, 스프링이
+    // 남은 몫의 60% 남짓을 한 장에 갔다(200ms 멈춤에 3.5px). 스프링과 같은 시계라 멈춘 뒤에도 0.15초 몫만 간다
+    let dU = -1, dY0 = 0, dP0 = 0;
     // 숨: 이번 숨의 자리(0~1)·길이(초)·깊이·한숨인가, 단계 길이(들숨·꼭대기 멈춤·날숨 — 나머지는 바닥에서 쉼)
     // 첫 숨은 바닥에서 쉬는 몫 어딘가에서 — 첫 장이 쉬는 자세(= static 그림)와 같아 바꿔 끼워도 튀지 않는다
     let breathPh = BREATH_IN + BREATH_OUT + Math.random() * (1 - BREATH_IN - BREATH_OUT);
     // nextSigh < 0 이면 다음 tick 에서 지금부터 25~60초 뒤로 잡는다 (처음, 그리고 오래 쉬다 다시 움직일 때)
     let breathPer = BREATH_PER, breathAmp = 1, breathSigh = 0, nextSigh = -1;
     let bIn = BREATH_IN, bHold = 0, bOut = BREATH_OUT, bK = BREATH_K;
-    let breath = 0, sigh = 0, bDepth = 1, purrK = -1, lid = 0, paceBreath = false;
+    let breath = 0, sigh = 0, bDepth = 1, purrK = -1, lid = 0, paceBreath = false, paceDrift = false;
     let lastT = -1, lastTs = -1, woken = false, level = 0, idleIv = IDLE_MS, raf = 0, tmr = 0, tmrShort = false, force = true, showFold = false;
     let settling = false, settleT0 = 0, settleDur = 0.4, settleRes = null, settleTmr = 0;
     let idleCb = 0;
@@ -904,7 +918,7 @@
     // 멈춘(pause·가려짐·settle 끝) 때 — 다시 움직일 때 그동안 흐른 시간만큼 참을성·짜증·화난 몸짓을 한 번에 푼다(-1 안 멈춤)
     let offT = -1;
     const tolR = Math.random();   // 이번 세션의 문턱 자리 (친밀도로 범위만 옮긴다)
-    // 친밀도 — 앱이 준 값에서 시작해 쓰다듬을 때마다 조금씩. 오늘 앞서 쓰다듬은 횟수(앱이 센다)만큼 하루 몫이 준다
+    // 친밀도 — 앱이 준 값에서 시작해 쓰다듬을 때마다 조금씩. 오늘 앞서 친밀도에 든 횟수(앱이 센다 — 경고 중 쓸기는 빼고)만큼 하루 몫이 준다
     let aff = unit(opts.affinity, AFF_DEF), affSent = aff, today = Math.max(0, Number(opts.todayStrokes) || 0);
     // 세션(쓰다듬기 한 판) — 시작 때, 센 쓸기, 아직 안 센 쓸기(쓰다듬기로 잡히기 전 두 번), 모두 센 횟수
     let petStartT = -99, sessT0 = -1, sessStrokes = 0, sessCred = 0, pend = 0, nSess = 0, nStrokes = 0, nMad = 0, nGreet = 0;
@@ -1087,12 +1101,14 @@
       if (dt < 0) dt = 0;
       lastT = now;
       level = update(now, dt);
-      if (debug) st.lv[level]++;
       pose();
       if (showFold) drawFold();
       else if (force || changed()) { draw(); force = false; if (debug) st.draws++; }
-      // 숨만 쉬면 다음 간격은 이번에 그린 뒤의 L 에서 잰다 — 그리기 전에 재면 방금 그린 몫까지 세어 간격이 짧아졌다
+      // 숨만 쉬거나 혼자 두리번이 도는 동안엔 다음 간격을 이번에 그린 뒤의 L 에서 잰다 — 그리기 전에 재면 방금 그린 몫까지
+      // 세어 간격이 짧아졌다. 두리번은 숨이 고른 간격으로 모자라면 한 단계씩 올린다
       if (paceBreath) idleIv = breathIv();
+      if (paceDrift) level = driftPace(level);
+      if (debug) st.lv[level]++;
       if (debug) { const ms = win.performance.now() - t0; st.ticks++; st.jsMs += ms; if (ms > st.jsMax) st.jsMax = ms; }
       // 쉬는 자세로 다 돌아갔으면(settle 끝) 움직일 게 없다 — resume() 이나 입력이 깨울 때까지 헛 tick 을 돌리지 않는다
       if (settling && !settleTmr) return;
@@ -1190,13 +1206,14 @@
       emit(opts.onPet, { zone: KIND_NAME[k], strokes: sessStrokes, ms, credited: sessCred });
       sendAff();
     }
-    // 쓰다듬기로 센 쓸기 n 번 — 판·부위 횟수에 더하고, 기분이 좋을 때만 친밀도를 올린다(경고 중 쓸기는 정이 안 든다)
+    // 쓰다듬기로 센 쓸기 n 번 — 판·부위 횟수에 더하고, 기분이 좋을 때만 친밀도를 올린다(경고 중 쓸기는 정이 안 든다).
+    // 하루 몫(today)도 친밀도에 든 쓸기만 센다 — 앱 store 가 오늘 몫에 credited 만 더하니, 경고 중 쓸기까지 세면 이 창 안과
+    // 다음 휴식(store 값으로 시작)의 셈 바탕이 달라 같은 쓰다듬기가 창 안에선 덜 올랐다
     function credit(n) {
       let k = 0;
       for (let i = 1; i < 5; i++) if (ZA[i] > ZA[k]) k = i;
       sessStrokes += n; nStrokes += n; ZC[k] += n;
-      if (mood <= M_CONTENT) { aff = affGain(aff, n, today); sessCred += n; }
-      today += n;
+      if (mood <= M_CONTENT) { aff = affGain(aff, n, today); sessCred += n; today += n; }
     }
     // 멈춘 동안(pause·가려짐·settle 끝)에도 시계는 흐른다 — tick 의 dt 는 0.15초로 잘려, 멈춘 동안 참을성·짜증·화난 몸짓이
     // 그대로 남았다(8초 쉬고 다시 쓰다듬으면 4초 만에 경고). 다시 움직일 때 그 몫을 한 번에 푼다
@@ -1297,6 +1314,34 @@
       if (d1 > 0) h = clamp(h * STEP_DEV / d1, hMin, hMax);
       return h - VSYNC_PAD;
     }
+    // 두리번 목표가 얼마나 왔나 (진행 u → 0~1, smoothstep)
+    function driftEase(u) { u = clamp(u, 0, 1); return u * u * (3 - 2 * u); }
+    // 코 둘레가 마지막으로 그린 자리(L)에서 얼마나 왔나(텍스처 px) — 통째 옮김 + 시차, 가로·세로 합. 두리번 동안 changed() 가 쓰고,
+    // driftAhead 도 같은 셈이다
+    function noseOff() { return Math.abs(C[1] + C[3] - L[1] - L[3]) + Math.abs(C[2] + C[4] - L[2] - L[4]); }
+    // ms 뒤 다음 장에서 코 둘레가 L 에서 화면(기기 px)으로 얼마나 멀어지나 — 고개 스프링을 update 그대로(목표는 그 tick 의 자리에
+    // 둔 채) 미리 돌려 본다. 지금 빠르기만 곱하면 도는 첫머리처럼 빨라지는 곳을 놓친다. L 에서 재므로 안 그리고 넘긴 몫도 들어간다
+    function driftAhead(ms) {
+      const h = (ms + VSYNC_PAD) / 1000, n = Math.ceil(h / 0.008), s = h / n;
+      const e = driftEase(dU + h / DRIFT_SEC), yT = dY0 + (dYaw - dY0) * e, pT = dP0 + (dPitch - dP0) * e;
+      let y = S[YAW], vy = S[YAW + 1], p = S[PITCH], vp = S[PITCH + 1];
+      for (let k = 0; k < n; k++) {
+        vy += (DRIFT_W * DRIFT_W * (yT - y) - 2 * DRIFT_W * vy) * s; y += vy * s;
+        vp += (DRIFT_W * DRIFT_W * (pT - p) - 2 * DRIFT_W * vp) * s; p += vp * s;
+      }
+      return (Math.abs(C[1] + C[3] - L[1] - L[3] + (y - S[YAW]) * (YAW_PX + YAW_RIGID) * kM)
+        + Math.abs(C[2] + C[4] - L[2] - L[4] + (p - S[PITCH]) * (PITCH_PX + PITCH_RIGID) * kM)) * bw / W.w;
+    }
+    // 혼자 두리번이 도는 동안 다음 tick 빠르기 — 다음 장에 코 둘레가 STEP_DEV 넘게 가지 않게, update 가 고른 단계(lv)·간격에서
+    // 모자라면 한 단계씩 올린다(20fps → 30fps → 화면 갱신마다). 30fps 에서 멈추면 0.9 rad 두리번이 구석 크기에서 한 장에 0.74px 갔다
+    function driftPace(lv) {
+      if (lv === 2) return 2;
+      if (lv === 0) {
+        if (driftAhead(idleIv) <= STEP_DEV) return 0;
+        if (idleIv > DRIFT_MS && driftAhead(DRIFT_MS) <= STEP_DEV) { idleIv = DRIFT_MS; return 0; }
+      }
+      return driftAhead(FOLLOW_MS) <= STEP_DEV ? 1 : 2;
+    }
     // 그르렁이 따라갈 숨 단계 — 0 쉼(꼭대기 멈춤 포함), 1 들숨, 2 날숨
     function breathStage() {
       if (breathPh < bIn) return 1;
@@ -1331,7 +1376,10 @@
       twitch(left ? 0 : 1, rand(9, 12));
       twitch(left ? 1 : 0, rand(3, 5));
       S[LIFT + 1] += 80;
-      S[PITCH + 1] -= 1.2;
+      // 고개 들기 — 두리번 도는 창이면 빠른 스프링(DRIFT_W)이 한 장 만에 눌러 끄덕임이 안 보였다(0.27 → 0.02 rad). 스프링 빠르기만큼
+      // 세게 차 봉우리를 쉴 때와 같게 한다(더 빨리 들었다 내린다). 창을 끝내 느린 스프링으로 넘기면 돌던 빠르기 그대로 목표를 크게 넘었다
+      const wd = dU >= 0 && dU < DRIFT_END ? DRIFT_W + (IDLE_W - DRIFT_W) * content : IDLE_W;
+      S[PITCH + 1] -= 1.2 * wd / IDLE_W;
     }
     function resetStroke(x, y) { stAX = x; stAY = y; stD = 0; stEX = x; stEY = y; stIn = 0; }
     function strokeDone(now) {
@@ -1536,17 +1584,19 @@
         if (u >= 1) { blinkT0 = -1; gOn = false; nextBlink = now + rand(8, 22); } else { lb = blinkCurve(u) * blinkAmp; if (gOn) gk = lb; }
       }
 
-      // 어디를 보나 — 커서가 있으면 그쪽, 없으면 혼자 천천히 두리번. 쉬는 자세로 돌아가는 중(settle)이면 정면.
+      // 어디를 보나 — 커서가 있으면 그쪽, 없으면 혼자 두리번(3.5~8초마다 재빨리 돌고 멈춘다). 쉬는 자세로 돌아가는 중(settle)이면 정면.
       // 친밀도가 높을수록 선뜻(빠르게)·오래 따라본다
       let yT, pT, rT, gxT, gyT, w;
       if (settling) {
         yT = 0; pT = 0; rT = 0; gxT = 0; gyT = 0; w = 14;
+        dU = -1;
       } else if (hasPtr && now - lastMoveT < followSec) {
         const dx = cwx - FACE_X, dy = cwy - EYE_Y;
         yT = soft(dx / (420 * kM)); pT = soft(dy / (380 * kM)) * 0.8; rT = 0;
         gxT = soft(dx / (200 * kM)); gyT = soft(dy / (200 * kM));
         w = FOLLOW_W[0] + (FOLLOW_W[1] - FOLLOW_W[0]) * aff;
         nextDrift = now + rand(1, 3);
+        dU = -1;
       } else {
         if (now > nextDrift) {
           nextDrift = now + rand(3.5, 8);
@@ -1554,9 +1604,15 @@
             dYaw = rand(-0.45, 0.45); dPitch = rand(-0.25, 0.2); dRoll = rand(-0.012, 0.012);
           }
           dGx = clamp(dYaw * 1.3 + rand(-0.2, 0.2), -1, 1); dGy = clamp(dPitch * 1.2, -1, 1);
+          dU = -1;
         }
-        yT = dYaw; pT = dPitch; rT = dRoll; gxT = dGx; gyT = dGy;
-        w = 1.6;
+        // 지금 자세에서 출발한다 — 따라보기·쉬는 자세에서 넘어올 때도. 목표를 한 번에 옮기면 스프링이 빠른 만큼 앞 tick 간격
+        // (숨 빠르기면 100ms)을 첫 장에 몰아 돌아 고개가 튀었다
+        if (dU < 0) { dU = 0; dY0 = S[YAW]; dP0 = S[PITCH]; } else dU = Math.min(DRIFT_END, dU + dt / DRIFT_SEC);
+        const e = driftEase(dU);
+        yT = dY0 + (dYaw - dY0) * e; pT = dP0 + (dPitch - dP0) * e; rT = dRoll; gxT = dGx; gyT = dGy;
+        // 빠른 스프링은 도는 창에서만, 손가락으로 쓰다듬는 동안(content)은 예전 IDLE_W 쪽으로 — 쓰다듬기 자세가 창마다 굳었다 풀리지 않게
+        w = dU < DRIFT_END ? DRIFT_W + (IDLE_W - DRIFT_W) * c : IDLE_W;
       }
       // 화남·외면 — 커서를 모른 척: 고개를 커서 반대로 홱 돌리고(버틴 뒤엔 조금 풀어 외면), 눈은 더 반대로 아래로.
       // 경고 때는 위 따라보기 그대로 — 손을 빤히 쳐다본다
@@ -1691,7 +1747,10 @@
         if (pk !== purrK) { purrK = pk; if (pk >= 0) purr.breathe(pk); }
       }
       // 얼마나 자주 그릴까 — 2: 60fps (빠른 깜박임·귀 털기 첫 순간·누르면 고개 들기), 1: 30fps (쓰다듬는 동안·느린 깜박임·
-      // 커서 따라보기·눈 다시 뜨기·귀가 가라앉는 꼬리), 0: 10~20fps (숨쉬기 — 숨 빠르기를 따라), 20fps (혼자 두리번).
+      // 커서 따라보기·눈 다시 뜨기·귀가 가라앉는 꼬리), 0: 10~20fps (숨쉬기 — 숨 빠르기를 따라), 20fps (고개가 천천히 움직일 때).
+      // 혼자 두리번이 도는 창(화나지 않았을 때)은 여기서 고개 빠르기를 안 보고, 그린 뒤 tick 에서 숨처럼 앞을 내다본다(driftPace —
+      // 다음 장에 코 둘레가 STEP_DEV 넘게 가면 한 단계씩, 화면 갱신마다까지). 고개 빠르기(rad/s) 문턱만 보면 돌기 시작하는 장이 숨
+      // 간격(100ms)이라 한 장에 0.6px 넘게 뛰었고, 도는 0.4초를 통째로 30fps 로 두면 처음·끝 느린 몫에서 헛 tick 만 열 개 남짓 늘었다
       // 쓰다듬기를 시작하고 그칠 때 머리가 오르내리는 건 초당 2~4px 라 30fps 면 한 장에 0.15px — 60fps 몫이 아니다
       // (전에는 손을 뗀 뒤 2초를 이 «뒤처짐» 때문에 60fps 로 돌았다)
       const earV = Math.abs(S[EARL + 1]) + Math.abs(S[EARR + 1]);
@@ -1704,14 +1763,16 @@
       // 60fps: 꼬리 털기 첫 순간·탁 내리치기, 등 피부 떨림(0.8초), 고개를 홱 돌리는 순간. 화남이 천천히 풀리는 동안(꺼풀·귀)은 20fps.
       // 외면하는 동안엔 커서가 움직여도 따라보지 않으니 따라보기 빠르기로 올리지 않는다(돌아앉는 동안만 30fps)
       paceBreath = false;
+      // 혼자 두리번이 도는 창(화나지 않고, 쓰다듬지 않을 때) — 고개 빠르기 문턱 대신 그린 뒤에 앞을 내다보고 고른다(driftPace)
+      paceDrift = dU >= 0 && dU < DRIFT_END && ak === 0 && c < 0.01;
       if ((blinkT0 >= 0 && blinkDur < 0.5) || earV > 0.6 || zoneV > 40 || ripU >= 0 || (thumpT >= 0 && now - thumpT > THUMP_UP - 0.04) || (mood === M_MAD && Math.abs(S[YAW + 1]) > 0.8) || Math.abs(S[LIFT + 1]) * kM > 8 || Math.abs(S[LIFT] - liftT) * kM > 0.6) return 2;
       if (settling) {
         // 다 돌아갔으면 숨도 멈춰 있다 — 그릴 게 없다. 숨 빠르기로 고른 짧은 간격이 남아 헛 tick 이 돌지 않게
         idleIv = IDLE_MS;
         return now - settleT0 < settleDur + 0.3 ? 1 : 0;
       }
-      if (blinkT0 >= 0 || earPx > 10 || zoneV > 10 || tw2T >= 0 || petting || Math.abs(S[YAW + 1]) > 0.6 || (c > 0.01 && c < 0.99) || (now - lastMoveT < ACTIVE_AFTER_MOVE && ak < 0.5)) return 1;
-      if (Math.abs(S[YAW + 1]) + Math.abs(S[PITCH + 1]) > 0.3 || earE > 0.01 || zoneV > 0.3 || (ak > 0 && ak < 0.999) || restLid !== rl) idleIv = DRIFT_MS;
+      if (blinkT0 >= 0 || earPx > 10 || zoneV > 10 || tw2T >= 0 || petting || (!paceDrift && Math.abs(S[YAW + 1]) > 0.6) || (c > 0.01 && c < 0.99) || (now - lastMoveT < ACTIVE_AFTER_MOVE && ak < 0.5)) return 1;
+      if ((!paceDrift && Math.abs(S[YAW + 1]) + Math.abs(S[PITCH + 1]) > 0.3) || earE > 0.01 || zoneV > 0.3 || (ak > 0 && ak < 0.999) || restLid !== rl) idleIv = DRIFT_MS;
       // 숨만 쉰다: 간격은 그린 뒤 tick 에서 앞을 내다보고 고른다(breathIv). 바닥 쉼·꼭대기에선 100ms 에 안 그리고,
       // 가장 빠른 곳에서도 20fps 를 넘지 않는다
       else paceBreath = true;
@@ -1753,6 +1814,10 @@
     }
     // 눈에 띄게 바뀌었나 — 자리마다 텍스처 px 어림(CW, 위 상태 묶음)을 곱해 문턱과 견준다
     function changed() {
+      // 혼자 두리번이 도는 동안 고개는 코 둘레(driftAhead 와 같은 셈)로 재고 문턱을 STEP_DEV 의 반으로 — 고른 대로 그린다. 성분
+      // 하나씩 보면(시차 11, 통째 3.5) 코가 0.46px 가도 문턱 0.35 아래로 읽혀, 고른 tick 을 건너뛰고 다음 장에 두 걸음을 몰아
+      // 그렸다(0.9~1.1px). 반이면 한 tick 건너뛰고 두 걸음을 그려도 STEP_DEV 남짓이다
+      if (paceDrift && noseOff() > epsTex * EPS_DRIFT) return true;
       let m = 0;
       for (let i = 0; i < 20; i++) { const d = Math.abs(C[i] - L[i]) * CW[i]; if (d > m) m = d; }
       const ra = Math.max(C[19], L[19]), ba = Math.max(Math.abs(C[15]), Math.abs(L[15]));
@@ -2332,7 +2397,8 @@
         if (Number.isFinite(n) && n > today) today = n;
         setTolMax(); wake();
       },
-      /** 이번 창에서 — 기분, 친밀도, 쓰다듬은 판·횟수(부위별, 귀는 만진 횟수), 화낸 횟수, 눈인사 */
+      /** 이번 창에서 — 기분, 친밀도, 쓰다듬은 판·횟수(부위별, 귀는 만진 횟수 — 경고 중 쓸기도 센다), 화낸 횟수, 눈인사.
+       *  todayStrokes 만 오늘 친밀도에 든 횟수다(앞서 받은 몫 + 이 창의 credited — 앱 store 의 오늘 몫과 같은 셈) */
       stats() {
         return {
           mood: moodOut, affinity: aff, todayStrokes: today, sessions: nSess, strokes: nStrokes,
@@ -2401,6 +2467,13 @@
         irk(v) { if (v != null) irk = v; wake(); return irk; },
         /** 다음 숨을 한숨으로 (시험용 — 25~60초를 기다리지 않게) */
         sigh() { nextSigh = 0; },
+        /** 혼자 두리번을 지금 — 고개 y·끄덕임 p(-1~1) 쪽으로 (시험용 — 3.5~8초를 기다리지 않게. 다음 두리번은 그 뒤 3.5~8초).
+         *  커서를 따라보는 동안엔 따라보기가 먼저다 */
+        drift(y, p) {
+          dYaw = clamp(Number(y) || 0, -1, 1); dPitch = clamp(Number(p) || 0, -1, 1); dRoll = 0;
+          dGx = clamp(dYaw * 1.3, -1, 1); dGy = clamp(dPitch * 1.2, -1, 1);
+          dU = -1; nextDrift = lastT + rand(3.5, 8); wake();
+        },
         /** 자세를 붙든다 (px 는 회색 고양이 크기 — 화면엔 rig.json scale 배. 꼬리 rad 도 회색 꼬리 기준 — 끝 px 가 회색과 같다)
          *  (yaw·pitch·gazeX·gazeY 는 -1~1, roll·earL·earR 는 rad, lean·lift 는 px, lid 0~1,
          *  breath 는 보통 들숨 끝 = 1(한숨은 2 가까이), sigh 0~1, flat(두 귀)·flatR(오른귀만) 0~0.12,
