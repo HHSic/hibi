@@ -12,6 +12,14 @@
 //       쓰다듬은 횟수가 메인 store 까지 간다. 걷으면 사라진다. 손가락으로 떼며 쓸어도 센다
 //   [4b] 혼자 두리번 — 진짜 고양이처럼 홱 돌고 멈춘다 (90% 까지 0.8초 안, 넘치지 않고, 구석 크기에서 그린 장 사이 건너뛰지 않는다).
 //       쉬는 중·도는 중 누르면 고개를 든다
+//   [4c] 쓰다듬는 눈 — 어느 부위든(이마·턱·등·엉덩이·몸·꼬리) 끝까지 감고 그대로 머문다. 손을 떼면 쉬는 꺼풀로 돌아온다.
+//       경고엔 눈을 뜨고, 화나면 가늘게(0.375) 뜬 채 쓰다듬어도 안 감는다. 친밀도가 높으면 쉴 때 한 칸(0.125) 내려오고, 눈인사도 그대로다
+//   [4d] 손 모양 커서 — 진짜 커서를 보내 고양이(몸·귀) 위에서만 grab, 빈 곳·알파 지도의 빈틈·단추·체크 줄(고양이 위여도)은 화살표.
+//       쉬거나(pause·휴식 끝) 걷거나 GPU 를 잃거나 창 밖으로 나가거나 창 크기가 바뀌면 body 커서를 되돌린다. 손가락 톡도 남기지 않는다.
+//       거울 고양이는 화면에 보이는 자리에서 손이 된다
+//   [4e] 끊어 쓰다듬는 눈 — 쓸고 쉬는 손길(0.5+1.2초, 0.5+2초, 1+2.5초, 손가락도)에 눈이 감은 채다. 감는 중에 멈춰도 끝까지 감고, 손이 떠나면
+//       마지막 손길 3초 뒤 쉬는 꺼풀까지 한 번에 뜬다. 경고·화남·settle 은 붙들지 않고, 붙든 동안 눈인사도 고개 돌림도 없다.
+//       쓰다듬기로 안 잡힌 커서는 눈을 못 감기고, 천천히 다시 쓸면 창이 이어진다. 몸이 풀린 뒤 눈만 붙든 동안은 숨 빠르기로 돈다
 //   [5] 물러나기 — WebGL 이 없거나 사진·rig.json 이 없으면 영상으로. 설정을 끄면 영상 그대로
 //   [6] 기록 — 이번 휴식의 창이 아닌 창(휴식 창 페이지여도)·이상한 값은 버린다. 같은 고양이를 찍은 영상끼리 한 고양이로 센다.
 //       다른 화면에 친밀도와 오늘 횟수를 나눈다
@@ -25,7 +33,7 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 
 process.on('uncaughtException', (e) => { console.error('시험 터짐:', (e && e.stack) || e); process.exit(1); });
 process.on('unhandledRejection', (e) => { console.error('시험 약속 깨짐:', (e && e.stack) || e); process.exit(1); });
-setTimeout(() => { console.error('시간 초과'); process.exit(1); }, 360_000).unref();
+setTimeout(() => { console.error('시간 초과'); process.exit(1); }, 400_000).unref();
 app.on('window-all-closed', () => {});
 
 const ROOT = path.join(__dirname, '..');
@@ -432,6 +440,771 @@ app.whenReady().then(async () => {
     ok(d.nodRest > 0.15 && d.nodTurn > 0.15,
       '누르면 고개를 든다 — 쉬는 중에도 두리번 도는 중에도 (빠른 두리번 스프링을 늘 걸면 0.03 rad 로 사라졌다)', { nodRest: d.nodRest, nodTurn: d.nodTurn });
     win.destroy();
+  }
+
+  // 진짜 커서 — 창 좌표는 CSS 의 절반 (확대 0.5)
+  const mouseTo = (win, x, y) => win.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(x / 2), y: Math.round(y / 2) });
+
+  // 회색 고양이를 debug 로 앉혀 window.__h 에 둔다. 부위마다 가로로 가장 긴 토막을 리그의 부위 지도(debug.zone)에서 찾아 가운데 70% 를 오간다.
+  // 눈을 오래 보려고 쓰다듬어도 경고가 안 오게 하고(tolMax), 경고·외면이 저절로 끝나지 않게 한다(warn·cool)
+  const sit = async (cats, cfg) => {
+    const win = await overlay(1920, 1080);
+    const segs = await js(win, `(async () => {
+      const E = window.nunsEnter, host = document.getElementById('curtain');
+      await E.play('cat-rb', host, null, 20, { rig: { purr: false, volume: 0, cats: ${JSON.stringify(cats)}, debug: true, rigOf: (id) => window.nunsseom.catRig(id) } });
+      for (let i = 0; i < 100 && !(E.rigNow() && E.rigNow().handle); i++) await new Promise((q) => setTimeout(q, 50));
+      const h = window.__h = E.rigNow().handle;
+      await h.ready;
+      await new Promise((q) => setTimeout(q, 900));
+      h.debug.moodCfg(${JSON.stringify(cfg)});
+      const rig = h.debug.rig(), runs = {};
+      for (let y = 2; y < rig.size.h; y += 4) {
+        let cur = 'none', x0 = 0;
+        for (let x = 2; x <= rig.size.w + 4; x += 4) {
+          const z = x < rig.size.w ? h.debug.zone(x, y) : 'none';
+          if (z === cur) continue;
+          if (cur !== 'none' && (!runs[cur] || x - x0 > runs[cur].len)) runs[cur] = { len: x - x0, x: (x0 + x) / 2, y };
+          cur = z; x0 = x;
+        }
+      }
+      const out = {};
+      for (const [z, r] of Object.entries(runs)) {
+        const [a, y] = h.debug.where(r.x - r.len * 0.35, r.y), [b] = h.debug.where(r.x + r.len * 0.35, r.y);
+        out[z] = { x: (a + b) / 2, y, amp: Math.abs(b - a) / 2, len: r.len };
+      }
+      return out;
+    })()`);
+    return { win, segs };
+  };
+  const stats = (win) => js(win, 'window.__h.debug.stats()');
+  const swing = (win, seg, t) => mouseTo(win, seg.x + Math.sin((t / 900) * Math.PI * 2) * seg.amp, seg.y);
+  const strokeFor = async (win, seg, ms) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) { swing(win, seg, Date.now() - t0); await sleep(16); }
+  };
+  // 눈을 다 감을 때까지 쓴다 — 걸린 ms, 못 감으면 null. 깜박임으로 잠깐 감은 것(content 가 아직 낮다)은 치지 않는다
+  const strokeToClosed = async (win, seg) => {
+    const t0 = Date.now();
+    let next = 0;
+    while (Date.now() - t0 < 9000) {
+      const t = Date.now() - t0;
+      swing(win, seg, t);
+      await sleep(16);
+      if (t < next) continue;
+      next = t + 120;
+      const s = await stats(win);
+      if (s.lid >= 0.99 && s.content >= 0.945) return t;
+    }
+    return null;
+  };
+  // 40ms 마다 꺼풀을 적는다 — 쓰는 동안 곁에서 (깜박임은 꺼풀을 올리기만 하므로 «머문다» 는 최솟값으로 본다)
+  const SMP_ON = `(() => { window.__smp = []; clearInterval(window.__smpT); const t0 = performance.now();
+    window.__smpT = setInterval(() => { const s = window.__h.debug.stats(); window.__smp.push({ t: performance.now() - t0, lid: s.lid, zone: s.zone, mood: s.mood, greeting: s.greeting, greetings: s.greetings,
+      eyeC: s.eyeC, eyeOn: s.eyeOn, content: s.content, petting: s.petting, restLid: s.restLid, ak: s.ak, yaw: s.yaw, pitch: s.pitch, gazeX: s.gazeX }); }, 40); })()`;
+  const SMP_OFF = '(() => { clearInterval(window.__smpT); return window.__smp; })()';
+  const lidOf = (rows) => rows.map((r) => r.lid);
+  const median = (a) => a.slice().sort((p, q) => p - q)[a.length >> 1];
+  const fix3 = (v) => +v.toFixed(3);
+  // 손을 뗀다 — 쉬는 꺼풀까지 돌아오면 걸린 ms (안 돌아오면 ms 는 null)
+  const letGo = async (win) => {
+    mouseTo(win, 10, 10);
+    const t0 = Date.now();
+    let s = await stats(win);
+    while (Date.now() - t0 < 7000) {
+      if (s.lid <= s.restLid + 0.005 && s.content < 0.05) return { ms: Date.now() - t0, lid: fix3(s.lid), restLid: s.restLid, mood: s.mood };
+      await sleep(60);
+      s = await stats(win);
+    }
+    return { ms: null, lid: fix3(s.lid), restLid: s.restLid, mood: s.mood };
+  };
+
+  console.log('\n[4c] 쓰다듬는 눈 — 어느 부위든 끝까지 감고, 손을 떼면 뜬다');
+  {
+    // 부위 몫(zmix): 0 이마, 1 턱·볼, 2 등, 3 엉덩이, 4 그 밖의 몸(꼬리도)
+    const KIND = { head: 0, chin: 1, back: 2, rump: 3, body: 4, tail: 4 };
+    const { win, segs } = await sit({}, { tolMax: 1e6, warn: 1e6, cool: 1e6, greetP: 0, spontP: 0, rippleP: 0 });
+    const zones = Object.keys(KIND);
+    ok(zones.every((z) => segs[z] && segs[z].len >= 150), '회색 고양이에 쓰다듬을 부위가 다 있다 (토막 길이는 텍스처 px)', Object.fromEntries(zones.map((z) => [z, segs[z] && segs[z].len])));
+    for (const z of zones.filter((q) => segs[q])) {
+      const tClosed = await strokeToClosed(win, segs[z]);
+      await js(win, SMP_ON);
+      await strokeFor(win, segs[z], 1400);
+      const rows = await js(win, SMP_OFF);
+      const s = await stats(win);
+      const low = rows.length ? Math.min(...lidOf(rows)) : 0;
+      const inZone = rows.filter((r) => r.zone === z).length / Math.max(1, rows.length);
+      ok(tClosed !== null && rows.length >= 15 && low >= 0.99 && inZone >= 0.9 && s.petting && s.zmix[KIND[z]] > 0.5,
+        `${z}: 쓰다듬으면 끝까지 감고(0.99 이상) 쓰는 동안 그대로 머문다 (예전엔 0.875, 엉덩이 0.75 에서 멈췄다)`,
+        { tClosed, low: fix3(low), inZone: +inZone.toFixed(2), petting: s.petting, zmix: s.zmix });
+      const g = await letGo(win);
+      ok(g.ms !== null && g.lid <= 0.005, `${z}: 손을 떼면 쉬는 꺼풀(0)로 돌아온다`, g);
+    }
+
+    // 경고 — 손이 계속 쓸어도 눈을 번쩍 뜬다 (만지는 동안에만 경고가 머문다)
+    {
+      const tClosed = await strokeToClosed(win, segs.head);
+      await js(win, 'window.__h.debug.mood("warning")');
+      await js(win, SMP_ON);
+      await strokeFor(win, segs.head, 1500);
+      const rows = await js(win, SMP_OFF);
+      const opened = rows.find((r) => r.lid < 0.1);
+      const tail = rows.filter((r) => r.t >= 1000);
+      ok(tClosed !== null && opened && opened.t <= 900 && tail.length >= 5 && tail.every((r) => r.mood === 'warning') && median(lidOf(tail)) < 0.02,
+        '경고에 들면 쓰다듬는 중에도 0.9초 안에 눈을 뜬다', { tClosed, openedAt: opened && Math.round(opened.t), tail: tail.length ? fix3(median(lidOf(tail))) : null, mood: tail.length ? tail[tail.length - 1].mood : null });
+      // 손을 떼고 WARN_QUIT(1.2초) 넘게 기다린다 — 쉼으로 가라앉아야 다음 판이 기분 좋은 데서 시작한다
+      mouseTo(win, 10, 10);
+      await sleep(1600);
+      const g = await letGo(win);
+      ok(g.ms !== null && g.lid <= 0.005 && g.mood === 'calm', '손을 떼면 경고가 가라앉고 눈은 뜬 그대로다', g);
+    }
+    // 화남 — 가늘게 뜬 채(칸 3) 머문다. 깜박임이 낀 몇 장을 빼면 쓰다듬어도 그대로다
+    {
+      const tClosed = await strokeToClosed(win, segs.head);
+      await js(win, 'window.__h.debug.mood("annoyed")');
+      await js(win, SMP_ON);
+      await strokeFor(win, segs.head, 3000);
+      const rows = await js(win, SMP_OFF);
+      const tail = rows.filter((r) => r.t >= 1300);
+      const near = tail.filter((r) => Math.abs(r.lid - 0.375) < 0.01).length / Math.max(1, tail.length);
+      const low = tail.length ? Math.min(...lidOf(tail)) : 0;
+      ok(tClosed !== null && tail.length >= 15 && near >= 0.7 && low >= 0.365,
+        '화나면 가늘게(0.375) 뜬 채 쓰다듬어도 안 감는다', { tClosed, median: tail.length ? fix3(median(lidOf(tail))) : null, near: +near.toFixed(2), low: fix3(low), mood: tail.length ? tail[tail.length - 1].mood : null });
+    }
+    win.destroy();
+
+    // 친밀도가 높은 고양이 — 쉴 때 꺼풀 한 칸(0.125)은 그대로, 쓰다듬으면 끝까지 감고 그 칸으로 돌아온다. 눈인사도 끝까지 감았다 그 칸으로
+    {
+      const { win, segs } = await sit({ grey: { affinity: 0.9, today: 0, daysAway: 0 } }, { tolMax: 1e6, greetP: 1, spontP: 0, greetCool: 0, rippleP: 0 });
+      const t0 = Date.now();
+      let s = await stats(win);
+      while (Date.now() - t0 < 6000 && !(s.restLid === 0.125 && Math.abs(s.lid - 0.125) < 0.001)) { await sleep(60); s = await stats(win); }
+      ok(s.restLid === 0.125 && Math.abs(s.lid - 0.125) < 0.001, '친밀도 0.9 — 쉴 때 꺼풀이 한 칸(0.125) 내려와 있다', { restLid: s.restLid, lid: fix3(s.lid) });
+      const face = await js(win, '(() => { const c = window.__h.debug.rig().head.faceCenter; return window.__h.debug.where(c[0], c[1]); })()');
+      mouseTo(win, 10, 10);
+      await sleep(150);
+      mouseTo(win, face[0], face[1]);
+      await js(win, SMP_ON);
+      const t1 = Date.now();
+      s = await stats(win);
+      while (Date.now() - t1 < 7000 && !(s.greetings > 0 && !s.greeting)) { await sleep(60); s = await stats(win); }
+      const rows = await js(win, SMP_OFF);
+      const inGreet = rows.filter((r) => r.greeting);
+      const peak = inGreet.length ? Math.max(...lidOf(inGreet)) : 0;
+      ok(s.greetings === 1 && peak >= 0.98, '얼굴 앞에 머문 커서에 눈인사 — 끝까지 감았다 뜬다', { greetings: s.greetings, peak: fix3(peak) });
+      const tClosed = await strokeToClosed(win, segs.head);
+      const g = await letGo(win);
+      ok(tClosed !== null && g.ms !== null && Math.abs(g.lid - 0.125) < 0.006, '쓰다듬으면 끝까지 감고, 손을 떼면 0 이 아니라 쉬는 칸(0.125)으로 돌아온다', { tClosed, ...g });
+      win.destroy();
+    }
+  }
+
+  console.log('\n[4d] 손 모양 커서 — 고양이 위에서만, 단추는 화살표');
+  {
+    // 휴식 창 그대로(__begin) 앉히되 리그에 debug 만 켠다 — 부위·자리를 물으려고. 브라우저가 실제로 정한 커서도 받아 둔다(cursor-changed).
+    // Electron 은 화살표를 'pointer', CSS 의 pointer(손가락)를 'hand' 라고 부른다
+    const sitReal = async (clipId, extra) => {
+      const win = await overlay(1920, 1080);
+      const m = { win, real: null };
+      win.webContents.on('cursor-changed', (_e, t) => { m.real = t; });
+      await js(win, '(() => { const R = window.nunsCatRig, f = R.mount; R.mount = (h, o) => f(h, { ...o, debug: true }); })()');
+      await js(win, `window.__begin(${JSON.stringify(pay(clipId, { durationSec: 120, endsAt: Date.now() + 120000, ...extra }))})`);
+      m.s = await js(win, RIG_STATE);
+      return m;
+    };
+    // 자리 — 화면 자리는 리그에 묻지 않고 캔버스 자리·거울에서 직접 잰다. 빈 곳·빈틈은 사진 알파(base.webp)와 메시 칸(rig.json grid)으로 고른다 —
+    // 리그의 부위 지도로 고르면 알파 지도가 망가진 것을 못 본다.
+    //   zones: 부위마다 가장 긴 토막의 가운데, empty: 상자 안 메시 밖에서 털과 가장 먼 곳, gap: 메시 칸은 찼는데 털은 없는 곳(칸 안 투명 여백)
+    //   flip: 거울 고양이만 — 고양이 위인 텍스처 자리의, 화면 자리(on)와 거울을 안 풀면 잘못 갈 자리(off, 실제로는 빈 곳)
+    const MAP = `(async () => {
+      const c = window.nunsEnter.rigNow(), h = c.handle, rig = h.debug.rig(), cfg = h.debug.cfg(), W = cfg.world, zoneAt = h.debug.zone;
+      const cv = c.box.querySelector('canvas'), b = cv.getBoundingClientRect();
+      const mirror = getComputedStyle(cv).scale === '-1 1';
+      const U = (x) => (x - W.x0) / W.w;
+      const sx = (x) => b.left + (mirror ? 1 - U(x) : U(x)) * b.width, sy = (y) => b.top + (y - W.y0) / W.h * b.height;
+      const scr = (x, y) => [sx(x), sy(y)];
+      const im = new Image(); im.src = window.nunsClip.RIG_DIR + c.id + '/base.webp'; await im.decode();
+      const cn = document.createElement('canvas'); cn.width = rig.size.w; cn.height = rig.size.h;
+      const g = cn.getContext('2d', { willReadFrequently: true }); g.drawImage(im, 0, 0);
+      const A = g.getImageData(0, 0, rig.size.w, rig.size.h).data, sw = rig.size.w, sh = rig.size.h;
+      const clear = (x, y, r) => {
+        for (let j = Math.max(0, y - r); j <= Math.min(sh - 1, y + r); j += 2) for (let i = Math.max(0, x - r); i <= Math.min(sw - 1, x + r); i += 2) if (A[(j * sw + i) * 4 + 3] > 16) return false;
+        return true;
+      };
+      const G = rig.grid, filled = (x, y) => { const i = Math.floor(x * G.cols / sw), j = Math.floor(y * G.rows / sh); return i >= 0 && j >= 0 && i < G.cols && j < G.rows && ((parseInt(G.cells[j][i >> 2], 16) >> (3 - (i & 3))) & 1) === 1; };
+      const runs = {};
+      for (let y = 2; y < sh; y += 4) {
+        let cur = 'none', x0 = 0;
+        for (let x = 2; x <= sw + 4; x += 4) {
+          const z = x < sw ? zoneAt(x, y) : 'none';
+          if (z === cur) continue;
+          if (cur !== 'none' && (!runs[cur] || x - x0 > runs[cur].len)) runs[cur] = { len: x - x0, x: Math.round((x0 + x) / 2), y };
+          cur = z; x0 = x;
+        }
+      }
+      const zones = {};
+      for (const [z, r] of Object.entries(runs)) zones[z] = scr(r.x, r.y);
+      const best = (want, rs) => {
+        for (const r of rs) for (let y = 8; y < sh; y += 8) for (let x = 8; x < sw; x += 8) if (want(x, y) && clear(x, y, r)) return { tex: [x, y], clear: r, at: scr(x, y) };
+        return null;
+      };
+      const empty = best((x, y) => !filled(x, y), [80, 60, 40, 24]);
+      // 둘레(±8)까지 찬 칸만 — 칸 가장자리면 커서 반올림으로 빈 칸에 떨어져, 알파 지도가 망가져도 화살표로 통과한다
+      const gap = best((x, y) => [-8, 0, 8].every((d) => [-8, 0, 8].every((e) => filled(x + d, y + e))), [24, 20, 16, 12]);
+      let flip = null;
+      if (mirror) {
+        // 그 자리 둘레(±16)가 다 고양이 위이고, 거울 자리 둘레가 다 빈 곳인 텍스처 자리 중 가운데 것
+        const around = (x, y, f) => [-16, 0, 16].every((d) => [-16, 0, 16].every((e) => f(zoneAt(x + d, y + e))));
+        const mx = (x) => W.x0 + W.w - (x - W.x0);
+        const all = [];
+        for (let y = 8; y < sh; y += 8) for (let x = 8; x < sw; x += 8) if (A[(y * sw + x) * 4 + 3] > 128 && around(x, y, (z) => z !== 'none') && around(mx(x), y, (z) => z === 'none')) all.push([x, y]);
+        const p = all[all.length >> 1];
+        if (p) flip = { tex: p, n: all.length, zone: zoneAt(p[0], p[1]), on: scr(p[0], p[1]), off: [b.left + U(p[0]) * b.width, sy(p[1])], where: h.debug.where(p[0], p[1]) };
+      }
+      const R = (id) => { const r = document.getElementById(id).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
+      return { id: c.id, mirror, hit: cfg.on.hit, box: [b.left, b.top, b.right, b.bottom], zones, empty, gap, flip, headline: R('headline'), skip: R('btn-skip') };
+    })()`;
+    const look = (m, [x, y]) => js(m.win, `(() => {
+      const e = document.elementFromPoint(${x}, ${y}), c = window.nunsEnter.rigNow();
+      const s = c && c.handle ? c.handle.debug.stats() : null;
+      return { el: e && (e.id || e.className || e.tagName), inBtn: !!(e && e.closest('button')), cursor: e && getComputedStyle(e).cursor, body: document.body.style.cursor, hand: s && s.hand, zone: s && s.zone };
+    })()`);
+    // 진짜 커서를 보낸다 — 리그가 다음 tick 에 읽으니 body 가 바라는 값이 될 때까지(1.5초까지) 기다려, 잠깐 뒤에도 그대로인지 본다.
+    // 브라우저 커서는 마우스 이벤트 때 다시 정한다(보이지 않는 창) — 제자리 이벤트를 다시 넣어 받는다
+    const hover = async (m, p, body, real) => {
+      mouseTo(m.win, p[0], p[1]);
+      const t0 = Date.now();
+      let r = await look(m, p);
+      while (r.body !== body && Date.now() - t0 < 1500) { await sleep(40); r = await look(m, p); }
+      await sleep(120);
+      r = await look(m, p);
+      const t1 = Date.now();
+      while (m.real !== real && Date.now() - t1 < 1000) { mouseTo(m.win, p[0], p[1]); await sleep(60); }
+      r.real = m.real;
+      return r;
+    };
+    const isHand = (r) => r.body === 'grab' && r.cursor === 'grab' && r.hand === true && r.real === 'grab';
+    const isArrow = (r) => r.body === '' && r.cursor === 'default' && !r.hand && r.real === 'pointer';
+    const handAt = (m, p) => hover(m, p, 'grab', 'grab');
+    const arrowAt = (m, p) => hover(m, p, '', 'pointer');
+    const inBox = (m, p) => p[0] > m.box[0] && p[0] < m.box[2] && p[1] > m.box[1] && p[1] < m.box[3];
+
+    // 회색 고양이 — 부위마다 손, 빈 곳·글·단추는 화살표 (빈 곳은 손에서 옮겨 간다 — 되돌리는지까지 보려고)
+    {
+      const m = await sitReal('cat-rb');
+      const map = await js(m.win, MAP);
+      m.box = map.box;
+      const back = map.zones.back;
+      const parts = ['head', 'chin', 'earL', 'earR', 'back', 'rump', 'body', 'tail'];
+      ok(parts.every((z) => map.zones[z]) && map.mirror === false, '회색 고양이의 부위가 다 있다', Object.keys(map.zones));
+      for (const z of parts.filter((q) => map.zones[q])) {
+        const r = await handAt(m, map.zones[z]);
+        ok(isHand(r) && r.zone === z && r.el !== 'CANVAS', `${z} 위 — 손 모양 (요소는 고양이 위를 덮은 ${r.el}, 브라우저 커서 ${r.real})`, r);
+      }
+      const spots = [['상자 안 빈 곳', map.empty && map.empty.at], ['창 구석', [20, 20]], ['안내 글', map.headline], ['단추', map.skip]];
+      for (const [name, p] of spots) {
+        await handAt(m, back);
+        const r = p ? await arrowAt(m, p) : {};
+        ok(isArrow(r) && r.zone === 'none', `${name} — 화살표 (고양이에서 옮겨 오면 되돌린다)`, r);
+      }
+      ok(map.empty && inBox(m, map.empty.at), '그 빈 곳은 고양이 상자 안이다', map.empty);
+
+      // 고양이 상자 안 단추 — 앱에서는 안 겹치게 앉으므로(시험 [3]) 단추를 고양이 위로 옮겨 본다. 리그는 손이어도 단추 위 커서는 화살표다
+      await js(m.win, `(() => { const b = document.getElementById('btn-finish'), r = b.getBoundingClientRect();
+        b.style.transform = 'translate(' + (${back[0]} - (r.left + r.width / 2)) + 'px,' + (${back[1]} - (r.top + r.height / 2)) + 'px)'; })()`);
+      const onBtn = await hover(m, back, 'grab', 'pointer');
+      ok(onBtn.inBtn && onBtn.body === 'grab' && onBtn.hand === true && onBtn.zone === 'back' && onBtn.cursor === 'default' && onBtn.real === 'pointer' && inBox(m, back),
+        '고양이 상자 안, 고양이 위여도 단추 위는 화살표다 (body 는 손이어도 단추는 제 커서)', onBtn);
+      await js(m.win, 'document.getElementById("btn-finish").style.transform = ""');
+      const offBtn = await handAt(m, back);
+      ok(isHand(offBtn) && !offBtn.inBtn, '단추를 치우면 같은 자리가 손 모양이다', offBtn);
+
+      // 쉬기 — 바로 되돌리고, 쉬는 동안 커서가 움직여도 그대로. 깨면 다시 손
+      const paused = await js(m.win, '(() => { const h = window.nunsEnter.rigNow().handle; h.pause(); return { body: document.body.style.cursor, hand: h.debug.stats().hand }; })()');
+      const stillOff = await hover(m, map.zones.rump, '', 'pointer');
+      ok(paused.body === '' && paused.hand === false && isArrow(stillOff), 'pause — 그 자리에서 body 커서를 되돌리고, 쉬는 동안 고양이 위를 지나도 손이 안 된다', { paused, stillOff });
+      await js(m.win, 'window.nunsEnter.rigNow().handle.resume()');
+      const back2 = await handAt(m, back);
+      ok(isHand(back2), 'resume — 고양이 위면 다시 손 모양', back2);
+      // 휴식 끝 신호(메인 endBreak → overlay:ending → pause) — 창을 숨기는 동안 손이 남지 않는다
+      m.win.webContents.send('overlay:ending');
+      const t2 = Date.now();
+      let endBody = 'grab';
+      while (endBody !== '' && Date.now() - t2 < 1500) { await sleep(40); endBody = await js(m.win, 'document.body.style.cursor'); }
+      ok(endBody === '', '휴식 끝 신호 — body 커서를 되돌린다', endBody);
+      await js(m.win, 'window.nunsEnter.rigNow().handle.resume()');
+      await handAt(m, back);
+
+      // 창 밖으로 나가면 — 손을 거둔다 (다른 모니터로 간 커서)
+      await js(m.win, 'window.dispatchEvent(new PointerEvent("pointerout", { relatedTarget: null }))');
+      const t3 = Date.now();
+      let outBody = 'grab';
+      while (outBody !== '' && Date.now() - t3 < 1500) { await sleep(40); outBody = await js(m.win, 'document.body.style.cursor'); }
+      ok(outBody === '', '커서가 창 밖으로 나가면 손을 거둔다', outBody);
+      // 고양이 위 move 바로 뒤에 나가도(진짜 입력) — tick 이 아직 못 읽은 move 로 손이 되살아나지 않는다. 돌아오면 다시 손
+      let stuck = 0;
+      for (let i = 1; i <= 4; i++) {
+        const x = back[0] + i * 8;
+        mouseTo(m.win, x, back[1]);
+        m.win.webContents.sendInputEvent({ type: 'mouseLeave', x: Math.round(x / 2), y: Math.round(back[1] / 2) });
+        await sleep(300);
+        if (await js(m.win, 'document.body.style.cursor') !== '') stuck++;
+      }
+      const reIn = await handAt(m, back);
+      ok(stuck === 0 && isHand(reIn), '고양이 위에서 움직이자마자 창 밖으로 나가도 손이 남지 않고, 돌아오면 다시 손 모양이다', { stuck, reIn });
+
+      // 손가락 — 대고 쓰는 동안 손, 떼면(쓸기) 거둔다 (다음 커서가 올 때까지 남지 않게)
+      const finger = await js(m.win, `(async () => {
+        const ev = (t, x, y) => window.dispatchEvent(new PointerEvent(t, { pointerType: 'touch', pointerId: 7, isPrimary: true, clientX: x, clientY: y, bubbles: true }));
+        const X = ${back[0]}, Y = ${back[1]}, body = () => document.body.style.cursor;
+        ev('pointerdown', X, Y);
+        let on = '';
+        for (let i = 0; i < 30 && on !== 'grab'; i++) { ev('pointermove', X + i * 2, Y); await new Promise((q) => setTimeout(q, 40)); on = body(); }
+        ev('pointerup', X + 40, Y);
+        let off = on;
+        for (let i = 0; i < 30 && off !== ''; i++) { await new Promise((q) => setTimeout(q, 40)); off = body(); }
+        return { on, off };
+      })()`);
+      ok(finger.on === 'grab' && finger.off === '', '손가락 — 고양이 위를 쓰는 동안 손, 떼면 거둔다', finger);
+      // 톡 — 대는 사이 살짝 떨려(move) 손이 됐어도 떼면 거둔다. 톡으로 잡혔는지(pokes)까지 본다 — 쓸기로 잡히면 이 갈래를 안 지난다
+      const tap = await js(m.win, `(async () => {
+        const ev = (t, x, y) => window.dispatchEvent(new PointerEvent(t, { pointerType: 'touch', pointerId: 7, isPrimary: true, clientX: x, clientY: y, bubbles: true }));
+        const X = ${back[0]}, Y = ${back[1]}, body = () => document.body.style.cursor, h = window.nunsEnter.rigNow().handle;
+        const before = h.debug.stats().pokes;
+        ev('pointerdown', X, Y);
+        ev('pointermove', X + 3, Y);
+        let during = '';
+        for (let i = 0; i < 6 && during !== 'grab'; i++) { await new Promise((q) => setTimeout(q, 40)); during = body(); }
+        ev('pointerup', X + 3, Y);
+        await new Promise((q) => setTimeout(q, 150));
+        let off = body();
+        for (let i = 0; i < 30 && off !== ''; i++) { await new Promise((q) => setTimeout(q, 40)); off = body(); }
+        return { during, off, pokes: h.debug.stats().pokes - before };
+      })()`);
+      ok(tap.during === 'grab' && tap.off === '' && tap.pokes === 1, '손가락 톡 — 살짝 떨렸어도 떼면 손을 거둔다', tap);
+
+      // 걷기 — body 커서를 되돌린다. 걷은 뒤 고양이 자리를 지나도 손이 안 된다
+      await handAt(m, back);
+      const gone = await js(m.win, '(() => { window.nunsEnter.rigNow().destroy(); return { body: document.body.style.cursor, now: window.nunsEnter.rigNow() }; })()');
+      const after = await hover(m, back, '', 'pointer');
+      ok(gone.body === '' && gone.now === null && isArrow(after), 'destroy — body 커서를 되돌리고, 그 뒤 고양이 자리는 화살표다', { gone, after });
+      m.win.destroy();
+    }
+
+    // GPU 를 잃으면 — 정지 그림으로 물러나며 커서를 듣지 않으니 손을 거둔다
+    {
+      const m = await sitReal('cat-rb');
+      const map = await js(m.win, MAP);
+      m.box = map.box;
+      const on = await handAt(m, map.zones.back);
+      const lost = await js(m.win, `(async () => {
+        const cv = window.nunsEnter.rigNow().box.querySelector('canvas');
+        (cv.getContext('webgl2') || cv.getContext('webgl')).getExtension('WEBGL_lose_context').loseContext();
+        for (let i = 0; i < 40 && document.body.style.cursor !== ''; i++) await new Promise((q) => setTimeout(q, 50));
+        return { body: document.body.style.cursor, canvas: !!window.nunsEnter.rigNow().box.querySelector('canvas'), hand: window.nunsEnter.rigNow().handle.debug.stats().hand };
+      })()`);
+      mouseTo(m.win, map.zones.head[0], map.zones.head[1]);
+      await sleep(250);
+      const still = await js(m.win, 'document.body.style.cursor');
+      ok(isHand(on) && lost.body === '' && lost.hand === false && !lost.canvas && still === '', 'WebGL 을 잃으면 — body 커서를 되돌리고, 그 뒤 커서가 고양이 위를 지나도 그대로다', { lost, still });
+      m.win.destroy();
+    }
+
+    // 창 크기가 바뀌면 — 커서를 안 움직여도 옛 부위로 손이 남지 않는다. 자리가 그대로인 transitionend 는 끊지 않는다(쓸기가 안 끊기게)
+    {
+      const m = await sitReal('cat-rb');
+      const map = await js(m.win, MAP);
+      m.box = map.box;
+      const on = await handAt(m, map.zones.back);
+      const same = await js(m.win, `(async () => {
+        window.nunsEnter.rigNow().box.querySelector('canvas').dispatchEvent(new Event('transitionend'));
+        await new Promise((q) => setTimeout(q, 300));
+        return document.body.style.cursor;
+      })()`);
+      m.win.setContentSize(672, 378);
+      const t0 = Date.now();
+      let r = await look(m, map.zones.back);
+      while (r.body !== '' && Date.now() - t0 < 1500) { await sleep(40); r = await look(m, map.zones.back); }
+      ok(isHand(on) && same === 'grab' && r.body === '' && !r.hand, '창 크기가 바뀌면 손을 거둔다 (자리가 그대로면 안 끊는다)', { same, r });
+      const map2 = await js(m.win, MAP);
+      m.box = map2.box;
+      const on2 = await handAt(m, map2.zones.back);
+      ok(isHand(on2), '바뀐 자리의 고양이 위에서 다시 손 모양이다', { at: map2.zones.back, on2 });
+      m.win.destroy();
+    }
+
+    // 체크 줄 — 단추처럼 눌리는 자리라 고양이 위여도 화살표다. 겹치는 화면이 드물어(768×1024, 7줄 이상) 줄을 고양이 위로 옮겨 본다
+    {
+      const p = breakwin.buildBreakPayload(['stretch', 'eye']);
+      const m = await sitReal('cat-rb', { mode: p.mode, grouped: p.grouped, items: p.items });
+      const map = await js(m.win, MAP);
+      m.box = map.box;
+      const back = map.zones.back;
+      await js(m.win, `(() => { const e = document.querySelector('.list .item'), r = (e.style.animation = 'none', e.getBoundingClientRect());
+        e.style.transform = 'translate(' + (${back[0]} - (r.left + r.width / 2)) + 'px,' + (${back[1]} - (r.top + r.height / 2)) + 'px)'; })()`);
+      const r = await hover(m, back, 'grab', 'pointer');
+      const onItem = await js(m.win, `!!document.elementFromPoint(${back[0]}, ${back[1]}).closest('.list .item')`);
+      ok(onItem && r.body === 'grab' && r.hand === true && r.zone === 'back' && r.cursor === 'default' && r.real === 'pointer', '고양이 위 체크 줄은 화살표다 (body 는 손이어도 줄은 제 커서)', { onItem, r });
+      m.win.destroy();
+    }
+
+    // 알파 지도가 있는 고양이 — 메시 칸은 찼어도 털이 없는 빈틈은 화살표. 거울 고양이는 화면 자리에서 손이 된다
+    for (const rigId of ['grey', 'cat-lie', 'cat-black']) {
+      const m = await sitReal(firstClip(rigId));
+      const map = await js(m.win, MAP);
+      m.box = map.box;
+      const want = !!(rigs[rigId].display && rigs[rigId].display.mirror);
+      ok(map.hit === true && map.mirror === want && map.gap && inBox(m, map.gap.at), `${rigId}: 알파 지도를 켰고(거울 ${want}), 메시 칸 안의 털 없는 자리가 있다`, { hit: map.hit, mirror: map.mirror, gap: map.gap });
+      for (const z of ['head', 'earL', 'earR', 'back']) {
+        const r = await handAt(m, map.zones[z]);
+        ok(isHand(r) && r.zone === z, `${rigId}: ${z} 위 — 손 모양`, r);
+      }
+      if (map.gap) {
+        const r = await arrowAt(m, map.gap.at);
+        ok(isArrow(r) && r.zone === 'none', `${rigId}: 고양이 옆 빈틈(칸은 찼는데 털 ${map.gap.clear}px 안에 없다) — 화살표`, { r, gap: map.gap });
+      }
+      if (want) {
+        ok(map.flip && Math.abs(map.flip.where[0] - map.flip.on[0]) < 1 && Math.abs(map.flip.where[1] - map.flip.on[1]) < 1, `${rigId}: 캔버스 자리·거울로 잰 화면 자리가 리그의 자리와 같다`, map.flip);
+        if (map.flip) {
+          const a = await handAt(m, map.flip.on);
+          ok(isHand(a) && a.zone === map.flip.zone, `${rigId}: 거울로 보이는 화면 자리에서 손 모양`, { a, tex: map.flip.tex, at: map.flip.on });
+          const c = await arrowAt(m, map.flip.off);
+          ok(isArrow(c) && c.zone === 'none', `${rigId}: 거울을 안 풀었을 때의 자리(실제로는 빈 곳)는 화살표`, { c, at: map.flip.off });
+        }
+      }
+      m.win.destroy();
+    }
+  }
+
+  console.log('\n[4e] 끊어 쓰다듬는 눈 — 손을 멈춰도 감은 채, 손이 떠나면 한 번에 뜬다');
+  {
+    const KEEP = 3000;   // catrig.js LID_KEEP (ms) — 마지막 손길에서 이만큼 눈을 안 뜬다
+    const CALM = { tolMax: 1e6, warn: 1e6, cool: 1e6, greetP: 0, spontP: 0, rippleP: 0 };
+    const sstep = (c) => c * c * (3 - 2 * c);
+    // 깜박임은 꺼풀을 눈 몫·쉬는 칸보다 올리기만 한다 — 그 표본을 빼면 눈 몫이 움직인 길만 남는다
+    const noBlink = (rows) => rows.filter((r) => r.lid <= Math.max(sstep(r.eyeC), r.restLid, 0.375 * r.ak) + 0.005);
+    const midOf = (rows) => rows.filter((r) => r.lid >= 0.35 && r.lid <= 0.85).length;
+    const minLid = (rows) => (rows.length ? Math.min(...lidOf(rows)) : 0);
+    // 다 감은 뒤 처음 내려갈 때까지
+    const shutOf = (rows) => { const i = rows.findIndex((r) => r.lid < 0.99); return i < 0 ? rows : rows.slice(0, i); };
+    // 뜨는 길 — 언제 내려가기 시작해 언제 쉬는 꺼풀에 닿나, 깜박임을 빼면 내려가기만 하나(up: 가장 크게 되오른 값)
+    const opening = (rows) => {
+      const i = rows.findIndex((r) => r.lid < 0.99);
+      const tail = i < 0 ? [] : noBlink(rows.slice(i));
+      let up = 0;
+      for (let k = 1; k < tail.length; k++) up = Math.max(up, tail[k].lid - tail[k - 1].lid);
+      const end = tail.find((r) => r.lid <= r.restLid + 0.005);
+      return { from: i < 0 ? null : Math.round(rows[i].t), end: end ? Math.round(end.t) : null, up: fix3(up), last: tail.length ? fix3(tail[tail.length - 1].lid) : null };
+    };
+    // 뒤로 — 마지막 손길에서 KEEP 쯤에 내려가기 시작해 한 번에 쉬는 꺼풀까지 (뜨는 데 2.5초쯤 — 합 5.5초)
+    const opensOnce = (o) => o.from !== null && o.from >= KEEP - 200 && o.from <= KEEP + 700 && o.end !== null && o.end >= KEEP + 1000 && o.end <= 7000 && o.up <= 0.01;
+    // 한쪽으로만 간다 — 되돌아오지 않으니 쓸기로 안 잡힌다. dir 1 은 토막 왼쪽 끝에서 오른쪽 끝으로
+    const pass = async (win, seg, dir, ms) => {
+      const t0 = Date.now();
+      for (;;) {
+        const u = Math.min(1, (Date.now() - t0) / ms);
+        mouseTo(win, seg.x + dir * seg.amp * (2 * u - 1), seg.y);
+        if (u >= 1) return;
+        await sleep(16);
+      }
+    };
+    const leave = (win, x, y) => win.webContents.sendInputEvent({ type: 'mouseLeave', x: Math.round(x / 2), y: Math.round(y / 2) });
+    const facePos = (win) => js(win, '(() => { const c = window.__h.debug.rig().head.faceCenter; return window.__h.debug.where(c[0], c[1]); })()');
+    // 초당 tick·그린 장 — 다른 창이 도는 동안에도 이 창의 몫만 센다
+    const rate = (win, ms) => js(win, `(async () => {
+      const h = window.__h, a = h.debug.stats(), t0 = performance.now();
+      await new Promise((q) => setTimeout(q, ${ms}));
+      const b = h.debug.stats(), k = 1000 / (performance.now() - t0);
+      return { ticks: +((b.ticks - a.ticks) * k).toFixed(1), draws: +((b.draws - a.draws) * k).toFixed(1), lv: b.lv.map((v, i) => v - a.lv[i]), lid: fix(b.lid), eyeC: fix(b.eyeC), content: fix(b.content) };
+      function fix(v) { return +v.toFixed(3); }
+    })()`);
+    // 창마다 따로 잰다 — 거의 다 기다리는 시간이라 같이 돌려 시험 전체가 시간 제한(400초)을 넘지 않게 한다. 결과는 끝난 뒤 차례대로 적는다
+    const together = async (...jobs) => {
+      const logs = await Promise.all(jobs.map(async (job) => { const out = []; await job((c, m, x) => out.push([c, m, x])); return out; }));
+      for (const log of logs) for (const [c, m, x] of log) ok(c, m, x);
+    };
+
+    // 사용자의 손길 — 쓸고(burst) 멈춘다(rest, 커서는 고양이 위 그 자리). 멈춘 자리에서 이어 쓴다 — 쉬고 나서 손이 뛰지 않게.
+    // 왕복(period)이 짧으면 쓸 때마다 쓰다듬기로 다시 잡혀 content 가 오르내리고(옛 식이면 꺼풀도), 길면 한 번도 안 잡힌다 — 둘 다 본다.
+    // oldMid: 옛 식(꺼풀 = content)이었다면 게슴츠레(0.35~0.85)에 든 표본 몫 — 이 손길이 정말 고치려던 손길인지 본다
+    const rhythms = async (say) => {
+      const { win, segs } = await sit({}, CALM);
+      const tClosed = await strokeToClosed(win, segs.head);
+      for (const [zone, burst, rest, period, wantOld] of [['head', 500, 1200, 450, 0.3], ['back', 500, 2000, 450, 0.1], ['rump', 1000, 2500, 900, 0.1], ['head', 500, 1200, 900, 0]]) {
+        const seg = segs[zone], n = 3;
+        let ph = 0;
+        await js(win, SMP_ON);
+        for (let i = 0; i < n; i++) {
+          const t0 = Date.now();
+          while (Date.now() - t0 < burst) { mouseTo(win, seg.x + Math.sin(((ph + Date.now() - t0) / period) * Math.PI * 2) * seg.amp, seg.y); await sleep(16); }
+          ph += burst;
+          await sleep(rest);
+        }
+        const rows = await js(win, SMP_OFF);
+        const old = rows.filter((r) => sstep(r.content) >= 0.35 && sstep(r.content) <= 0.85).length / Math.max(1, rows.length);
+        const cMin = Math.min(...rows.map((r) => r.content));
+        say(tClosed !== null && rows.length >= (burst + rest) * n / 60 && minLid(rows) >= 0.99 && midOf(rows) === 0 && cMin < 0.8 && old >= wantOld,
+          `${zone} ${burst / 1000}초 쓸고 ${rest / 1000}초 쉬기 ${n}번 (왕복 ${period / 1000}초) — 눈은 내내 감은 채, 몸의 content 는 그대로 잦아든다`,
+          { tClosed, n: rows.length, low: fix3(minLid(rows)), mid: midOf(rows), cMin: fix3(cMin), oldMid: +old.toFixed(2) });
+      }
+      win.destroy();
+    };
+
+    // 눈을 감은 채 손을 멈춘 동안 고개가 안 돈다 — 얼굴에서 먼 엉덩이를 쓸어 커서를 따라보면 크게 돌 자리에서 멈춘다.
+    // 감은 동안 남는 고개 움직임은 쓰다듬던 자세(엉덩이는 strokeDir × 0.08 rad, |strokeDir| ≤ 1)가 content 를 따라 풀리는 것뿐이다 — 그 폭이 잣대다.
+    // 재 보면 0.01~0.03 rad, 눈 몫 대신 content 를 빼면(고장) 커서·두리번을 따라 0.28~0.9 rad 돈다. 끄덕임은 엉덩이 자세에 없다(재 보면 0.01 rad, 고장 0.12~0.7)
+    const headStill = async (say) => {
+      const HEAD_YAW = 0.08, HEAD_PITCH = 0.04, HEAD_GAZE = 0.1;
+      const { win, segs } = await sit({}, CALM);
+      const seg = segs.rump, face = await facePos(win), far = seg.x > face[0] ? 1 : -1;
+      const hold = async (name, stop, during, ms) => {
+        const tClosed = await strokeToClosed(win, seg);
+        await strokeFor(win, seg, 800);   // 쓰는 자세까지 가라앉힌다
+        stop();
+        await js(win, SMP_ON);
+        if (during) await during();
+        await sleep(ms);
+        const rows = await js(win, SMP_OFF);
+        const shut = shutOf(rows);
+        const dev = (k) => (shut.length ? Math.max(...shut.map((r) => Math.abs(r[k] - shut[0][k]))) : 9);
+        say(tClosed !== null && shut.length >= 50 && dev('yaw') <= HEAD_YAW && dev('pitch') <= HEAD_PITCH && dev('gazeX') <= HEAD_GAZE,
+          `${name} — 눈을 감은 채 고개가 안 돈다 (고개 ${HEAD_YAW} rad·끄덕임 ${HEAD_PITCH} rad·눈동자 ${HEAD_GAZE} 안)`,
+          { tClosed, shutMs: shut.length ? Math.round(shut[shut.length - 1].t) : null, yaw0: fix3(shut.length ? shut[0].yaw : 0), yaw: fix3(dev('yaw')), pitch: fix3(dev('pitch')), gazeX: fix3(dev('gazeX')) });
+        return rows;
+      };
+      await hold('커서가 고양이 위에 멈춤', () => mouseTo(win, seg.x + far * seg.amp, seg.y), null, KEEP + 200);
+      const off = await hold('커서가 고양이 밖으로 감', () => mouseTo(win, 10, 10), null, KEEP + 2400);
+      const turned = Math.max(...off.filter((r) => r.lid < 0.5).map((r) => Math.abs(r.yaw)), 0);
+      say(turned >= 0.25, '눈을 뜨고 나면 그 커서를 다시 따라본다 — 위 잣대가 헛돌지 않는다', { turned: fix3(turned) });
+      // 창 밖 — 커서를 안 따르니 혼자 두리번 쪽이다. 3.5~8초를 기다리지 않고 멈춘 뒤 0.7초에 걸어 본다
+      await hold('커서가 창 밖으로 나감', () => leave(win, seg.x, seg.y), async () => { await sleep(700); await js(win, 'window.__h.debug.drift(0.45, 0.2)'); }, KEEP - 500);
+      win.destroy();
+    };
+
+    // 손가락 — 쓸 때마다 떼고(pointerup·pointerout), 쉬는 동안엔 손가락이 없다. 그래도 감은 채다
+    const touch = async (say) => {
+      const { win, segs } = await sit({}, CALM);
+      const seg = segs.back;
+      const r = await js(win, `(async () => {
+        const h = window.__h, sleep = (ms) => new Promise((q) => setTimeout(q, ms));
+        const X = ${seg.x}, Y = ${seg.y}, A = ${seg.amp};
+        const ev = (t, x) => window.dispatchEvent(new PointerEvent(t, { pointerType: 'touch', pointerId: 7, isPrimary: true, clientX: x, clientY: Y, bubbles: true }));
+        const stroke = async (ms) => {
+          ev('pointerdown', X - A);
+          const t0 = performance.now();
+          for (let u = 0; u < 1; u = (performance.now() - t0) / ms) { ev('pointermove', X - A + 2 * A * u); await sleep(16); }
+          ev('pointermove', X + A); ev('pointerup', X + A); ev('pointerout', X + A);
+        };
+        const t0 = performance.now();
+        let s = h.debug.stats();
+        while (!(s.lid >= 0.99 && s.content >= 0.945) && performance.now() - t0 < 9000) { await stroke(320); await sleep(180); s = h.debug.stats(); }
+        const tClosed = s.lid >= 0.99 && s.content >= 0.945 ? Math.round(performance.now() - t0) : null;
+        ${SMP_ON};
+        for (const rest of [1500, 1500, 1500, 2400, 2400]) { await stroke(400); await sleep(rest); }
+        const rows = ${SMP_OFF};
+        ${SMP_ON};
+        await sleep(${KEEP + 900 - 2400});
+        return { tClosed, rows, after: ${SMP_OFF} };
+      })()`);
+      const cMin = Math.min(...r.rows.map((q) => q.content));
+      say(r.tClosed !== null && r.rows.length >= 150 && minLid(r.rows) >= 0.99 && midOf(r.rows) === 0 && cMin < 0.8,
+        '손가락으로 0.4초 쓸고 떼고 1.5~2.4초 쉬기 — 눈은 내내 감은 채', { tClosed: r.tClosed, n: r.rows.length, low: fix3(minLid(r.rows)), mid: midOf(r.rows), cMin: fix3(cMin) });
+      say(minLid(r.after) < 0.99, '손가락을 떼고 그대로 두면 3초 뒤 뜨기 시작한다', { last: fix3(r.after.length ? r.after[r.after.length - 1].lid : 1) });
+      win.destroy();
+    };
+
+    // 지나가는 커서 · 쓰다 말고 멈춤 · 진짜로 떼기 — 차례대로 (앞 것이 눈을 다 뜬 뒤)
+    const openClose = async (say) => {
+      const { win, segs } = await sit({}, CALM);
+      const seg = segs.back;
+      await js(win, SMP_ON);
+      await pass(win, seg, 1, 900);
+      mouseTo(win, 10, 10);
+      await sleep(1300);
+      await pass(win, seg, -1, 900);
+      mouseTo(win, 10, 10);
+      await sleep(300);
+      let rows = await js(win, SMP_OFF);
+      say(rows.length >= 50 && Math.max(...rows.map((r) => r.eyeC)) === 0 && !rows.some((r) => r.petting || r.eyeOn) && noBlink(rows).every((r) => r.lid < 0.01),
+        '쓰다듬기로 안 잡힌 채 지나가는 커서는 눈을 못 감긴다', { n: rows.length, eyeC: Math.max(...rows.map((r) => r.eyeC)), petting: rows.some((r) => r.petting) });
+
+      // 쓰다듬기로 잡히자마자 멈춘다 — 그 자리(반쯤 감긴 채)에 서거나 되돌아가지 않고 끝까지 감은 뒤, 창이 끝나면 뜬다
+      const t0 = Date.now();
+      let s = await stats(win);
+      while (!s.petting && Date.now() - t0 < 5000) { swing(win, seg, Date.now() - t0); await sleep(16); s = await stats(win); }
+      await js(win, SMP_ON);
+      await sleep(KEEP + 3400);
+      rows = await js(win, SMP_OFF);
+      const clean = noBlink(rows);
+      const iUp = clean.findIndex((r) => r.lid >= 0.99);
+      const rise = iUp < 0 ? clean : clean.slice(0, iUp);
+      let down = 0;
+      for (let k = 1; k < rise.length; k++) down = Math.max(down, rise[k - 1].lid - rise[k].lid);
+      say(s.petting && rows.length >= 100 && clean.length > 0 && clean[0].lid < 0.5 && iUp >= 0 && clean[iUp].t <= 2600 && down <= 0.006,
+        '감는 중에 손을 멈춰도 올라가기만 하고 끝까지 감는다', { lid0: clean.length ? fix3(clean[0].lid) : null, closedAt: iUp < 0 ? null : Math.round(clean[iUp].t), down: fix3(down) });
+      const o = opening(iUp < 0 ? [] : rows.slice(rows.indexOf(clean[iUp])));
+      say(opensOnce(o), '그 뒤 3초 창이 끝나면 한 번에 뜬다', o);
+
+      // 진짜로 뗀다 — 마지막 손길부터 잰다
+      const tClosed = await strokeToClosed(win, seg);
+      await strokeFor(win, seg, 600);
+      mouseTo(win, 10, 10);
+      await js(win, SMP_ON);
+      await sleep(7000);
+      rows = await js(win, SMP_OFF);
+      const g = opening(rows);
+      say(tClosed !== null && rows.length >= 120 && minLid(rows.filter((r) => r.t < KEEP - 200)) >= 0.99 && opensOnce(g) && g.last <= 0.005 && midOf(noBlink(rows)) * 40 < 1000,
+        '손을 떼면 3초 동안 감은 채, 그 뒤 쉬는 꺼풀(0)까지 되오르지 않고 한 번에 뜬다', { tClosed, ...g, midMs: midOf(noBlink(rows)) * 40 });
+      win.destroy();
+    };
+
+    // 기분 — 붙든 동안 경고·화남·settle 이 오면 붙들지 않는다
+    const moods = async (say) => {
+      const { win, segs } = await sit({}, CALM);
+      const seg = segs.back;
+
+      // 경고 — 손을 멈춘 채 경고가 오면 0.9초 안에 뜨고, 가라앉은 뒤(WARN_QUIT) 손이 지나가도 혼자 다시 안 감는다
+      let tClosed = await strokeToClosed(win, seg);
+      mouseTo(win, seg.x - seg.amp, seg.y);   // 나중에 여기서 이어 간다 — 뛰어서 되돌아오면 왕복(쓰다듬기)으로 잡힌다
+      await sleep(200);
+      await js(win, 'window.__h.debug.mood("warning")');
+      await js(win, SMP_ON);
+      await sleep(1800);
+      await pass(win, seg, 1, 700);
+      await sleep(KEEP - 2200);
+      let rows = await js(win, SMP_OFF);
+      const opened = rows.find((r) => r.lid < 0.1);
+      const calmed = rows.find((r) => r.mood === 'calm');
+      const after = opened ? noBlink(rows.filter((r) => r.t > opened.t)) : [];
+      say(tClosed !== null && opened && opened.t <= 900 && rows.some((r) => r.mood === 'warning'),
+        '붙든 동안 경고가 오면 안 붙들고 0.9초 안에 뜬다', { tClosed, openedAt: opened && Math.round(opened.t), warned: rows.filter((r) => r.mood === 'warning').length });
+      say(calmed && after.length >= 30 && after.every((r) => r.lid < 0.1) && !rows.some((r) => r.t > 150 && r.eyeOn) && rows[rows.length - 1].t >= 3000,
+        '경고가 가라앉은 뒤에는 손이 다시 지나가도 혼자 안 감는다', { calmedAt: calmed && Math.round(calmed.t), most: after.length ? fix3(Math.max(...lidOf(after))) : null, eyeOn: rows.some((r) => r.t > 150 && r.eyeOn) });
+
+      // 천천히 한쪽으로 다시 쓸면 창이 이어진다 — 쓰다듬기로 다시 잡히지 않아도 (멈춘 지 1.5초 + 2.6초 = 3초를 넘겨도 감은 채)
+      tClosed = await strokeToClosed(win, seg);
+      mouseTo(win, seg.x - seg.amp, seg.y);
+      await js(win, SMP_ON);
+      await sleep(1500);
+      await pass(win, seg, 1, 2600);
+      const restT = await js(win, 'window.__smp.length');
+      await sleep(1000);
+      rows = await js(win, SMP_OFF);
+      say(tClosed !== null && restT >= 60 && rows[rows.length - 1].t >= KEEP + 1500 && minLid(rows) >= 0.99 && !rows.some((r) => r.t > 1200 && r.petting),
+        '멈췄다가 천천히 한쪽으로 다시 쓸면 눈을 안 뜬다', { tClosed, ms: Math.round(rows[rows.length - 1].t), low: fix3(minLid(rows)), petting: rows.some((r) => r.t > 1200 && r.petting) });
+
+      // settle — 붙든 동안 부르면 뜨며 돌아가고, 끝나면 눈 몫까지 0. resume 뒤 손이 지나가도 혼자 안 감는다
+      tClosed = await strokeToClosed(win, seg);
+      mouseTo(win, seg.x + seg.amp, seg.y);
+      const st = await js(win, `(async () => {
+        const h = window.__h, sleep = (ms) => new Promise((q) => setTimeout(q, ms));
+        const pick = () => { const s = h.debug.stats(); return { lid: s.lid, eyeC: s.eyeC, eyeOn: s.eyeOn, content: s.content, settling: s.settling }; };
+        await sleep(200);
+        const before = pick();
+        const done = h.settle(400);
+        await sleep(200);
+        const mid = pick();
+        await done;
+        await sleep(60);
+        return { before, mid, end: pick() };
+      })()`);
+      say(tClosed !== null && st.before.lid >= 0.99 && st.before.eyeOn && !st.mid.eyeOn && st.mid.eyeC < st.before.eyeC && st.end.lid === 0 && st.end.eyeC === 0 && st.end.content === 0 && !st.end.eyeOn,
+        'settle — 붙든 동안 불러도 안 붙들고, 끝나면 꺼풀·눈 몫이 0 이다', st);
+      await js(win, 'window.__h.resume()');
+      await js(win, SMP_ON);
+      await sleep(900);
+      await pass(win, seg, -1, 700);
+      await sleep(KEEP - 1400);
+      rows = await js(win, SMP_OFF);
+      say(rows.length >= 50 && Math.max(...rows.map((r) => r.eyeC)) === 0 && noBlink(rows).every((r) => r.lid < 0.01),
+        'resume 뒤 손이 지나가도 다시 감지 않는다', { n: rows.length, eyeC: Math.max(...rows.map((r) => r.eyeC)) });
+
+      // 화남 — 맨 끝에 (외면이 안 끝나게 해 뒀다). 가늘게(0.375) 떠서 창이 끝날 때까지 그대로다
+      tClosed = await strokeToClosed(win, seg);
+      await sleep(200);
+      await js(win, 'window.__h.debug.mood("annoyed")');
+      await js(win, SMP_ON);
+      await sleep(KEEP + 300);
+      rows = await js(win, SMP_OFF);
+      const tail = rows.filter((r) => r.t >= 1300);
+      const near = tail.filter((r) => Math.abs(r.lid - 0.375) < 0.01).length / Math.max(1, tail.length);
+      say(tClosed !== null && tail.length >= 30 && near >= 0.7 && minLid(tail) >= 0.365 && noBlink(tail).every((r) => r.lid < 0.39),
+        '붙든 동안 화나면 안 붙들고 가늘게(0.375) 뜬 채 머문다', { tClosed, near: +near.toFixed(2), low: fix3(minLid(tail)), mood: rows.length ? rows[rows.length - 1].mood : null });
+      win.destroy();
+    };
+
+    // 친밀도 0.9 — 쉬는 칸(0.125)으로 돌아오고, 눈인사는 붙든 동안 안 하고 뜬 뒤에 한다
+    const fond = async (say) => {
+      const { win, segs } = await sit({ grey: { affinity: 0.9, today: 0, daysAway: 0 } }, { tolMax: 1e6, greetP: 0, spontP: 0, rippleP: 0 });
+      let tClosed = await strokeToClosed(win, segs.back);
+      await strokeFor(win, segs.back, 600);
+      mouseTo(win, 10, 10);
+      await js(win, SMP_ON);
+      await sleep(KEEP + 2400);
+      let rows = await js(win, SMP_OFF);
+      const g = opening(rows);
+      say(tClosed !== null && minLid(rows.filter((r) => r.t < KEEP - 200)) >= 0.99 && g.from !== null && g.from >= KEEP - 200 && g.from <= KEEP + 700 && g.up <= 0.01 && Math.abs(g.last - 0.125) < 0.006 && noBlink(rows).every((r) => r.lid >= 0.12),
+        '친밀도 0.9 — 3초 동안 감은 채, 뜨면 0 이 아니라 쉬는 칸(0.125)에 선다', { tClosed, ...g });
+
+      // 눈인사 — 얼굴 앞에 멈춘 커서는 받을 자리다(greetP 1). 창 안에서 나갔다 들어와 먼저 건네기(spontP 1)도 건다.
+      // 창이 끝난 뒤(3.5초) 다시 들어오면 content 는 거의 0 인데 눈은 아직 뜨는 중이다 — 여기서도 안 한다
+      await js(win, 'window.__h.debug.moodCfg({ greetP: 1, spontP: 1, greetCool: 0 })');
+      tClosed = await strokeToClosed(win, segs.head);
+      const face = await facePos(win);
+      const g0 = (await stats(win)).greetings;
+      mouseTo(win, face[0], face[1]);
+      await js(win, SMP_ON);
+      for (const wait of [1000, 2400]) {
+        await sleep(wait);
+        leave(win, face[0], face[1]);
+        await sleep(100);
+        mouseTo(win, face[0], face[1]);
+      }
+      const t1 = Date.now();
+      let s = await stats(win);
+      while (Date.now() - t1 < 4500 && s.greetings === g0) { await sleep(60); s = await stats(win); }
+      await sleep(120);   // 눈인사가 든 표본까지 적히게
+      rows = await js(win, SMP_OFF);
+      const i = rows.findIndex((r) => r.greetings > g0);
+      const atFire = i > 0 ? rows[i - 1] : null;
+      say(tClosed !== null && atFire !== null && atFire.eyeC < 0.07 && atFire.t >= KEEP + 1500,
+        '붙든 동안·뜨는 중엔 눈인사를 안 한다 — 눈을 다 뜬 뒤에 한다', { tClosed, firedAt: atFire && Math.round(atFire.t), eyeC: atFire && fix3(atFire.eyeC), greetings: s.greetings - g0 });
+      win.destroy();
+    };
+
+    // 값 — 쉬는 고양이 ↔ 붙든 고양이. 손을 멈추면 몸이 풀리는 4.3초(content)와 커서가 멈춘 뒤 2초는 tick 이 30fps 다(이 변경 전부터의 문턱) —
+    // 그래도 눈은 이미 감겼고 몸만 조금 풀리니 그리는 장은 적다. 그 둘이 지난 뒤에도 눈이 붙들려 있는 자리(창 안에서 한쪽으로 다시 쓸었을 때)는
+    // tick 까지 숨 빠르기다. 눈이 뜨는 동안은 30fps 로 돈다
+    const cost = async (say) => {
+      const { win, segs } = await sit({}, CALM);
+      const seg = segs.back;
+      const med = (rs, k) => median(rs.map((r) => r[k]));
+      const mean = (rs, k) => +(rs.reduce((v, r) => v + r[k], 0) / rs.length).toFixed(1);
+      const idle = [];   // 숨 한 번(2.7초) 남짓 — 그리는 장은 숨 어디쯤이냐에 따라 0~10장이다. tick 은 중앙값(깜박임 빼고), 그린 장은 평균으로 본다
+      for (let i = 0; i < 6; i++) idle.push(await rate(win, 500));
+      const tClosed = await strokeToClosed(win, seg);
+      await strokeFor(win, seg, 800);
+      mouseTo(win, seg.x - seg.amp, seg.y);   // 나중에 여기서 이어 간다 — 뛰어서 되돌아오면 왕복(쓰다듬기)으로 잡힌다
+      const plain = await rate(win, 2600);
+      await pass(win, seg, 1, 300);
+      const shut = [];
+      for (let k = 0; k < 3; k++) {
+        await sleep(2150);
+        shut.push(await rate(win, 350), await rate(win, 350));
+        await pass(win, seg, k % 2 ? 1 : -1, 100);
+      }
+      await sleep(KEEP + 200);
+      const open = await rate(win, 1000);
+      say(tClosed !== null && plain.lid >= 0.99 && plain.draws <= 20,
+        '손을 멈추고 붙든 3초 — 그리는 장은 30fps 에 안 붙는다 (tick 은 몸이 풀리는 동안 30fps)', plain);
+      say(tClosed !== null && shut.every((r) => r.lid >= 0.99 && r.eyeC >= 0.99 && r.content < 0.01) && med(shut, 'ticks') <= med(idle, 'ticks') + 4 && med(shut, 'ticks') <= 22 && mean(shut, 'draws') <= mean(idle, 'draws') + 6,
+        '몸이 다 풀린 뒤 눈만 붙든 동안은 쉬는 고양이처럼 숨 빠르기다 (초당 tick·그린 장)', { tClosed, idle: [med(idle, 'ticks'), mean(idle, 'draws')], shut: [med(shut, 'ticks'), mean(shut, 'draws')], lid: shut.map((r) => r.lid) });
+      say(open.eyeC > 0.01 && open.eyeC < 0.9 && open.ticks >= 24,
+        '눈이 뜨는 동안은 30fps — 꺼풀이 숨 빠르기로 뚝뚝 내려오지 않는다', open);
+      win.destroy();
+    };
+
+    await together(rhythms, headStill, touch, cost);
+    await together(openClose, moods, fond);
   }
 
   console.log('\n[5] 물러나기');

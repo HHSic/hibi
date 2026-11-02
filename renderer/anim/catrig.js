@@ -93,6 +93,7 @@
  *         align [x, y] (0~1, 기본 [0.5, 1] = 가운데 아래), debug(시험용 h.debug — hold·zone·earTouch·tailFlick·irk·fold·moodCfg…)
  *   nunsCatRig.affinityAfter(prev, { strokes, todayBefore, annoyed, daysAway }) — 친밀도 규칙(앱·미리보기가 같이 쓴다)
  *   커서는 window 에서 듣는다 — 휴식 화면의 연출 층(.curtain)은 pointer-events: none 이라 캔버스에는 안 온다.
+ *   같은 까닭으로 고양이 위 손 모양 커서(grab)는 body 에 건다 — 단추처럼 제 커서가 있는 요소는 그대로다.
  *   손가락으로 쓰다듬으려면 페이지가 html, body { touch-action: none } 이어야 한다(아니면 Chromium 이 몇 px
  *   움직인 손가락을 팬 제스처로 가져가며 pointercancel 을 낸다). 휴식 화면은 스크롤이 없다.
  */
@@ -212,7 +213,7 @@
   //     amp { lift, sigh }   — (선택) 등선 들림 px(기본 5 × scale), 한숨 어깨 px(기본 0.8 × scale)
   //     period               — (선택) 보통 숨 한 번 길이(초, 기본 2.7)
   //   lids { tiles, origin, atlas } — 꺼풀 아틀라스: 칸 자리(1/8 걸음 차례), 칸 원점(텍스처 px), 아틀라스 크기. t·tile·layer·shape·relid 는
-  //                            기록(shape 는 처음 굽기의 꺼풀 모양, relid 는 그 칸들에서 위 꺼풀만 다시 구운 값)
+  //                            기록(shape 는 처음 굽기의 꺼풀 모양, relid 는 그 칸들에서 꺼풀 털만 다시 구운 값)
   //     lids.dimCatch [a, b] — (선택) 꺼풀이 a 에서 b 까지 내려오는 동안 각막 반사의 밝은 몫을 거둔다 — 감은 칸의 틈으로 반사 점이
   //                            비치던 고양이용. 없으면 반사는 꺼풀과 상관없다
   //   grid { cols, rows, cells } — 메시 칸, 칸 채움(줄마다 16진, 글자 하나에 4칸) — 빈 칸은 안 그리고 «고양이 위가 아니다»
@@ -225,7 +226,7 @@
   //     back { center, rx, ry, weight } — 등 타원(쓰다듬으면 손 밑 혹). 끌 수 있다. weight(선택): 혹이 오르는 장
   //                            { x: [x0, x1, x2, x3], y: [y0, y1](y0 위는 0, y1 부터 다) } — 없으면 숨 들림 장(lift)을 같이 쓴다.
   //                            어느 쪽이든 아래로는 ripple.y 에서 ripple.fade 에 걸쳐 사라진다
-  //     rump { center, rx, ry, lift } — 엉덩이 타원(긁으면 엉덩이 들기·꼬리 끝 들기·덜 감기). 끌 수 있다.
+  //     rump { center, rx, ry, lift } — 엉덩이 타원(긁으면 엉덩이 들기·꼬리 끝 들기). 끌 수 있다.
   //                            lift { x: [x0, x1] 또는 [x0, x1, x2, x3](x2 부터 줄어 x3 에서 0 — 꼬리가 엉덩이와 같이 들리지 않게),
   //                            y: [y0, y1](y0 까지 다, y1 에서 0) } — 엉덩이 들림 장. lift 만 끌 수도 있다(반응은 남고 몸은 안 든다)
   //     tail { base, tip, halfWidth: [위, 아래], fade, curl, hold, upSign, below, gain } — 꼬리 축(밑동 → 끝), 축에서 위·아래 반폭,
@@ -248,7 +249,7 @@
     if (rump) rump.lift = off(Z.rump && Z.rump.lift) ? null : Object.assign({}, D.rump.lift, rump.lift);
     const tail = part('tail');
     if (tail && off(Z.tail && Z.tail.hold)) tail.hold = null;
-    // 알파 판정(zones.hit) — 기본값이 없다(회색 고양이는 메시 칸만). true 면 빈 객체(값은 zonesSetup 의 기본값)
+    // 알파 판정(zones.hit) — 기본값이 없다(없으면 메시 칸만). true 면 빈 객체(값은 zonesSetup 의 기본값)
     const hit = Z.hit === true ? {} : Z.hit && !off(Z.hit) ? Z.hit : null;
     return { chin: part('chin'), ear: Object.assign({}, D.ear, Z.ear), back: part('back'), rump, tail, ripple: part('ripple'), hit };
   }
@@ -274,9 +275,6 @@
   }
   // 부위 → 반응 갈래 (0 이마, 1 턱·볼, 2 등, 3 엉덩이, 4 그 밖의 몸). 귀·없음은 -1
   const ZKIND = [-1, 0, 1, -1, -1, 2, 3, 4, 4];
-  // 쓰다듬을 때 눈 — 거의 감음(지그시). 꺼풀 칸(1/8 걸음)에 딱 맞춰 칸 7번째(t=0.875) 한 장만 쓴다.
-  // 0.92 였을 땐 두 칸을 36% 섞은 채 멈춰, 남은 홍채 띠가 털 아래 반쯤 비치고 꺼풀 끝이 두 겹이 됐다
-  const LID_CONTENT = 0.875;
   const STROKE_MIN = 30;                   // 한 번 쓸었다고 볼 길이 (텍스처 px, 화면 ~22px)
   const STROKE_BACK = 12;                  // 끝에서 이만큼 되돌아와야 «방향이 바뀌었다» — 손 떨림은 안 친다
   const ZONE_VMAX = 1500;                  // 이보다 빠른 걸음(텍스처 px/s)은 부위 몫에 안 넣는다 — 쓰다듬기가 아니라 가로지르기다
@@ -294,9 +292,6 @@
   // 등을 손에 밀어 올리는 혹 — 손 밑에서만 오르고 손을 따라간다(높이 px, 폭 σ px). 숨 장 전체를 올리던 때는 같은 장의 숨(5px)에
   // 묻혀 안 보였다
   const BACK_PX = 2.8, BACK_W = 45;
-  // 엉덩이를 긁을 땐 조금 덜 감는다 — 꺼풀 칸 6 에 딱 맞다. 0.5 는 화난 눈(0.375)과 정면에서 거의 같아 «째려본다» 로 읽혔다.
-  // 엉덩이 반응은 몸(엉덩이·꼬리)으로 갈라 보인다
-  const LID_HALF = 0.75;
   const EAR_BACK = 0.16, EAR_BACK_FLAT = 0.07; // 귀를 만지면 옆·뒤로 젖힘(≈9°, 귀 8% 짧게 — 뒤로 돈 것처럼)
   const EAR_HOLD = 0.5, EAR_FADE = 0.7;    // 젖힌 채 이만큼(초) 있다가 이만큼에 걸쳐 돌아온다
   // 만지면 먼저 파르르(털고 0.1초 뒤 반만큼 한 번 더) 턴 뒤 이만큼(초) 지나 젖힌다 — 털기와 젖힘이 같은 쪽이라 함께 걸면 털기가
@@ -342,6 +337,7 @@
   // 손에서 머리를 빼며 뒤로 살짝 움츠린다(px) — 그냥 «다른 데를 봄» 과 갈라 보이게
   const MAD_KICK = 3, MAD_W = 16, MAD_Z = 0.8, MAD_LEAN = 4, MAD_DUCK = 1;
   const LID_MAD = 0.375;                        // 화나면 눈을 가늘게 — 꺼풀 칸 3 에 딱 맞다
+  const LID_KEEP = 3;                           // 쓰다듬다 손을 멈춰도 이만큼(초)은 눈을 안 뜬다 — 끊어 쓰는 손길에 꺼풀이 오르내리지 않게
   const COOL_DODGE = 1.5;                       // 외면 중 커서가 고양이가 돌아본 쪽에 이만큼(초) 머물면 반대로 천천히 돌아앉는다
   // 등 피부 떨림 — 손 밑 등 위쪽 띠가 «파르르» (이웃 털이 서로 반대로 움직이는 잔물결이 빠르게 흐른다). 한 방향 혹 하나가 지나가던
   // 때는 2.2px 라도 거의 안 보였다. 짧게 두 번(초·사이 초), 높이 px, 결 길이 px, 초당 도는 번, 폭 σ px
@@ -873,12 +869,12 @@
     const C = new Float32Array(22), L = new Float32Array(22); // 이번 자세 / 마지막으로 그린 자세
     L.fill(1e9);
     let px = 0, py = 0, pSeq = 0, seenSeq = 0, dX = 0, dY = 0, dSeq = 0, seenDown = 0;
-    let cwx = 0, cwy = 0, hasPtr = false, lastMoveT = -99;
+    let cwx = 0, cwy = 0, hasPtr = false, lastMoveT = -99, handOn = false;
     // 손가락 (pointerType touch) — 떼는 순간 «톡»인지 «쓸기»인지 본다
     let tDown = 0, tDownT = 0, tDownX = 0, tDownY = 0, tEnd = 0, seenTEnd = 0;
     // 쓰다듬기 — 한 번 쓴 길이·방향이 바뀐 횟수
     let stAX = 0, stAY = 0, stD = 0, stEX = 0, stEY = 0, stIn = 0, strokes = 0, lastStrokeT = -99;
-    let lastPetT = -99, petting = false, petCount = 0, strokeDir = 0, content = 0;
+    let lastPetT = -99, petting = false, petCount = 0, strokeDir = 0, content = 0, eyeC = 0, eyeT = -99;
     let blinkT0 = -1, blinkDur = 0.3, blinkAmp = 1, nextBlink = 0, nextTwitch = 0, nextDrift = 0;
     let tw2T = -1, tw2Which = 0, tw2Deg = 0;   // 귀를 두 번 털 때 두 번째
     let dYaw = 0, dPitch = 0, dRoll = 0, dGx = 0, dGy = 0;
@@ -1015,8 +1011,11 @@
     function drawOnce() { if (gl && !dead && mode === 'webgl') { pose(); draw(); force = false; if (debug) st.draws++; } }
     function onResize() {
       if (dead) return;
+      const l0 = rl, t0 = rt, w0 = rw, h0 = rh;
       fit();
       refreshRect(lastT);
+      // 커서 밑에서 고양이 자리가 바뀌었다 — 다음 move 까지 끊는다(옛 부위로 손 모양이 남거나, 다음 걸음이 뛴 걸음으로 잡히지 않게)
+      if (rl !== l0 || rt !== t0 || rw !== w0 || rh !== h0) { hasPtr = false; seenSeq = pSeq; }
       if (!running) drawOnce();
       else { force = true; wake(); }
     }
@@ -1037,14 +1036,16 @@
       if (e.pointerType !== 'touch' || !tDown) return;
       tDown = 0;
       const mv = Math.hypot(e.clientX - tDownX, e.clientY - tDownY);
-      if (e.type === 'pointerup' && mv < 10 && e.timeStamp - tDownT < 300) { dX = e.clientX; dY = e.clientY; dSeq++; tmrShort = false; }   // 톡 — 귀 털기
+      // 톡 — 귀 털기. 살짝 떨린 move 까지 끊는다(그대로 두면 다음 커서가 올 때까지 손 모양이 남는다)
+      if (e.type === 'pointerup' && mv < 10 && e.timeStamp - tDownT < 300) { dX = e.clientX; dY = e.clientY; dSeq++; tmrShort = false; hasPtr = false; seenSeq = pSeq; }
       else tEnd++;   // 손가락은 같은 쪽으로 여러 번 쓴다 — 뗄 때 이번 쓸기를 한 번으로 센다(update 에서)
       wake();
     }
     // 창 밖으로 나가면 끊는다 — 다른 모니터에서 돌아온 첫 move 가 크게 뛴 한 걸음으로 잡히지 않게.
     // 손가락은 뗄 때마다 relatedTarget 없는 pointerout 이 온다 — 그것까지 끊으면 tick 이 아직 못 읽은 마지막 move 가 «다시 들어옴» 으로
-    // 잡혀 그 쓸기가 0 이 됐다(떼며 쓰는 쓰다듬기가 거의 안 셌다). 손가락은 대는 때(onDown)와 뗀 뒤(tEnd)에 끊는다
-    function onOut(e) { if (!e.relatedTarget && e.pointerType !== 'touch') hasPtr = false; }
+    // 잡혀 그 쓸기가 0 이 됐다(떼며 쓰는 쓰다듬기가 거의 안 셌다). 손가락은 대는 때(onDown)와 뗀 뒤(tEnd)에 끊는다.
+    // 마우스는 아직 못 읽은 move 를 버린다 — 읽으면 tick 이 hasPtr 를 되살려 창 밖인데 손 모양이 남는다
+    function onOut(e) { if (!e.relatedTarget && e.pointerType !== 'touch') { hasPtr = false; seenSeq = pSeq; } }
     function onVis() {
       if (doc.hidden) {
         // 안 보이면 그르렁도 그친다 — 루프가 멈추면 update 가 못 끈다
@@ -1130,6 +1131,12 @@
     function onCat(x, y) {
       const i = Math.floor(x * gSX), j = Math.floor(y * gSY);
       return i >= 0 && j >= 0 && i < gCols && j < gRows && occ[j * gCols + i] === 1 && onFur(x, y);
+    }
+    // 고양이 위에서는 커서가 손 모양 — 쉬거나(pause) 물러나면(듣기를 그치면) 되돌린다
+    function setHand(on) {
+      if (on === handOn || !doc.body) return;
+      handOn = on;
+      doc.body.style.cursor = on ? 'grab' : '';
     }
     // 귀 위인가 — 밑동에서 끝으로 가는 축의 t 범위, 끝으로 갈수록 좁아지는 폭 (셰이더 earD 와 같은 모양)
     function earHit(o, x, y) {
@@ -1378,7 +1385,7 @@
       S[LIFT + 1] += 80;
       // 고개 들기 — 두리번 도는 창이면 빠른 스프링(DRIFT_W)이 한 장 만에 눌러 끄덕임이 안 보였다(0.27 → 0.02 rad). 스프링 빠르기만큼
       // 세게 차 봉우리를 쉴 때와 같게 한다(더 빨리 들었다 내린다). 창을 끝내 느린 스프링으로 넘기면 돌던 빠르기 그대로 목표를 크게 넘었다
-      const wd = dU >= 0 && dU < DRIFT_END ? DRIFT_W + (IDLE_W - DRIFT_W) * content : IDLE_W;
+      const wd = dU >= 0 && dU < DRIFT_END ? DRIFT_W + (IDLE_W - DRIFT_W) * eyeC : IDLE_W;
       S[PITCH + 1] -= 1.2 * wd / IDLE_W;
     }
     function resetStroke(x, y) { stAX = x; stAY = y; stD = 0; stEX = x; stEY = y; stIn = 0; }
@@ -1475,6 +1482,7 @@
         resetStroke(cwx, cwy);
         hasPtr = false;
       }
+      setHand(hasPtr && zone > 0);
       if (!petting && now - lastStrokeT > 1.2) { strokes = 0; pend = 0; }
       // 화나서 외면하는 동안엔 쓰다듬어도 받지 않는다 — 한 번 쓸 때마다 귀를 털고 고개를 다시 돌린다(손 반대쪽으로).
       // 쉬는 자세로 돌아가는 중(settle)엔 몸짓도 셈도 하지 않는다 — static 으로 바뀌기 직전에 어긋난 자세가 보이지 않게
@@ -1495,6 +1503,15 @@
       content += ((pleased ? 1 : 0) - content) * (1 - Math.exp(-dt * (pleased ? 1.2 + 1.2 * aff : mood === M_WARN ? 3.5 : 1.3)));
       if (content < 0.001 && !pleased) content = 0;
       const c = content;
+      // 눈은 손길이 끊겨도 바로 뜨지 않는다 — content 를 그대로 따르면 0.5초 쓸고 1초 쉬는 손길에 꺼풀이 중간(게슴츠레)을 오르내렸다.
+      // 쓰다듬기로 잡힌 뒤로는 마지막 손길에서 LID_KEEP 초 동안 끝까지 감는 쪽으로 가고, 그 안에 손이 고양이 위를 다시 지나면 이어진다.
+      // 몸짓·그르렁은 그대로 content 를 따른다. 경고·화남·돌아가는 중(settle)은 붙들지 않는다 — 번쩍 뜬다
+      if (mood > M_CONTENT || settling) eyeT = -99;
+      else if (pleased) eyeT = lastPetT;
+      else if (inside && step > 1.2 * kM && now - eyeT < LID_KEEP) eyeT = now;
+      const eyeOn = now - eyeT < LID_KEEP;
+      eyeC += ((eyeOn ? 1 : 0) - eyeC) * (1 - Math.exp(-dt * (eyeOn ? 1.2 + 1.2 * aff : mood === M_WARN || settling ? 3.5 : 1.3)));
+      if (eyeC < 0.001 && !eyeOn) eyeC = 0;
       // 부위 몫 — 쓰다듬는 동안 최근 1초 남짓 쓸어 준 길이의 비를 0.4초쯤에 걸쳐 따라간다(부위를 옮기면 몸짓이 스르르 바뀐다).
       // 손을 떼면(손이 0.15초 넘게 안 쓸면 — petting 꼬리 0.8초 동안 섞이지 않게) 몫은 그대로 두고 content 만 잦아든다
       const zk = Math.exp(-dt / 0.9);
@@ -1567,7 +1584,7 @@
       // 깜박임 — 8~22초마다(고양이는 빤히 본다). 넷에 하나는 반만 감는다.
       // 눈인사(느린 깜박임)는 커서가 얼굴 앞에 가만히 머물 때만 — «눈 키스» 처럼 뜻이 있게. 쓰다듬는 중·기분이 상했을 땐
       // 안 한다. 친밀도가 높을수록 잘 받아 준다(0.1 → 열에 넷, 0.9 → 거의 늘)
-      const greetOk = !settling && mood === M_CALM && wk < 0.05 && ak < 0.05 && !petting && c < 0.05 && now >= gNext && blinkT0 < 0 && hasPtr;
+      const greetOk = !settling && mood === M_CALM && wk < 0.05 && ak < 0.05 && !petting && eyeC < 0.05 && now >= gNext && blinkT0 < 0 && hasPtr;
       if (greetOk && !gDone && now - gT0 >= gNeed && nearFace(cwx, cwy, 1)) {
         gDone = true;
         if (Math.random() < mc(MC.greetP, 0.35 + 0.65 * aff)) greet(now);
@@ -1611,8 +1628,8 @@
         if (dU < 0) { dU = 0; dY0 = S[YAW]; dP0 = S[PITCH]; } else dU = Math.min(DRIFT_END, dU + dt / DRIFT_SEC);
         const e = driftEase(dU);
         yT = dY0 + (dYaw - dY0) * e; pT = dP0 + (dPitch - dP0) * e; rT = dRoll; gxT = dGx; gyT = dGy;
-        // 빠른 스프링은 도는 창에서만, 손가락으로 쓰다듬는 동안(content)은 예전 IDLE_W 쪽으로 — 쓰다듬기 자세가 창마다 굳었다 풀리지 않게
-        w = dU < DRIFT_END ? DRIFT_W + (IDLE_W - DRIFT_W) * c : IDLE_W;
+        // 빠른 스프링은 도는 창에서만, 손가락으로 쓰다듬는 동안(eyeC)은 예전 IDLE_W 쪽으로 — 쓰다듬기 자세가 창마다 굳었다 풀리지 않게
+        w = dU < DRIFT_END ? DRIFT_W + (IDLE_W - DRIFT_W) * eyeC : IDLE_W;
       }
       // 화남·외면 — 커서를 모른 척: 고개를 커서 반대로 홱 돌리고(버틴 뒤엔 조금 풀어 외면), 눈은 더 반대로 아래로.
       // 경고 때는 위 따라보기 그대로 — 손을 빤히 쳐다본다
@@ -1640,17 +1657,18 @@
       //   턱·볼: 턱을 들고, 손 쪽으로 기울고 기대며 얼굴을 조금 돌려 그쪽 볼을 손가락에 비빈다. 손이 움직이는 쪽으로 볼을 밀며
       //     따라간다(손 자리만 따르면 머리가 굳어 «비비기» 가 없었다).
       //   몸(등·엉덩이·그 밖): 머리는 조금만 — 몸 쪽 반응은 아래 엉덩이·등·꼬리 스프링이 한다
+      // 따라보기·두리번은 눈 몫(eyeC)만큼 뺀다 — 눈을 감은 채 손을 멈춘 동안 고개만 돌아가지 않게
       const kh = ZM[0], kc = ZM[1], kb = 1 - kh - kc;
-      yT = yT * (1 - c) + c * (strokeDir * (0.18 * kh + 0.08 * kb + 0.08 * kc) - chinSide * CHIN_YAW * kc);
-      pT = pT * (1 - c) + c * (HEAD_PITCH * kh + CHIN_PITCH * kc);
-      rT = rT * (1 - c) + c * (strokeDir * (0.025 * kh + 0.01 * kb + 0.012 * kc) + chinSide * CHIN_ROLL * kc);
+      yT = yT * (1 - eyeC) + c * (strokeDir * (0.18 * kh + 0.08 * kb + 0.08 * kc) - chinSide * CHIN_YAW * kc);
+      pT = pT * (1 - eyeC) + c * (HEAD_PITCH * kh + CHIN_PITCH * kc);
+      rT = rT * (1 - eyeC) + c * (strokeDir * (0.025 * kh + 0.01 * kb + 0.012 * kc) + chinSide * CHIN_ROLL * kc);
       let leanT = c * (strokeDir * (LEAN_PX * (kh + 0.4 * kb) + 4 * kc) + chinSide * CHIN_LEAN * kc);
       // 눈인사 — 천천히 감는 만큼 고개를 살짝 숙인다(턱을 당기고 조금 내린다)
       pT += GREET_DIP * gk;
       let liftT = c * (LIFT_PET * kh + CHIN_LIFT * kc + BODY_LIFT * kb) - GREET_LIFT * gk;
       // 화나면 손에서 머리를 빼며 뒤로 살짝 움츠린다 — 그냥 «다른 데를 봄» 과 갈라 보이게
       if (ak > 0 && !settling) { leanT += away * MAD_LEAN * ak; liftT -= MAD_DUCK * ak; }
-      gxT *= 1 - c; gyT *= 1 - c;
+      gxT *= 1 - eyeC; gyT *= 1 - eyeC;
       spring(YAW, yT, w, mood === M_MAD && !settling ? MAD_Z : 1, dt);
       if (pendKick) { if (!settling) S[YAW + 1] += pendKick; pendKick = 0; }
       spring(PITCH, pT, w, 1, dt);
@@ -1674,7 +1692,7 @@
       spring(FLATR, 0.05 * c + EAR_BACK_FLAT * ebR + ef, 12, 1, dt);
       // 엉덩이 들기는 긁는 순간 곧 오르는 반사 — content 가 1/3 만 차도 다 오르고(0.4초 남짓 스프링), 쓸기가 꼬리 밑동 쪽(오른쪽)으로 갈 때
       // 1px 더 밀어 올린다(손에 맞춰). 천천히(2.9초) 오르던 때는 움직임을 알아채기 어려웠다
-      // 엉덩이 들림 장을 끈 고양이(rump.lift null)는 부위 반응(덜 감기·꼬리 끝)만 — 스프링을 돌리지 않는다
+      // 엉덩이 들림 장을 끈 고양이(rump.lift null)는 부위 반응(꼬리 끝)만 — 스프링을 돌리지 않는다
       spring(RUMP, rumpLiftOn ? ZM[3] * Math.min(1, 3 * c) * (RUMP_PX + Math.max(0, strokeDir)) : 0, 7, 0.85, dt);
       // 등 — 손 밑에서만 오르는 혹이 손을 따라간다(등 범위 안에서). 경고에 들면 거둔다(피부 떨림과 겹치지 않게)
       if (petting && zone === 5) bumpX += (clamp(cwx, ripX0, ripX1) - bumpX) * Math.min(1, dt * 20);   // 등 위에서만 — 손을 떼며 지나가는 길은 안 따른다
@@ -1718,14 +1736,14 @@
         if (Math.random() < 0.35) { tw2T = now + rand(0.08, 0.12); tw2Which = which; tw2Deg = deg * 0.5; }
       }
       if (tw2T >= 0 && now >= tw2T) { tw2T = -1; twitch(tw2Which, tw2Deg); }
-      // 지그시 감기는 중간(노려보는 눈처럼 보이는 0.35~0.65)을 빨리 지난다 — 양 끝은 느리게
-      // 엉덩이를 긁을 땐 조금 덜(칸 6 — 몫만큼 섞는다. 둘 다 꺼풀 칸에 딱 맞는 값이라 가만히 있으면 칸에 붙는다).
-      // 경고엔 content 가 잦아들며 눈을 뜨고, 화나면 가늘게(칸 3). 친밀도가 높으면(0.6~) 쉴 때 꺼풀이 한 칸 내려와
+      // 쓰다듬으면 어느 부위든 끝까지 감는다 — 거의 감은 채(0.875·엉덩이 0.75) 멈추면 게슴츠레 내려다보는 눈으로 읽혔다.
+      // 지그시 감기는 중간(노려보는 눈처럼 보이는 0.35~0.65)을 빨리 지난다 — 양 끝은 느리게.
+      // 경고엔 눈 몫이 잦아들며 눈을 뜨고, 화나면 가늘게(칸 3). 친밀도가 높으면(0.6~) 쉴 때 꺼풀이 한 칸 내려와
       // 있다(느긋) — 칸 사이에 멈추면 꺼풀 끝이 두 겹이라 0 아니면 한 칸으로만, 바뀔 땐 1초 남짓에 걸쳐
       const rl = settling || aff < 0.6 ? 0 : 0.125 * (1 - wk) * (1 - ak);
       restLid += (rl - restLid) * Math.min(1, dt * 1.5);
       if (Math.abs(rl - restLid) < 0.001) restLid = rl;
-      lid = Math.max(lb, c * c * (3 - 2 * c) * (LID_CONTENT + (LID_HALF - LID_CONTENT) * ZM[3]), LID_MAD * ak, restLid);
+      lid = Math.max(lb, eyeC * eyeC * (3 - 2 * eyeC), LID_MAD * ak, restLid);
       // 숨 — 길이는 숨이 바뀔 때(바닥에서 쉬는 끝)만 새로 정한다. 깊이의 쓰다듬기 몫은 content 를 따라 매끄럽게
       breathPh += dt / breathPer;
       if (breathPh >= 1) { breathPh -= 1; nextBreath(now, c); }
@@ -1764,14 +1782,14 @@
       // 외면하는 동안엔 커서가 움직여도 따라보지 않으니 따라보기 빠르기로 올리지 않는다(돌아앉는 동안만 30fps)
       paceBreath = false;
       // 혼자 두리번이 도는 창(화나지 않고, 쓰다듬지 않을 때) — 고개 빠르기 문턱 대신 그린 뒤에 앞을 내다보고 고른다(driftPace)
-      paceDrift = dU >= 0 && dU < DRIFT_END && ak === 0 && c < 0.01;
+      paceDrift = dU >= 0 && dU < DRIFT_END && ak === 0 && eyeC < 0.01;
       if ((blinkT0 >= 0 && blinkDur < 0.5) || earV > 0.6 || zoneV > 40 || ripU >= 0 || (thumpT >= 0 && now - thumpT > THUMP_UP - 0.04) || (mood === M_MAD && Math.abs(S[YAW + 1]) > 0.8) || Math.abs(S[LIFT + 1]) * kM > 8 || Math.abs(S[LIFT] - liftT) * kM > 0.6) return 2;
       if (settling) {
         // 다 돌아갔으면 숨도 멈춰 있다 — 그릴 게 없다. 숨 빠르기로 고른 짧은 간격이 남아 헛 tick 이 돌지 않게
         idleIv = IDLE_MS;
         return now - settleT0 < settleDur + 0.3 ? 1 : 0;
       }
-      if (blinkT0 >= 0 || earPx > 10 || zoneV > 10 || tw2T >= 0 || petting || (!paceDrift && Math.abs(S[YAW + 1]) > 0.6) || (c > 0.01 && c < 0.99) || (now - lastMoveT < ACTIVE_AFTER_MOVE && ak < 0.5)) return 1;
+      if (blinkT0 >= 0 || earPx > 10 || zoneV > 10 || tw2T >= 0 || petting || (!paceDrift && Math.abs(S[YAW + 1]) > 0.6) || (c > 0.01 && c < 0.99) || (eyeC > 0.01 && eyeC < 0.99) || (now - lastMoveT < ACTIVE_AFTER_MOVE && ak < 0.5)) return 1;
       if ((!paceDrift && Math.abs(S[YAW + 1]) + Math.abs(S[PITCH + 1]) > 0.3) || earE > 0.01 || zoneV > 0.3 || (ak > 0 && ak < 0.999) || restLid !== rl) idleIv = DRIFT_MS;
       // 숨만 쉰다: 간격은 그린 뒤 tick 에서 앞을 내다보고 고른다(breathIv). 바닥 쉼·꼭대기에선 100ms 에 안 그리고,
       // 가장 빠른 곳에서도 20fps 를 넘지 않는다
@@ -2289,6 +2307,7 @@
     function unlisten() {
       if (!listening) return;
       listening = false;
+      setHand(false);
       win.removeEventListener('resize', onResize);
       win.removeEventListener('pointermove', onMove);
       win.removeEventListener('pointerdown', onDown);
@@ -2319,6 +2338,7 @@
         paused = true;
         running = false;
         stopLoop();
+        setHand(false);
         if (purr) purr.stop();
         // 쓰다듬던 판은 여기서 끝 — 앱이 횟수·친밀도를 바로 받게
         endSession(); petting = false; strokes = 0; pend = 0;
@@ -2363,7 +2383,7 @@
           settleTmr = setTimeout(() => {
             // 끝 — 스프링 꼬리를 털어 정확히 쉬는 자세로 한 장 그린다
             S.fill(0);
-            breath = 0; sigh = 0; lid = 0; content = 0; blinkT0 = -1;
+            breath = 0; sigh = 0; lid = 0; content = 0; eyeC = 0; eyeT = -99; blinkT0 = -1;
             earTL = earTR = -99; ebL = ebR = 0; rubL = rubR = 0; ZA.fill(0); thumpT = -1; pendFlick = 0; pendThump = false; tw2T = -1;
             // 기분은 쉼으로 — 쉬는 자세엔 화난 몸짓이 없다. 경고·화남이었으면 참을성은 외면이 끝날 때처럼 덜어 둔다(아니면 resume 뒤
             // 첫 쓰다듬기에서 그르렁 없이 곧장 경고가 왔다). 쉬는 동안 흐른 시간은 resume 때 offEnd 가 푼다
@@ -2433,7 +2453,7 @@
       const ZNAME = ['none', 'head', 'chin', 'earL', 'earR', 'back', 'rump', 'body', 'tail'];
       handle.debug = {
         S, C, L,
-        stats() { return { mode, gl2: isGL2, ticks: st.ticks, draws: st.draws, skips: st.skips, pokes: st.pokes, imm: st.imm, lv: st.lv.slice(), why: st.why.slice(), jsMs: st.jsMs, jsMax: st.jsMax, canvas: canvas ? [canvas.width, canvas.height] : null, epsTex, level, running, raf: !!raf, timer: !!tmr, audio: purr ? purr.state : 'none', purring: purr ? purr.on : false, content, petting, strokes, lid, petCount, earL: S[EARL], earR: S[EARR], lift: S[LIFT], purrMs: st.purrMs, warmMs: st.warmMs, settling, breath, sigh, breathPer, breathAmp, breathSigh, idleIv, purrK,
+        stats() { return { mode, gl2: isGL2, ticks: st.ticks, draws: st.draws, skips: st.skips, pokes: st.pokes, imm: st.imm, lv: st.lv.slice(), why: st.why.slice(), jsMs: st.jsMs, jsMax: st.jsMax, canvas: canvas ? [canvas.width, canvas.height] : null, epsTex, level, running, raf: !!raf, timer: !!tmr, audio: purr ? purr.state : 'none', purring: purr ? purr.on : false, content, eyeC, eyeOn: lastT - eyeT < LID_KEEP, petting, strokes, lid, hand: handOn, petCount, earL: S[EARL], earR: S[EARR], lift: S[LIFT], purrMs: st.purrMs, warmMs: st.warmMs, settling, breath, sigh, breathPer, breathAmp, breathSigh, idleIv, purrK,
           zone: ZNAME[zone], zmix: Array.from(ZM, (v) => Math.round(v * 100) / 100), chinSide, irk, ears: st.ears, earBack: [ebL, ebR], flatR: S[FLATR], rump: S[RUMP], back: S[BACKR], tailA: S[TAILA], tailB: S[TAILB], thump: thumpT >= 0, backX: bumpX,
           mood: MOOD_NAME[mood], moodOut, tol, tolMax, wk, ak, aff, today, warnLeft, coolLeft: mood >= M_MAD ? coolEnd - lastT : 0, away, snubs: st.snubs,
           greetings: nGreet, greeting: gOn, gNeed, ripA, ripX, restLid, flat: S[FLAT], yaw: S[YAW], pitch: S[PITCH], gazeX: S[GX], sessStrokes, nStrokes, nSess, followSec: FOLLOW_SEC[0] + (FOLLOW_SEC[1] - FOLLOW_SEC[0]) * aff,
