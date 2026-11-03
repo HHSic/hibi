@@ -287,7 +287,9 @@ function mountRig(host, clip, o, onFail) {
 
   const place = () => {
     if (!world) return;
-    const b = C.rigBox(host.clientWidth || window.innerWidth, host.clientHeight || window.innerHeight, clip, rig, world);
+    // clientWidth·clientHeight 는 정수로 반올림된다 — 화면 크기가 소수면(배율 1.25·1.5) 바닥에 앉는 고양이가 화면 끝을 넘거나 밑으로 화면 픽셀 한 줄이 비었다
+    const cs = window.getComputedStyle(host);
+    const b = C.rigBox(parseFloat(cs.width) || window.innerWidth, parseFloat(cs.height) || window.innerHeight, clip, rig, world);
     box.style.left = `${b.x}px`;
     box.style.top = `${b.y}px`;
     box.style.width = `${b.w}px`;

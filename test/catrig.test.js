@@ -69,13 +69,13 @@ const SINGLE = { mode: 'single', grouped: false, items: [{ name: '눈 휴식', e
 
 /** 휴식 창 하나 — 창은 절반 크기에 확대 0.5 라 CSS 크기가 w×h 다 (모니터보다 큰 창은 윈도우가 자른다).
  *  adopt 가 아니면 메인이 모르는 창이다 (휴식 창 페이지여도 기록·rig.json 을 못 받는다) */
-async function overlay(w, h, adopt = true) {
-  const win = new BrowserWindow({ show: false, width: Math.round(w / 2), height: Math.round(h / 2), useContentSize: true, frame: false,
+async function overlay(w, h, adopt = true, zoom = 0.5) {
+  const win = new BrowserWindow({ show: false, width: Math.round(w * zoom), height: Math.round(h * zoom), useContentSize: true, frame: false,
     webPreferences: { offscreen: true, preload: STUB, contextIsolation: false, sandbox: false, backgroundThrottling: false } });
   if (adopt) breakwin.adoptForTest(win);
   await win.loadFile(OVERLAY, { query: { display: '1', main: 'false' } });
   win.webContents.setFrameRate(30);
-  win.webContents.setZoomFactor(0.5);
+  win.webContents.setZoomFactor(zoom);
   await sleep(150);
   return win;
 }
@@ -103,12 +103,13 @@ const RIG_STATE = `(async () => {
     pe: cv ? getComputedStyle(cv).pointerEvents : null, underIsCat: !!under && (under === cv || c.box.contains(under)),
     btnFree: br ? document.elementFromPoint((br.l + br.r) / 2, (br.t + br.b) / 2) === btn : null,
     box: R(c.box), cv: R(cv), video, hero: document.documentElement.classList.contains('ent-hero'),
-    glow: c.box.style.filter || '', W: innerWidth, H: innerHeight,
+    glow: c.box.style.filter || '', W: visualViewport.width, H: visualViewport.height,
     content: ['kicker', 'headline', 'subline', 'list'].map((id) => R(document.getElementById(id))).filter(Boolean),
     buttons: [...document.querySelectorAll('.actions button')].filter((b) => getComputedStyle(b).display !== 'none').map(R).filter(Boolean),
     stage: +getComputedStyle(document.querySelector('.stage')).opacity };
 })()`;
 const hit = (a, b, pad = 0) => !!(a && b && a.l < b.r + pad && a.r > b.l - pad && a.t < b.b + pad && a.b > b.t - pad);
+// W·H 는 visualViewport — 화면 크기가 소수일 수 있다(1922.67×1082.67). innerWidth·innerHeight 는 그것을 정수로 맞춘 값이라 진짜 끝과 어긋난다(확대 0.5 창에서는 내려서 1px 까지 안쪽이다)
 const inside = (a, W, H) => !!a && a.l >= -0.5 && a.t >= -0.5 && a.r <= W + 0.5 && a.b <= H + 0.5;
 
 app.whenReady().then(async () => {
@@ -229,8 +230,8 @@ app.whenReady().then(async () => {
   const catRigOf = () => ({ ...breakwin.catRigPayload(store.settings), purr: false, volume: 0 });
   const pay = (enter, extra) => ({ ...SINGLE, enter, enterOn: '1', durationSec: 20, endsAt: Date.now() + 20000, sound: { enabled: false },
     noEscape: false, catRate: 0.75, catRig: catRigOf(), ...extra });
-  const begin = async (w, h, p) => {
-    const win = await overlay(w, h);
+  const begin = async (w, h, p, zoom) => {
+    const win = await overlay(w, h, true, zoom);
     await js(win, `window.__begin(${JSON.stringify(p)})`);
     return { win, s: await js(win, RIG_STATE) };
   };
@@ -245,10 +246,25 @@ app.whenReady().then(async () => {
     ok(s.ready.mirror === s.mirrorWant && (s.mirrorWant ? s.scale === '-1 1' : s.scale === 'none'), `${clipId}: 거울 ${s.mirrorWant ? '— 캔버스가 scale -1 1' : '아님'}`, { mirror: s.ready.mirror, scale: s.scale });
     ok(s.cin && s.stage > 0.95, `${clipId}: 들어오는 움직임(.in)으로 나타나고, 안내도 뜬다`, { in: s.cin, stage: s.stage });
     ok(s.pe === 'none' && !s.underIsCat && s.btnFree === true, `${clipId}: 고양이는 커서를 받지 않는다 — 단추·안내를 막지 않는다`, { pe: s.pe, underIsCat: s.underIsCat, btnFree: s.btnFree });
-    ok(s.box && s.cv && Math.abs(s.box.l - s.cv.l) < 1.5 && Math.abs(s.box.r - s.cv.r) < 1.5 && Math.abs(s.box.b - s.cv.b) < 1.5, `${clipId}: 캔버스가 자리 상자를 채운다`, { box: s.box, cv: s.cv });
+    ok(s.box && s.cv && Math.abs(s.box.l - s.cv.l) < 1.5 && Math.abs(s.box.r - s.cv.r) < 1.5 && Math.abs(s.box.b - s.cv.b) < 0.1, `${clipId}: 캔버스가 자리 상자를 채우고 바닥이 맞는다`, { box: s.box, cv: s.cv });
     ok(inside(s.cv, s.W, s.H) && !s.content.some((c) => hit(c, s.cv)) && !s.buttons.some((b) => hit(b, s.cv)), `${clipId}: 화면 안, 안내·단추와 안 겹친다`, s.cv);
     ok(s.hero === hero && !clip.glow === !s.glow && (!s.glow || /drop-shadow/.test(s.glow)), `${clipId}: 주인공 자리·빛(glow)이 영상과 같다`, { hero: s.hero, glow: s.glow });
     win.destroy();
+  }
+
+  // 배율 1.5 화면에서는 창이 정수 DIP 여도 화면 픽셀을 올림해서 화면 크기가 소수가 된다. 어느 모니터에서든 소수가 되게 확대 0.75 로 만든다 (소수부는 모니터 배율에 따라 달라진다)
+  // 1082.67 은 clientHeight 로 올림, 1077.33 은 내림되는 높이다 — 상자를 정수 크기로 잡으면 앞쪽은 화면 끝을 넘고, 뒤쪽은 고양이 밑으로 화면 픽셀 한 줄이 빈다.
+  // 1077.33 (창 808 DIP) 은 배율 1·1.5 모두 그 높이가 된다. 1081.33 (창 811 DIP) 은 배율 1.5 에서 1082.67 이 되어 올림 쪽만 본다
+  console.log('\n[3a] 크기가 소수인 화면 — 바닥에 붙는 고양이');
+  for (const height of [1082.67, 1077.33]) {
+    for (const clipId of ['cat', 'cat-meow', 'cat-lie', 'cat-roll']) {
+      const { win, s } = await begin(1922.67, height, pay(clipId), 0.75);
+      const tag = `${clipId} ${height}`;
+      if (s.none) { ok(false, `${tag}: 앉는다`, s); win.destroy(); continue; }
+      ok(Math.abs(s.H - Math.round(s.H)) > 0.1, `${tag}: 시험 창 높이가 소수다`, s.H);
+      ok(inside(s.cv, s.W, s.H) && Math.abs(s.box.b - s.cv.b) < 0.1 && Math.abs(s.H - s.cv.b) < 0.15, `${tag}: 화면 안, 바닥이 자리 상자·화면 끝과 맞는다`, { box: s.box.b, cv: s.cv.b, H: s.H });
+      win.destroy();
+    }
   }
 
   console.log('\n[3b] 주인공 — 여러 화면');

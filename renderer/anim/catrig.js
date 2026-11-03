@@ -72,7 +72,7 @@
  *   nunsCatRig.preload({ audio: true })   — 숨은 휴식 창이 읽힐 때(보이기 전). 그림 풀기·소리 장치 열기를 미리
  *   nunsCatRig.release()                  — 이 창에는 고양이가 안 뜬다(미리 연 소리 장치를 닫는다)
  *   const h = nunsCatRig.mount(host, { sound: true, volume: 0.7, affinity: 0.4, todayStrokes: 12, onPet(p) {}, onMood(m) {}, onAffinity(v) {} });
- *   host 는 자리를 잡은(position 이 static 이 아닌) 상자다. 고양이는 그 안에 비율을 지켜(contain) 바닥에 앉는다
+ *   host 는 자리를 잡은(position 이 static 이 아닌) 상자다. padding·border 는 두지 않는다. 고양이는 그 안에 비율을 지켜(contain) 바닥에 앉는다
  *   (opts.align 으로 바꿀 수 있다). 영상 고양이와 같은 자리·크기의 host 는 clip.js 의 rigBox(w, h, clip, rig, worldOf(rig))가
  *   정한다 — rig.json display.video(또는 굽기 기록 source)로 사진이 영상 프레임의 어디서 왔는지 보고 옮긴다. worldOf(rig) 의 w·h 를
  *   그대로 layout 에 넣으면 안 된다(영상과 리그는 투명 여백이 달라 크기·자리가 어긋난다). worldOf 는 h.ready 의 width·height 와
@@ -975,7 +975,10 @@
 
     // ── 자리 잡기 ──
     function fit() {
-      const hw = host.clientWidth, hh = host.clientHeight;
+      // clientWidth·clientHeight 는 정수로 반올림된다 — 자리 상자는 소수라(clip.js rigBox) 캔버스 바닥이 상자보다 0.5px 까지 나가거나 모자랐다.
+      // 모자라면 바닥에 붙는 고양이 밑으로 화면 픽셀 한 줄이 비었다
+      const cs = win.getComputedStyle(host);
+      const hw = parseFloat(cs.width), hh = parseFloat(cs.height);
       if (!hw || !hh || !el) return false;
       const s = Math.min(hw / W.w, hh / W.h);
       const w = W.w * s, h = W.h * s;
