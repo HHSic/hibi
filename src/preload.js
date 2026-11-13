@@ -172,6 +172,8 @@ contextBridge.exposeInMainWorld('nunsseom', {
   mailBackupOpen: () => ipcRenderer.send('mail:backup-open'),
   // 서버 정리 켜기·끄기 — 켜기와 기간 줄이기는 메인이 세어 보고 묻는다 (일반 setApp은 이 값을 못 바꾼다)
   mailTidySet: (req) => ipcRenderer.invoke('mail:tidy-set', req),
+  // 지난 메일 받기 — 받기·정리 허용은 메인이 확인 창으로 묻는다 (일반 setApp은 이 값을 못 바꾼다)
+  mailFillSet: (req) => ipcRenderer.invoke('mail:fill-set', req),
   // 자동 전달 — 켜기·주소 더하기·계정 더하기는 메인이 확인 창으로 묻는다 (일반 setApp은 이 값을 못 바꾼다)
   mailFwdStatus: () => ipcRenderer.invoke('mail:fwd-status'),
   mailFwdSet: (req) => ipcRenderer.invoke('mail:fwd-set', req),

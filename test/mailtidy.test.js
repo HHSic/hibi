@@ -7,7 +7,7 @@
 //   [2] 확인된 것만 옮긴다            [3] 확인이 하나라도 불확실하면 남긴다 (S1)
 //   [4] 별표·중요·메모는 남긴다       [5] 정리하지 않는 폴더·공유 폴더는 열지도 않는다
 //   [6] 휴지통이 없으면 그 계정은 옮기지 않는다 (S2)
-//   [7] MOVE가 없으면 정리하지 않고, 대체 경로(COPY+지우기)는 연결에서 막힌다
+//   [7] MOVE가 없으면 복사 길(mailmove)로 옮긴다 — 첫 묶음은 1통, 증명이 안 되면 그 계정은 멈춘다, 대체 경로는 연결에서 막힌다
 //   [8] 계정 하나가 넘어져도 나머지는 한다 (S6)   [9] 한 번에 옮기는 양 (S4)
 //   [10] 세기만 하기(dry-run)는 읽기 전용 (S7)    [11] 검색이 답하지 않음   [12] 옮기기가 거부됨
 //   [13] UID는 폴더마다 (S3)          [14] 금지 명령을 소스에 쓰지 않았다
@@ -19,6 +19,10 @@
 //        서버가 읽음 조건을 지키든 흘려듣든 같은 수, 옮기기 직전에는 플래그를 다시 받아 본다, 되찾은 메일은 다시 옮기지 않는다,
 //        늘 남기는 메일은 기억해 두고 몇 분마다 다시 받지 않는다
 //   [21] 보기 창에 떠 있는 메일은 옮기지 않는다 (모든 기간) — 다른 폴더라도 Message-ID 가 같으면
+//   [22] 복사 길에서 지움 표시 뒤 끊김 — 다음 실행이 내 표시를 먼저 풀고 다시 복사하지 않는다
+//   [23] 남의 지움 표시가 있는 폴더(UIDPLUS 없음)는 건너뛴다   [24] MOVE 거절의 서버 까닭
+//   [25] 옮기기 일지를 못 쓰면 멈춘다   [26] 휴지통 이름 짐작 · opts.labelOf
+//   [27] 계정마다의 결과(res.per) — 남긴 까닭(중요·별표·저장 안 됨)·오류·멈춤·저장된 가장 오래된 메일
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -26,6 +30,7 @@ const os = require('os');
 const ROOT = path.join(__dirname, '..');
 const mailtidy = require(path.join(ROOT, 'src', 'mailtidy.js'));
 const mailbackup = require(path.join(ROOT, 'src', 'mailbackup.js'));
+const mailmove = require(path.join(ROOT, 'src', 'mailmove.js'));
 const { makeServer } = require(path.join(__dirname, 'fixtures', 'fake-imap.js'));
 const { hasCapability } = require('imapflow/lib/tools.js');
 
@@ -101,10 +106,11 @@ function setup(specs, { state = true } = {}) {
   }
   if (state) fs.writeFileSync(path.join(dir, 'backup-state.json'), JSON.stringify(st));
   const server = makeServer(spec);
-  return { dir, server, accounts: specs.map((a) => a.acc) };
+  // 옮기기 일지(멈춤·믿음·남은 지움 표시)는 시험마다 따로 — 앞 절의 계정 상태가 새어 들지 않게
+  return { dir, server, accounts: specs.map((a) => a.acc), journal: mailmove.memJournal() };
 }
 const run = (env, opts = {}) => mailtidy.tidyAll(opts.accounts || env.accounts, env.dir, {
-  days: 30, now: () => NOW, connect: (acc) => env.server.connect(acc), ...opts
+  days: 30, now: () => NOW, connect: (acc) => env.server.connect(acc), journal: env.journal, ...opts
 });
 const ids = (env, accId, p) => env.server.box(accId, p).msgs.map((m) => m.messageId).sort();
 const opened = (env, accId) => env.server.log.filter((e) => e.cmd === 'mailboxOpen' && (!accId || e.acc === accId));
@@ -440,19 +446,53 @@ const pick = (r) => ({ moved: r.moved, verified: r.verified, kept: r.kept, unsav
     ok(!opened(env, 'a1').length && !opened(env, 'a3').length, '휴지통이 없으면 폴더를 열지도 않는다');
   }
 
-  console.log('\n[7] MOVE');
-  {
-    const env = setup([{ acc: acct('a1'), caps: ['IMAP4rev1', 'UIDPLUS'], boxes: [box('INBOX', [mk(1000)]), TRASH()] }]);
+  console.log('\n[7] MOVE 가 없는 서버 — 복사 길(mailmove)로 옮긴다');
+  const five = () => [1000, 1003, 1006, 1009, 1012].map((u) => mk(u));
+  for (const caps of [['IMAP4rev1', 'UIDPLUS'], ['IMAP4rev1']]) {
+    // 이카운트처럼 용도 표시 없이 이름만 «휴지통»
+    const env = setup([{ acc: acct('a1'), caps, boxes: [box('INBOX', five()), box('휴지통', [])] }]);
     const r = await run(env);
-    ok(r.moved === 0 && /MOVE/.test(r.errors[0] || '') && env.server.forbidden().length === 0 && opened(env).length === 0, '처음부터 MOVE 가 없으면 정리하지 않는다 (금지 명령 0)', pick(r));
+    ok(r.moved === 5 && ids(env, 'a1', 'INBOX').length === 0 && ids(env, 'a1', '휴지통').length === 5 && r.errors.length === 0,
+      `${caps.join('+')} — 5통 옮김 (휴지통은 이름으로 찾음)`, pick(r));
+    const copies = env.server.log.filter((e) => e.cmd === 'COPY').map((e) => e.range);
+    ok(JSON.stringify(copies) === '["1000","1003,1006,1009,1012"]', '…첫 묶음은 1통으로 시험, 되면 나머지를 한 번에', copies);
+    ok(moves(env).length === 0 && env.server.forbidden().length === 0, '…messageMove 0 · 금지 명령 0 (imapflow 대체 경로를 안 탄다)', env.server.forbidden());
+    ok(movedKeys(env.dir).length === 5 && JSON.stringify(r.noMove) === '[]', '…열쇠 5 · noMove 없음 (멈춘 계정이 아니다)', { keys: movedKeys(env.dir).length, noMove: r.noMove });
+  }
+  {
+    // 서버가 복사를 증명해 주지 않는다 (묵은 STATUS) — 그 계정은 멈춘다. 매 실행마다 휴지통에 복사본을 만들지 않게
+    const env = setup([{ acc: acct('a1'), caps: ['IMAP4rev1'], statusStale: true, boxes: [box('INBOX', five()), TRASH()] }]);
+    const r1 = await run(env);
+    ok(r1.moved === 0 && ids(env, 'a1', 'INBOX').length === 5 && ids(env, 'a1', 'Trash').length === 1 && JSON.stringify(r1.noMove) === '["a1"]',
+      '묵은 STATUS — 시험 1통만 복사, 원본은 그대로, 그 계정을 noMove(멈춤)에 적는다', { ...pick(r1), noMove: r1.noMove });
+    ok(/휴지통이 늘지 않아/.test(r1.errors.join(' ')) && /휴지통이 늘지 않아/.test(env.journal.blocked('a1') || ''), '…까닭을 남기고 일지에 멈춤을 적는다', r1.errors);
+    const n = env.server.log.length;
+    const r2 = await run(env);
+    ok(r2.moved === 0 && !env.server.log.slice(n).some((e) => ['COPY', 'connect'].includes(e.cmd)) && /옮기기를 멈췄습니다/.test(r2.errors[0] || '')
+      && JSON.stringify(r2.noMove) === '["a1"]', '…다음 실행은 연결도 하지 않는다 (복사 0)', { ...pick(r2), noMove: r2.noMove });
+    // 설정 창의 «다시 해 보기» — 서버를 고쳤다
+    await env.journal.unblock('a1');
+    env.server.spec.a1.statusStale = false;
+    const r3 = await run(env);
+    ok(r3.moved === 4 && r3.spared === 1 && ids(env, 'a1', 'INBOX').length === 1 && ids(env, 'a1', 'Trash').length === 5 && JSON.stringify(r3.noMove) === '[]',
+      '…풀면 다시 옮긴다 — 겹친 1통은 열쇠가 있어 다시 복사하지 않는다 (원본 + 복사본, 잃음 0)', pick(r3));
+  }
+  {
+    const env = setup([
+      { acc: acct('a1'), caps: ['IMAP4rev1', 'UIDPLUS'], boxes: [box('INBOX', [mk(1000)]), TRASH()] },
+      { acc: acct('a2'), boxes: [box('INBOX', [mk(1000)]), TRASH()] },
+      { acc: acct('a3'), failConnect: true, boxes: [box('INBOX', [mk(1000)]), TRASH()] }
+    ]);
+    const r = await run(env);
+    ok(JSON.stringify(r.noMove) === '[]' && r.moved === 2, 'MOVE 없는 계정·MOVE 계정·로그인에 실패한 계정 — noMove 는 멈춘 계정만이라 비었다', { noMove: r.noMove, moved: r.moved });
   }
   {
     const spec = { acc: acct('a1'), boxes: [box('INBOX', [mk(1000)]), TRASH()] };
     spec.hooks = { afterSearch: ({ client }) => { client.capabilities.delete('MOVE'); } };
     const env = setup([spec]);
     const r = await run(env);
-    ok(r.moved === 0 && moves(env).length === 0 && /MOVE/.test(r.errors.join(' ')) && env.server.forbidden().length === 0, '도중에 MOVE 가 사라지면 옮기기 직전에 멈춘다 (messageMove 0회)', pick(r));
-    ok(movedKeys(env.dir).length === 0, '…옮기기 전에 적어 둔 열쇠는 지운다 (남기면 그 메일은 영영 정리되지 않는다)', movedKeys(env.dir));
+    ok(r.moved === 1 && moves(env).length === 0 && ids(env, 'a1', 'Trash').length === 1 && env.server.forbidden().length === 0,
+      '도중에 MOVE 가 사라지면 복사 길로 옮긴다 (messageMove 0회 · 금지 명령 0)', pick(r));
   }
   {
     // imapflow 의 대체 경로(COPY + 지우기)를 일부러 태운다
@@ -664,7 +704,8 @@ const pick = (r) => ({ moved: r.moved, verified: r.verified, kept: r.kept, unsav
     const bad = /\.(?:messageDelete|messageCopy|messageFlags(?:Add|Set|Remove)|mailboxClose|mailboxDelete|mailboxRename|exec)\s*\(|EXPUNGE|['"`]CLOSE['"`]/;
     const hit = src.match(bad);
     ok(!hit, 'mailtidy.js(주석 제외)에 지우기·복사·플래그·닫기·exec·EXPUNGE·CLOSE 가 없다', hit && hit[0]);
-    ok(/messageMove\(/.test(src) && /readOnly: true/.test(src), '(검사가 헛돌지 않는다 — 주석을 지운 소스에 messageMove·readOnly 는 남아 있다)');
+    ok(!/messageMove\(/.test(src), '옮기기는 mailmove 한 곳에서 — mailtidy.js 는 messageMove 를 직접 부르지 않는다');
+    ok(/moveUids\(/.test(src) && /readOnly: true/.test(src), '(검사가 헛돌지 않는다 — 주석을 지운 소스에 moveUids·readOnly 는 남아 있다)');
   }
 
   console.log('\n[15] 연결은 늘 닫는다');
@@ -1099,6 +1140,193 @@ const pick = (r) => ({ moved: r.moved, verified: r.verified, kept: r.kept, unsav
     // 고를 때와 옮기기 직전 둘 다 Message-ID 를 넘긴다 (모든 메일에 Message-ID 가 있다)
     ok(asked.length >= 4 && asked.every((s) => typeof s === 'string' && s.length > 0 && s === s.toLowerCase() && !/[<>]/.test(s)),
       '…고를 때도 옮기기 직전에도 Message-ID 를 꺾쇠 없이 소문자로 (normId) 넘긴다', asked);
+  }
+
+  console.log('\n[22] 복사 길에서 지움 표시 뒤 끊김 — 다음 실행이 내 표시를 먼저 풀고, 그 메일은 다시 복사하지 않는다');
+  for (const caps of [['IMAP4rev1', 'UIDPLUS'], ['IMAP4rev1']]) {
+    const env = setup([{ acc: acct('a1'), caps, boxes: [box('INBOX', five()), TRASH()] }]);
+    await env.journal.trust('a1');     // 시험 묶음 없이 한 번에
+    env.server.spec.a1.dropAt = 'store';
+    const flagged = () => env.server.box('a1', 'INBOX').msgs.filter((m) => m.flags.has('\\Deleted')).length;
+    const r1 = await run(env);
+    ok(r1.moved === 0 && r1.uncertain === 5 && flagged() === 5 && env.journal.dump().pending.length === 1
+      && /복사·지움 표시/.test(r1.errors[0] || ''), `${caps.join('+')} 1회차 — 5통 «옮겨졌을 수 있음», 원본 5통에 내 표시, 일지 1건`, { ...pick(r1), flagged: flagged() });
+    env.server.spec.a1.dropAt = undefined;
+    const r2 = await run(env);
+    ok(flagged() === 0 && env.journal.dump().pending.length === 0 && r2.moved === 0 && r2.spared === 5,
+      '…2회차 — 후보를 고르기 전에 남은 내 표시를 푼다 (후보 검색은 \\Deleted 를 빼므로 안 풀면 영영 남는다)', { ...pick(r2), flagged: flagged() });
+    const n = env.server.log.length;
+    const r3 = await run(env);
+    ok(r3.moved === 0 && r3.spared === 5 && ids(env, 'a1', 'INBOX').length === 5 && ids(env, 'a1', 'Trash').length === 5
+      && !env.server.log.slice(n).some((e) => e.cmd === 'COPY'), '…3회차 — 열쇠가 있어 다시 복사하지 않는다 (원본 5 + 휴지통 복사본 5, 잃은 메일 0)', pick(r3));
+    ok(env.server.forbidden().length === 0, '…금지 명령 0');
+  }
+  {
+    // 세기만 하기는 표시도 풀지 않는다 (읽기 전용)
+    const env = setup([{ acc: acct('a1'), caps: ['IMAP4rev1'], boxes: [box('INBOX', [mk(1000, { flags: ['\\Deleted'] })]), TRASH()] }]);
+    await env.journal.add('a1', 'INBOX', String(V), [1000]);
+    await run(env, { dryRun: true });
+    ok(env.journal.dump().pending.length === 1 && !env.server.log.some((e) => e.cmd === 'STORE' || (e.cmd === 'mailboxOpen' && !e.readOnly)),
+      '세기만 하기(dry-run)는 남은 표시를 풀지 않는다 — 쓰기 모드로 열지도 않는다', env.server.log.filter((e) => e.cmd === 'mailboxOpen'));
+  }
+
+  console.log('\n[23] 다른 프로그램이 지움 표시만 해 둔 메일 (UIDPLUS 없음) — 그 폴더는 건너뛴다');
+  {
+    const env = setup([{ acc: acct('a1'), caps: ['IMAP4rev1'], boxes: [box('INBOX', [...five(), mk(1015, { flags: ['\\Deleted'] })]), TRASH()] }]);
+    const r = await run(env);
+    ok(r.moved === 0 && ids(env, 'a1', 'INBOX').length === 6 && ids(env, 'a1', 'Trash').length === 0 && /지움 표시만/.test(r.errors[0] || ''),
+      '복사 0 · 원본 6 그대로 · 까닭을 남긴다', pick(r));
+    ok(movedKeys(env.dir).length === 0 && JSON.stringify(r.noMove) === '[]', '…그 묶음의 열쇠는 지운다 (다음에 옮길 수 있게) · 계정을 멈추지 않는다', movedKeys(env.dir));
+  }
+
+  console.log('\n[24] MOVE 를 서버가 거절하면 서버의 까닭을 붙인다');
+  {
+    const env = setup([{ acc: acct('a1'), moveNo: { serverResponseCode: 'THROTTLED', responseText: 'Too many commands' }, boxes: [box('INBOX', [mk(1000), mk(1003)]), TRASH()] }]);
+    const r = await run(env);
+    ok(r.moved === 0 && /서버가 옮기기를 거부했습니다/.test(r.errors[0] || '') && /속도를 제한/.test(r.errors[0] || ''),
+      '«서버가 옮기기를 거부했습니다 — 서버가 잠시 속도를 제한했습니다…»', r.errors);
+    ok(movedKeys(env.dir).length === 0 && ids(env, 'a1', 'INBOX').length === 2, '…못 옮긴 것의 열쇠는 지운다', movedKeys(env.dir));
+  }
+
+  console.log('\n[25] 옮기기 일지를 쓸 수 없으면 실행을 멈춘다 — 지움 표시를 보내지 않는다');
+  {
+    const env = setup([
+      { acc: acct('a1'), caps: ['IMAP4rev1'], boxes: [box('INBOX', five()), TRASH()] },
+      { acc: acct('a2'), boxes: [box('INBOX', [mk(1000)]), TRASH()] }
+    ]);
+    const r = await run(env, { journal: mailmove.fileJournal(path.join(TMP, '없는 폴더', 'x', mailmove.JOURNAL_FILE)) });
+    ok(r.halt === true && r.complete === false && r.moved === 0 && ids(env, 'a1', 'INBOX').length === 5 && ids(env, 'a2', 'INBOX').length === 1
+      && !env.server.log.some((e) => e.cmd === 'STORE') && /일지/.test(r.errors.join(' ')), '원본 그대로 · 다음 계정도 하지 않는다', pick(r));
+    ok(ids(env, 'a1', 'Trash').length === 1 && movedKeys(env.dir).length === 1, '…시험 1통의 복사본은 남고 열쇠도 남는다 (다시 복사하지 않게)', movedKeys(env.dir).length);
+  }
+
+  console.log('\n[26] 휴지통 이름 짐작은 정리에서 빼는 폴더와 같다 · 계정 이름은 부르는 쪽이 줄 수 있다');
+  {
+    ok(['지운메일함', '지운 메일함', '삭제메일함', '삭제된 메일', 'Deleted Mail', 'Recycle Bin', '휴지통 '].every((n) => mailtidy.keepsFolder({ path: n, name: n })),
+      '국내 메일의 휴지통 이름·앞뒤 공백 — 정리하지 않는 폴더');
+    const env = setup([{ acc: acct('a1'), boxes: [box('INBOX', [mk(1000)]), box('지운메일함', [mk(1003)])] }]);
+    const r = await run(env);
+    ok(r.moved === 1 && ids(env, 'a1', '지운메일함').length === 2 && !opened(env, 'a1').some((e) => e.path === '지운메일함' && e.readOnly),
+      '용도 표시 없는 «지운메일함»을 휴지통으로 쓰고, 그 폴더는 고르지 않는다', pick(r));
+    const env2 = setup([{ acc: acct('a1', { name: 'kim@corp.example' }), failConnect: true, boxes: [box('INBOX', [mk(1000)]), TRASH()] }]);
+    const r2 = await run(env2, { labelOf: (acc, i) => `메일 ${i + 1}번` });
+    ok(r2.errors.length === 1 && /^메일 1번: 로그인이 거절됐습니다/.test(r2.errors[0]), 'opts.labelOf 가 있으면 그 이름으로 · 로그인 거절 문구', r2.errors);
+  }
+
+  console.log('\n[27] 계정마다의 결과 (res.per) — 남긴 까닭을 나눠 센다 · 저장된 가장 오래된 메일');
+  {
+    // a1: 옮길 것 1 · Gmail 이 붙인 중요 라벨 1 · PC 에 없는 것 1 / a2: 휴지통 없음 / a3: 저장된 메일이 모두 젊다 / a4: 멈춘 계정
+    const env = setup([
+      { acc: acct('a1'), caps: ['IMAP4rev1', 'MOVE', 'UIDPLUS', 'X-GM-EXT-1'],
+        boxes: [box('INBOX', [mk(1000), mk(1003, { labels: ['\\Important'] }), mk(1006, { noFile: true })]), TRASH()] },
+      { acc: acct('a2'), boxes: [box('INBOX', [mk(1000)])] },
+      { acc: acct('a3'), boxes: [box('INBOX', [mk(1000, { daysAgo: 3, noFile: true })]), TRASH()] },
+      { acc: acct('a4'), boxes: [box('INBOX', [mk(1000)]), TRASH()] }
+    ]);
+    // 받은 때로 이름 지은 파일 (mailbackup stamp — PC 시각, 분까지)
+    const d3 = new Date(NOW - 3 * DAY);
+    const p2 = (n) => String(n).padStart(2, '0');
+    const bd3 = mailbackup.boxDirFor(env.dir, acct('a3'), 'INBOX', 1);
+    fs.writeFileSync(path.join(bd3, `${d3.getFullYear()}${p2(d3.getMonth() + 1)}${p2(d3.getDate())}_${p2(d3.getHours())}${p2(d3.getMinutes())}_1000_제목.eml`),
+      Buffer.from(env.server.box('a3', 'INBOX').msgs[0].raw, 'latin1'));
+    await env.journal.block('a4', '시험 까닭');
+    const r = await run(env, { labelOf: (acc) => `이름${acc.id}` });
+    const [a1, a2, a3, a4] = ['a1', 'a2', 'a3', 'a4'].map((k) => r.per[k]);
+    ok(!!a1 && a1.moved === 1 && a1.spared === 1 && a1.important === 1 && a1.flagged === 0 && a1.unsaved === 1 && a1.kept === 1
+      && a1.error === null && a1.errors.length === 0 && a1.blocked === null && a1.more === false,
+    'a1 — 1통 옮김 · 중요 라벨 1통은 «중요»로도 센다 · 저장 안 된 1통', a1);
+    ok(r.moved === 1 && r.spared === 1 && r.important === 1 && r.unsaved === 1, '…전체 수는 계정의 합', pick(r));
+    ok(!!a2 && a2.moved === 0 && /^휴지통 폴더를 찾지 못해 정리하지 않았습니다/.test(a2.error || '') && r.errors.some((e) => e.startsWith('이름a2: ')),
+      'a2 — 계정 오류는 이름 앞머리를 떼고 (전체 목록에는 이름이 붙은 채)', { a2, errors: r.errors });
+    const want3 = new Date(d3.getFullYear(), d3.getMonth(), d3.getDate(), d3.getHours(), d3.getMinutes()).getTime();
+    ok(!!a3 && a3.moved === 0 && a3.verified === 0 && a3.unsaved === 0 && a3.oldest === want3 && a3.error === null,
+      'a3 — 저장된 메일이 모두 30일 안이면 옮긴 것도 남긴 것도 없고, 가장 오래된 것의 받은 때(파일 이름)를 준다', a3);
+    ok(!!a1 && a1.oldest === new Date(2025, 0, 1, 9, 0).getTime() && r.oldest === a1.oldest,
+      '…a1 의 가장 오래된 것은 20250101_0900, 전체는 가장 이른 것', { a1: a1 && a1.oldest, all: r.oldest });
+    ok(!!a4 && a4.blocked === '시험 까닭' && a4.error === '이 서버에서는 옮기기를 멈췄습니다 — 시험 까닭' && !env.server.log.some((e) => e.acc === 'a4'),
+      'a4 — 멈춘 계정은 연결하지 않고 그 까닭을 blocked 에', a4);
+    ok(mailtidy.fileTime('x/20250101_0900_7_제목.eml') === new Date(2025, 0, 1, 9, 0).getTime() && mailtidy.fileTime('노트.eml') === 0
+      && mailtidy.bareError('회사', '회사 · INBOX: 실패') === 'INBOX: 실패' && mailtidy.bareError('회사', '회사: 실패') === '실패'
+      && mailtidy.bareError('회사', '다른: 실패') === '다른: 실패', 'fileTime · bareError');
+  }
+  {
+    // 검색 뒤에 별표가 붙은 메일 — «별표»로도 센다. 상한을 다 쓴 뒤의 계정은 결과가 없다
+    let once = false;
+    const spec = { acc: acct('a1'), boxes: [box('INBOX', [mk(1000), mk(1003), mk(1006)]), TRASH()] };
+    spec.hooks = { afterSearch: ({ box: b }) => { if (once) return; once = true; b.msgs.find((m) => m.uid === 1000).flags.add('\\Flagged'); } };
+    const env = setup([spec, { acc: acct('a2'), boxes: [box('INBOX', [mk(1000)]), TRASH()] }]);
+    const r = await run(env, { cap: 2 });
+    ok(r.per.a1.flagged === 1 && r.per.a1.spared === 1 && r.per.a1.moved === 2 && r.per.a1.more === false && r.more === true && !r.per.a2,
+      '검색 뒤 붙은 별표는 «별표»로 · 상한을 다 쓴 뒤의 계정은 보지 않는다 (전체 more)', { a1: r.per.a1, more: r.more, a2: r.per.a2 });
+    const env2 = setup([{ acc: acct('a1'), boxes: [box('INBOX', [mk(1000), mk(1003), mk(1006)]), TRASH()] }, { acc: acct('a2'), boxes: [box('INBOX', [mk(1000)]), TRASH()] }]);
+    const r2 = await run(env2, { cap: 1 });
+    ok(r2.per.a1.more === true && r2.per.a1.moved === 1, '…한 계정 안에서 상한에 걸리면 그 계정의 more', r2.per.a1);
+  }
+
+  console.log('\n[28] 옮기기 도우미가 복사 전에 넘어지면 미리 적은 열쇠를 지운다 — 다음 실행이 그 메일을 옮긴다');
+  {
+    const five5 = () => [1000, 1003, 1006, 1009, 1012].map((u) => mk(u));
+    const cases = [
+      ['UIDPLUS 없음 · 복사 전 휴지통 STATUS 에서 끊김', ['IMAP4rev1'], (c) => { c.spec = { ...c.spec, dropAt: 'status' }; }],
+      ['UIDPLUS 없음 · 첫 SEARCH DELETED 를 서버가 한 번 거절 (연결은 산다)', ['IMAP4rev1'], (c) => {
+        const real = c.search.bind(c);
+        c.search = async (q, o) => (q && q.deleted === true && q.uid === undefined ? false : real(q, o));
+      }],
+      ['UIDPLUS · 복사 전 휴지통 STATUS 에서 끊김', ['IMAP4rev1', 'UIDPLUS'], (c) => { c.spec = { ...c.spec, dropAt: 'status' }; }]
+    ];
+    for (const [title, caps, fault] of cases) {
+      const env = setup([{ acc: acct('a1'), caps, boxes: [box('INBOX', five5()), box('휴지통', [])] }]);
+      await env.journal.trust('a1');   // 한 번 끝까지 해 본 계정 — 묶음 100
+      let armed = true;
+      const connect = (acc) => {
+        const c = env.server.connect(acc);
+        if (armed) fault(c);
+        return c;
+      };
+      const r1 = await run(env, { connect });
+      ok(r1.moved === 0 && movedKeys(env.dir).length === 0 && r1.noMove.length === 0 && !env.server.log.some((e) => e.cmd === 'COPY'),
+        `${title} — 1회차: 옮긴 것 0, 열쇠 0, 멈추지 않음`, { ...pick(r1), keys: movedKeys(env.dir).length, noMove: r1.noMove });
+      armed = false;
+      const r2 = await run(env, { connect });
+      ok(r2.moved === 5 && r2.spared === 0 && ids(env, 'a1', 'INBOX').length === 0, '…2회차: 5통 옮김 («되찾음»으로 남기지 않는다)', pick(r2));
+    }
+  }
+
+  console.log('\n[29] 옛 설정에서 옮겨 온 켜짐(copyOk 거짓) — MOVE 없는 서버는 옮기기 전에 멈추고 다시 묻게 한다');
+  {
+    const env = setup([
+      { acc: acct('a1'), caps: ['IMAP4rev1', 'UIDPLUS'], boxes: [box('INBOX', [mk(1000), mk(1003)]), TRASH()] },
+      { acc: acct('a2'), boxes: [box('INBOX', [mk(1000)]), TRASH()] }
+    ]);
+    const r = await run(env, { copyOk: () => false });
+    const [p1, p2] = [r.per.a1, r.per.a2];
+    ok(!!p1 && p1.copyAsk === true && p1.copy === true && p1.moved === 0 && /묻지 않아/.test(p1.error || '') && !env.server.log.some((e) => e.acc === 'a1' && e.cmd === 'COPY')
+      && ids(env, 'a1', 'INBOX').length === 2 && movedKeys(env.dir).length === 1, 'MOVE 없는 a1 — 복사하지 않고 copyAsk·까닭', { p1, keys: movedKeys(env.dir).length });
+    ok(!!p2 && p2.copyAsk === false && p2.copy === false && p2.moved === 1, '…MOVE 가 있는 a2 는 그대로 옮긴다', p2);
+    const env2 = setup([{ acc: acct('a1'), caps: ['IMAP4rev1', 'UIDPLUS'], boxes: [box('INBOX', [mk(1000), mk(1003)]), TRASH()] }]);
+    const n = await run(env2, { copyOk: () => false, dryRun: true });
+    ok(n.verified === 2 && n.per.a1.copy === true && n.per.a1.copyAsk === false, '세기만 하기는 묻는 창을 위한 것이라 막지 않고, 복사 길인지 알려 준다', n.per.a1);
+    const env3 = setup([{ acc: acct('a1'), caps: ['IMAP4rev1', 'UIDPLUS'], boxes: [box('INBOX', [mk(1000)]), TRASH()] }]);
+    const r3 = await run(env3);
+    ok(r3.moved === 1 && r3.per.a1.copy === true && r3.per.a1.copyAsk === false, '…copyOk 를 안 주면 (확인 창을 거친 켜짐) 복사 길로 옮긴다', r3.per.a1);
+  }
+
+  console.log('\n[30] 건너뛴 폴더의 까닭 — PC 에 저장 기록이 없는 폴더는 따로 센다');
+  {
+    const env = setup([{ acc: acct('a1'), boxes: [
+      box('INBOX', [mk(1000)], { noState: true, noFiles: true }), box('업무', [mk(1003)], { stateV: '17' }), box('Sent', [mk(1006)]), TRASH()] }]);
+    const r = await run(env);
+    ok(JSON.stringify([...r.skippedBoxes].sort()) === '["INBOX","업무"]' && JSON.stringify(r.unsavedBoxes) === '["INBOX"]'
+      && JSON.stringify(r.per.a1.unsavedBoxes) === '["INBOX"]' && r.moved === 1,
+    '기록 없는 INBOX 는 unsavedBoxes 에도, 번호가 바뀐 «업무»는 skippedBoxes 에만', { skipped: r.skippedBoxes, unsaved: r.unsavedBoxes, per: r.per.a1 && r.per.a1.unsavedBoxes });
+  }
+
+  console.log('\n[31] 휴지통을 못 찾으면 — 폴더 수와 용도 표시 유무를 말한다 (이름은 말하지 않는다)');
+  {
+    const env = setup([{ acc: acct('a1'), boxes: [box('INBOX', [mk(1000)]), box('버린편지함', []), box('고객사A', [])] }]);
+    const r = await run(env);
+    ok(/^휴지통 폴더를 찾지 못해 정리하지 않았습니다 — 폴더 3개 중 휴지통 용도 표시도, 휴지통으로 아는 이름도 없습니다/.test(r.per.a1.error || '')
+      && !/버린편지함|고객사A/.test(r.per.a1.error || ''), '까닭에 폴더 수 · 이름은 빼고', r.per.a1.error);
   }
 
   try { fs.rmSync(TMP, { recursive: true, force: true }); } catch { /* 임시 폴더 */ }

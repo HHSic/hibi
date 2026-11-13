@@ -18,6 +18,9 @@ let host = {
   mailAccountsForUse: () => [],
   isSettingsWin: () => false,
   stateDir: () => app.getPath('userData'),
+  // 백업 폴더를 옮기는 중인가 (backup.moving) — 그동안은 시작하지 않는다. 전달은 백업 파일·정리 기록을 읽어
+  // 정리가 옮긴 메일을 찾는데, 옮기는 사이에 파일이 안 보이면 «사라진 메일»로 건너뛸 수 있다
+  backupMoving: () => false,
   // 이 PC·이 사용자 — 지문의 재료. 시험이 바꿔 끼운다 (다른 PC에서 온 설정 흉내)
   machine: () => {
     let u = '';
@@ -430,7 +433,7 @@ function kick() {
  */
 async function forwardNew({ now = false } = {}) {
   try {
-    if (fwd.running) return;
+    if (fwd.running || host.backupMoving()) return;
     const c = fwdConf();
     if (!fwdOn(c)) return;
     if (!now && Date.now() - lastRunAt < T.GAP_MS) return;   // 폴링 한 번에 한 번만

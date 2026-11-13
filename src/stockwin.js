@@ -24,8 +24,68 @@ let stockSize = null;
 const STOCK_POLL_MS = 60_000;
 let stockTimer = null;
 
-async function refreshStocks() {
+// 순위(TOP 100)는 시장·정렬마다 제 칸에 든다 — 다시 고르면 바로 보이고, 묵지 않았으면 다시 안 받는다.
+// 관심 줄(stockState)과 따로 둔다. 한 칸을 같이 쓰면 늦게 온 답이 다른 보기를 덮는다.
+const topCache = new Map();   // 'KR:up' → { rows, krwRows, status, at, tried, error }
+const topGoing = new Map();   // 'KR:up' → 받는 중인 약속. 같은 고르기를 겹쳐 부르지 않는다
+const topKey = (p) => `${p.market}:${p.sort}`;
+const pickNow = () => stocks.topPick(store.settings);
+const winOpen = () => !!stocksWin && !stocksWin.isDestroyed();
+
+/** 환산한 줄은 사본에 붙인다 — 칸에 든 줄을 고치면 원화를 껐다 켤 때 값이 두 번 곱해진다 */
+function toKrw(rows) {
+  return fx.attach(rows.map((r) => ({ ...r })));
+}
+
+/** 화면 글은 한국어다 — getaddrinfo ENOTFOUND 같은 node 원문은 기록에만 남긴다 */
+const topErrorText = (e) => (/^HTTP \d+$|[가-힣]/.test(e.message || '') ? e.message : '네트워크에 연결하지 못했습니다');
+
+async function loadTop(key, pick) {
+  try {
+    const r = await stocks.top(pick);
+    // 시세 쪽처럼 환산까지 끝낸 뒤 칸에 넣는다 — 먼저 넣으면 1분마다 달러로 깜빡였다가 원으로 돌아온다
+    const krwRows = store.settings.stocksKrw && winOpen() ? await toKrw(r.rows) : null;
+    const now = Date.now();
+    topCache.set(key, { rows: r.rows, krwRows, status: r.status, at: now, tried: now, error: null });
+  } catch (e) {
+    // 마지막 줄은 지킨다 — 잠깐 끊겼다고 목록이 사라지면 안 된다
+    evlog.log('주식', `순위 실패 · ${e.message}`);
+    const old = topCache.get(key) || { rows: [], krwRows: null, status: null, at: 0 };
+    topCache.set(key, { ...old, tried: Date.now(), error: topErrorText(e) });
+  }
+}
+
+/**
+ * 고르기 하나를 받는다. 답은 제 칸에만 들어가니 옛 고르기의 답이 늦게 와도 새 고르기를 못 덮고,
+ * 받는 중에 고르기가 바뀌면 새 고르기는 따로 바로 받는다 (관심 쪽의 «받는 중이면 돌아가기»에 안 걸린다).
+ */
+function fetchTop(pick) {
+  const key = topKey(pick);
+  if (!topGoing.has(key)) {
+    topGoing.set(key, loadTop(key, pick).finally(() => topGoing.delete(key)));
+  }
+  return topGoing.get(key);
+}
+
+/** force 는 «지금 시세 확인» 단추 — 묵지 않았어도 받는다. 그 밖에는 묵지 않은 칸을 그대로 쓴다 */
+async function refreshTop(force) {
+  const pick = pickNow();
+  const hit = topCache.get(topKey(pick));
+  const fresh = hit && !hit.error && Date.now() - hit.at < STOCK_POLL_MS;
+  const going = force || !fresh ? fetchTop(pick) : null;
+  sendStocks();
+  if (going) await going;
+  // 묵지 않은 칸에 원화를 켰거나, 받는 사이에 켰을 때. 기다리는 동안 고르기가 바뀌었을 수 있어 지금 고른 칸을 다시 본다
+  const cur = topCache.get(topKey(pickNow()));
+  if (cur && store.settings.stocksKrw && !cur.krwRows && cur.rows.length && winOpen()) {
+    cur.krwRows = await toKrw(cur.rows);
+  }
+  sendStocks();
+}
+
+async function refreshStocks(force = false) {
   if (!stocksWin || stocksWin.isDestroyed()) return;
+  if (pickNow().view === 'top') { await refreshTop(force); return; }
   if (stockState.loading) return;
   stockState.loading = true;
   sendStocks();
@@ -52,19 +112,46 @@ async function refreshStocks() {
   }
 }
 
+/** 관심 목록을 고친 뒤. TOP 100 보기는 관심 시세를 안 쓰니 목록만 보낸다 — 순위를 다시 받으면 별의 답이 네이버를 기다린다 */
+async function afterWatchEdit() {
+  if (pickNow().view === 'top') sendStocks();
+  else await refreshStocks();
+}
+
 function sendStocks() {
   if (!stocksWin || stocksWin.isDestroyed()) return;
-  stocksWin.webContents.send('stocks:data', {
-    rows: stockState.rows,
+  const pick = pickNow();
+  const shared = {
     watch: store.stocksWatch,
+    market: store.settings.stocksMarket || 'all',
+    indexes: store.settings.stocksIndexes !== false,
+    krw: !!store.settings.stocksKrw,
+    view: pick.view,
+    topMarket: pick.market,
+    topSort: pick.sort
+  };
+  if (pick.view === 'top') {
+    const hit = topCache.get(topKey(pick));
+    stocksWin.webContents.send('stocks:data', {
+      ...shared,
+      rows: (hit && ((shared.krw && hit.krwRows) || hit.rows)) || [],
+      at: hit ? hit.at : 0,
+      lagSec: null,
+      failed: 0,
+      status: hit ? hit.status : null,
+      error: hit ? hit.error : null,
+      loading: topGoing.has(topKey(pick))
+    });
+    return;
+  }
+  stocksWin.webContents.send('stocks:data', {
+    ...shared,
+    rows: stockState.rows,
     at: stockState.at,
     lagSec: stockState.lagSec,
     failed: stockState.failed,
     error: stockState.error,
-    loading: stockState.loading,
-    market: store.settings.stocksMarket || 'all',
-    indexes: store.settings.stocksIndexes !== false,
-    krw: !!store.settings.stocksKrw
+    loading: stockState.loading
   });
 }
 
@@ -103,7 +190,11 @@ function openStocks() {
   });
   // 열려 있는 동안만 주기적으로 받는다
   stockTimer = setInterval(() => {
-    if (Date.now() - stockState.fetchedAt >= STOCK_POLL_MS) refreshStocks();
+    const pick = pickNow();
+    // 순위는 실패해도 «해 본 때»부터 센다 — 묵지 않은 줄이 없다고 15초마다 네이버를 두드리지 않게
+    const hit = pick.view === 'top' ? topCache.get(topKey(pick)) : null;
+    const last = pick.view === 'top' ? (hit ? hit.tried : 0) : stockState.fetchedAt;
+    if (Date.now() - last >= STOCK_POLL_MS) refreshStocks();
   }, 15_000);
   stocksWin.on('closed', () => {
     stocksWin = null;
@@ -117,7 +208,7 @@ ipcMain.on('stocks:close', () => {
   chartwin.closeChart();
   if (stocksWin && !stocksWin.isDestroyed()) stocksWin.close();
 });
-ipcMain.handle('stocks:refresh', async () => { await refreshStocks(); return true; });
+ipcMain.handle('stocks:refresh', async () => { await refreshStocks(true); return true; });
 
 ipcMain.handle('stocks:search', (_e, q) => stocks.search(q, 8).catch(() => []));
 
@@ -127,7 +218,7 @@ ipcMain.handle('stocks:add', async (_e, input) => {
   if (!found) return { ok: false, message: '그런 종목을 못 찾았습니다' };
   const before = store.stocksWatch.length;
   store.addStock(found);
-  await refreshStocks();
+  await afterWatchEdit();
   return {
     ok: true,
     added: store.stocksWatch.length > before,
@@ -138,7 +229,7 @@ ipcMain.handle('stocks:add', async (_e, input) => {
 
 ipcMain.handle('stocks:remove', async (_e, ticker) => {
   store.removeStock(ticker);
-  await refreshStocks();
+  await afterWatchEdit();
   return true;
 });
 

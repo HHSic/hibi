@@ -60,16 +60,19 @@
   .ic.spin svg { animation: sp 0.9s linear infinite; }
   @keyframes sp { to { transform: rotate(360deg); } }
 
-  /* 시장 고르기 */
+  /* 보기·시장 고르기 — 좁은 창(300px)에서는 줄을 바꾼다 */
   .bar {
-    flex: none; display: flex; align-items: center; gap: 4px;
+    flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
     padding: 0 13px 8px;
   }
+  /* 둘 다 display 를 직접 정해서(.seg 는 all: unset) 그대로는 hidden 속성이 안 먹는다 */
+  .bar[hidden], .seg[hidden] { display: none; }
   .seg {
     all: unset; cursor: default;
     font-size: 11px; font-weight: 620; color: var(--accent);
-    padding: 4px 10px; border-radius: 999px;
+    padding: 4px 10px; border-radius: 999px; white-space: nowrap;
   }
+  .seg[data-view="top"] { margin-right: 6px; }
   .seg.on { background: var(--accent); color: #06231d; }
   /* 라이트 --accent 는 글자용이라 진하다 — 그 위의 어두운 글자는 2.4:1 이다. 채움은 --accent-fill 에 흰 글자로 */
   :root[data-theme="light"] .seg.on { background: var(--accent-fill); color: #fff; }
@@ -122,6 +125,27 @@
   }
   .row:hover .del { opacity: 1; }
   .row .del:hover { background: var(--fill-hi); color: var(--up); }
+  /* TOP 100 줄 — 번호 · 이름 · 값 · 등락 · 별 */
+  .row.top { grid-template-columns: 20px 1fr auto auto 20px; gap: 6px; }
+  .row .rk { font-size: 10.5px; color: var(--tertiary); font-variant-numeric: tabular-nums; text-align: right; }
+  /* 자리가 모자라면 금액을 아랫줄로 내린다 — 300px 창에서 한 줄에 다 넣으면 이름이 석 자로 잘려 무슨 종목인지 모른다 */
+  .row.top .nm { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 5px; white-space: normal; }
+  .row.top .nm b { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 300px + 원화 + 값이 아주 큰 줄(BRK-A)에서는 이름 칸이 금액보다 좁아진다 — 말없이 잘리지 않게 */
+  .row.top .nm i { margin-left: 0; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+  .row .kd {
+    font-size: 9px; font-weight: 650; color: var(--secondary);
+    background: var(--fill-hi); border-radius: 3px; padding: 0 3px;
+  }
+  /* 별 — 빈 별은 지우기 단추처럼 마우스를 올렸을 때만, 넣어 둔 종목의 별은 늘 보인다 */
+  .row .star {
+    all: unset; cursor: default; width: 18px; height: 18px; border-radius: 5px;
+    display: grid; place-items: center; color: var(--tertiary);
+    font-size: 12px; line-height: 1; opacity: 0; align-self: center;
+  }
+  .row:hover .star, .row .star:focus-visible, .row .star.on { opacity: 1; }
+  .row .star.on, .row .star:hover { color: var(--accent); }
+  .row .star:hover { background: var(--fill-hi); }
   .sep { height: 0.5px; background: var(--separator); margin: 5px 6px; }
   .none { padding: 14px 8px; font-size: 11.5px; color: var(--tertiary); line-height: 1.7; }
 
@@ -189,12 +213,23 @@
     <button class="ic" id="close" title="닫기"></button>
   </div>
   <div class="bar">
+    <button class="seg" data-view="watch">관심</button>
+    <button class="seg" data-view="top" title="시가총액·거래대금·등락률 상위 100개 (네이버)">TOP 100</button>
     <button class="seg" data-mk="all">전부</button>
     <button class="seg" data-mk="KR">국내</button>
     <button class="seg" data-mk="oversea" title="미국·일본·홍콩">해외</button>
+    <button class="seg" data-tm="KR" hidden>국내</button>
+    <button class="seg" data-tm="US" hidden title="나스닥·뉴욕·아멕스를 합친 순위">미국</button>
     <span class="sp"></span>
     <button class="seg" id="krw" title="외화 시세를 원화로 환산">원화</button>
     <button class="seg" id="idx" title="코스피·코스닥·나스닥·S&amp;P 500">지수</button>
+  </div>
+  <div class="bar" id="sorts" hidden>
+    <button class="seg" data-ts="marketValue">시가총액</button>
+    <button class="seg" data-ts="priceTop">거래대금</button>
+    <button class="seg" data-ts="up">상승</button>
+    <button class="seg" data-ts="down">하락</button>
+    <button class="seg" data-ts="searchTop" title="네이버에서 많이 찾는 종목">인기</button>
   </div>
   <div class="list" id="list"></div>
   <div class="say" id="say"></div>

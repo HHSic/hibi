@@ -60,7 +60,8 @@ async function doTrash(msg, parent) {
       host.notice('', '이미 휴지통에 있습니다');
       return { moved: false, already: true, message: '이미 휴지통에 있습니다' };
     }
-    evlog.log('메일', `휴지통으로 · ${r.moved}통 · ${r.mailbox}`);
+    // MOVE 없는 서버는 복사 → 증명 → 그것만 지우기로 옮겼다 (mailmove) — 휴지통에 겹친 복사본이 보이면 이 줄로 가린다
+    evlog.log('메일', `휴지통으로 · ${r.moved}통 · ${r.mailbox}${r.how === 'copy' ? ' · 복사 후 지움' : ''}`);
     host.notice('good', `휴지통으로 옮겼습니다 (${r.mailbox})`);
     // 목록 갱신은 기다리지 않는다 — 느린 서버에서 몇십 초다.
     // 옮겼다는 사실은 여기서 이미 확정이므로 부르는 쪽은 이 반환값을 믿으면 된다.

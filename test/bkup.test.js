@@ -11,7 +11,7 @@ app.setPath('appData', tmp);
 // main.js 가 backup.js 를 부르기 전에 가로챈다
 const mailbackup = require(`${ROOT}/src/mailbackup.js`);
 const calls = [];
-mailbackup.saveOne = async (acc, dir, m) => { calls.push({ acc: acc && acc.id, dir, uid: m.uid, subject: m.subject, hasSource: !!m.source }); return { saved: true }; };
+mailbackup.saveOne = async (acc, dir, m) => { calls.push({ acc: acc && acc.id, dir, uid: m.uid, subject: m.subject, hasSource: !!m.source, seen: m.seen }); return { saved: true }; };
 
 require(`${ROOT}/src/main.js`);
 const store = require(`${ROOT}/src/store.js`);
@@ -43,10 +43,11 @@ app.whenReady().then(async () => {
   ok(calls.length === 0, '꺼져 있으면 저장하지 않는다', calls.length);
 
   store.setSettings({ mailAutoBackup: true, mailEnabled: true });
-  await backup.autoBackupOne({ id: 'a1' }, { uid: 7, mailbox: 'INBOX', subject: '시험 메일', source: Buffer.from('raw') });
+  await backup.autoBackupOne({ id: 'a1' }, { uid: 7, mailbox: 'INBOX', subject: '시험 메일', source: Buffer.from('raw'), seen: true });
   ok(calls.length === 1, 'autoBackupOne 이 saveOne 을 부른다', calls.length);
-  ok(calls[0] && calls[0].dir === dir && calls[0].uid === 7 && calls[0].hasSource,
-    '폴더·uid·원문이 제대로 넘어간다', calls[0]);
+  // seen 은 색인 줄의 읽음 칸 — saveOne 의 인자는 더하기만 한다 (이 시험이 함수를 바꿔 끼운다)
+  ok(calls[0] && calls[0].dir === dir && calls[0].uid === 7 && calls[0].hasSource && calls[0].seen === true,
+    '폴더·uid·원문·읽음이 제대로 넘어간다', calls[0]);
 
   // 원문이 없으면 조용히 건너뛴다 (예전 동작 그대로)
   await backup.autoBackupOne({ id: 'a1' }, { uid: 8, mailbox: 'INBOX', subject: 'y' });

@@ -4,6 +4,7 @@ const path = require('path');
 const { app } = require('electron');
 const reminders = require('./reminders');
 const grass = require('./grass');
+const tidyacct = require('./tidyacct');
 
 const FILE = () => path.join(app.getPath('userData'), 'nunsseom.json');
 
@@ -83,12 +84,15 @@ const DEFAULT_SETTINGS = {
   mailOnlyUnread: false,   // 안 읽은 것만 볼지, 최근 온 것을 모두 볼지
   mailCount: 5,            // 위젯에 몇 통까지 보여줄지 (상한 없음 — 많으면 그만큼 느려질 뿐)
   mailBackupDir: null,     // 메일 백업 폴더 (없으면 아직 정하지 않음)
+  // 백업 폴더 옮기기가 멈춘 채 — { from, to, at } 또는 null (src/backup.js · src/backupmove.js). 같은 볼륨에서 바꿔 달다 막히거나 꺼져
+  // 일부가 새 폴더에 있다. 이 값이 있는 동안 이전 폴더에 쓰는 일(백업·정리·지난 메일 받기)은 쉬고, to 를 다시 고르면 이어서 옮긴다
+  mailMoveHalt: null,
   mailAutoBackup: false,   // 새로 오는 메일과 열어본 메일을 자동으로 저장할지
-  // 서버 정리 — PC에 저장이 확인된 오래된 메일을 서버 휴지통으로 옮긴다 (src/mailtidy.js).
-  // 이 셋과 mailBackupDir 은 일반 설정 길로 바꿀 수 없다 — 아래 GATED_SETTINGS 참고.
-  mailServerTidy: false,
-  mailTidyDays: 30,        // 받은 지 며칠 지난 것부터 옮길지 — 0(바로: 읽은 것만)·7·30·90 (TIDY_DAYS)
-  mailTidyLast: null,      // 마지막 정리 결과 — 앱을 다시 켜도 설정 화면이 보여 준다
+  // 서버 정리 — PC에 저장이 확인된 오래된 메일을 서버 휴지통으로 옮긴다 (src/mailtidy.js). 계정마다 따로 켠다 (src/tidyacct.js).
+  // 이 둘과 mailBackupDir 은 일반 설정 길로 바꿀 수 없다 — 아래 GATED_SETTINGS 참고.
+  // 옛 하나짜리 스위치(mailServerTidy·mailTidyDays·mailTidyLast)는 실을 때 계정마다로 옮기고 디스크에서 지운다 (load)
+  mailTidyAccounts: {},    // { 계정 id: { on, days } } — 항목이 없는 계정은 꺼짐·30일. days 는 0(바로: 읽은 것만)·7·30·90 (TIDY_DAYS)
+  mailTidyResults: {},     // { 계정 id: 마지막 정리 결과 } — 앱을 다시 켜도 설정 화면이 보여 준다
   // 자동 전달 — 새로 오는 메일을 정해 둔 주소로 보낸다 (src/mailfwd.js · src/autofwd.js).
   // 메일이 밖으로 나가는 설정이라 일반 설정 길로 바꿀 수 없다 — FORWARD_SETTINGS 참고
   mailForwardOn: false,
@@ -97,6 +101,9 @@ const DEFAULT_SETTINGS = {
   mailForwardSince: {},      // { 계정 id: ms } — 그 계정의 «지금부터» (바뀌면 엔진이 기준을 다시 잡는다)
   mailForwardFp: {},         // { 계정 id: 지문 } — 확인 창을 지난 «이 PC·이 계정 설정·이 받는 주소» (src/mailfwd.js fpOf)
   mailForwardLast: null,     // 마지막 전달 결과 { at, sent, skipped, uncertain, more, capped, error, total }
+  mailFill: {},              // { 계정 id: 'asked'|'yes'|'no'|'paused' } — 지난 메일을 받을지. 메일을 받아 오는 동의라 일반 설정 길로 못 바꾼다
+  mailFillAt: {},            // { 계정 id: ms } — 뒤 받기가 마지막으로 나아간 시각. 보류가 오래가면 알리려고 둔다
+  mailFillSeen: 0,           // 앱이 돌고 있다고 마지막으로 적은 시각 — 꺼져 있던 날을 위 시계에서 뺀다
   mailPanel: false,        // 위젯 겉면에 메일 펼쳐두기 (클릭 없이 보이게)
   mailViewSize: null,      // 메일 보기 창을 마지막으로 조절한 크기
   composeSize: null,       // 메일 쓰기 창을 마지막으로 조절한 크기
@@ -113,6 +120,9 @@ const DEFAULT_SETTINGS = {
   stocksIndexes: true,     // 코스피·코스닥·나스닥·S&P 500도 같이
   stocksSize: null,        // 창을 마지막으로 조절한 크기
   stocksKrw: false,        // 외화 시세를 원화로 환산해 보여줄지 (src/fx.js)
+  stocksView: 'watch',     // 'watch' 관심 | 'top' TOP 100 — 이상한 값은 읽는 쪽(stocks.topPick)이 기본값으로 본다
+  stocksTopMarket: 'KR',   // 'KR' | 'US'
+  stocksTopSort: 'marketValue', // 'marketValue' | 'priceTop' | 'up' | 'down' | 'searchTop'
   chartSize: null,         // 차트 창을 마지막으로 조절한 크기
   chartRange: '1mo',       // 차트 기본 기간
   chartMode: 'auto',       // 차트 보기 — 'auto'(1일은 선, 그 위는 봉) | 'line' | 'candle'
@@ -145,11 +155,13 @@ const DEFAULT_SETTINGS = {
 
 // 서버의 메일을 옮기는 설정과 그 근거(백업 폴더)는 화면에서 오는 일반 설정 길
 // (settings:set-app, stocks:set-app — 둘 다 받은 patch 를 그대로 setSettings 로 넘긴다)로 바꿀 수 없다.
-// 켜기와 기간 줄이기는 메인이 세어 보고 물은 뒤(backup.js setTidy) setGatedSettings 로만 쓴다.
+// 켜기와 기간 줄이기는 메인이 그 계정을 세어 보고 물은 뒤(backup.js setTidy) setTidyAccount 로만 쓴다.
 // 백업 폴더까지 막는 까닭: 화면이 폴더를 바꿔치기하면 «PC에 저장이 확인됐다»의 근거가 바뀐다.
+// 옛 키 셋도 계속 막는다 — 화면이 mailServerTidy:true 를 디스크에 심으면, 옛 버전으로 내려갔을 때 그 버전이 묻지 않고 정리를 켠다.
+// 백업 옮기기 멈춤(mailMoveHalt)도 — 화면이 지우면 반쯤 옮긴 폴더에 백업·정리가 다시 쓴다.
 // 0 은 «바로» — 날짜 대신 읽음을 본다 (src/mailtidy.js DAYS 와 같아야 한다). 0이 거짓 값이라 `|| 30` 으로 다듬지 않는다
-const TIDY_DAYS = [0, 7, 30, 90];
-const GATED_SETTINGS = ['mailServerTidy', 'mailTidyDays', 'mailBackupDir', 'mailTidyLast'];
+const TIDY_DAYS = tidyacct.TIDY_DAYS;
+const GATED_SETTINGS = ['mailTidyAccounts', 'mailTidyResults', 'mailBackupDir', 'mailServerTidy', 'mailTidyDays', 'mailTidyLast', 'mailMoveHalt'];
 
 // 자동 전달 설정 — 메일이 회사 밖으로 나가는 설정이다. 켜기·주소 더하기·계정 더하기는 메인이 정확한 주소와
 // 계정을 보여 주고 물은 뒤(autofwd.js setForward) setForwardSettings 로만 쓴다. 서버 정리의 길(setGatedSettings)과
@@ -157,6 +169,11 @@ const GATED_SETTINGS = ['mailServerTidy', 'mailTidyDays', 'mailBackupDir', 'mail
 const FORWARD_SETTINGS = ['mailForwardOn', 'mailForwardTo', 'mailForwardAccounts', 'mailForwardSince',
   'mailForwardFp', 'mailForwardLast'];
 const FWD_MAX_TO = 5;
+// 지난 메일 받기의 답 — 지난 메일을 PC로 받아 오고, 답이 yes·paused 인 동안 그 계정의 서버 정리를 쉬게 한다.
+// 사용자가 설정 창에서 고른 뒤(backup.js setFill) setFillAnswer 로만 쓴다
+const FILL_SETTINGS = ['mailFill', 'mailFillAt', 'mailFillSeen'];
+const FILL_ANSWERS = ['asked', 'yes', 'no', 'paused'];
+const FILL_AT_EVERY_MS = 3600_000;
 const ACC_ID = /^[\w.-]{1,64}$/;
 // 메일이 나가는 길 — 이 값이 바뀐 계정은 자동 전달에서 뺀다 (updateMailAccount)
 const FWD_PATH_KEYS = ['host', 'port', 'user', 'mailbox', 'smtpHost', 'smtpPort', 'fromAddress'];
@@ -238,7 +255,22 @@ function note(cat, msg) {
   try { require('./evlog').log(cat, msg); } catch {}
 }
 
+// 실을 때 생긴 기록 — 그때는 기록이 아직 꺼져 있다 (main.js 가 설정을 읽고 나서 켠다). 켠 뒤 main.js 가 takeLoadNotes 로 남긴다
+let loadNotes = [];
+function loadNote(cat, msg) {
+  try {
+    const ev = require('./evlog');
+    if (ev.enabled) ev.log(cat, msg);
+    else loadNotes.push([cat, msg]);
+  } catch {}
+}
+
+/** 지금 있는 계정 id — 정리 맵에 지운 계정이 되살아나지 않게 */
+const accIds = (s) => (Array.isArray(s.mailAccounts) ? s.mailAccounts : []).map((a) => a && a.id).filter(tidyacct.goodId);
+
 let cache = null;
+// 마지막 save() 가 디스크에 썼나 — 백업 폴더 옮기기가 «설정을 바꾼 뒤»에만 이전 폴더를 휴지통으로 보낸다 (lastSaveOk)
+let saveOk = true;
 
 // 저장 포맷 버전. 창 높이 계산 방식이 바뀌면 올린다.
 //  1 → 창 높이 = 카드 + 여백
@@ -297,7 +329,18 @@ function load() {
       session: raw.session || null,
       layoutVersion: raw.layoutVersion || 1
     };
+    // 서버 정리 — 옛 하나짜리 스위치를 계정마다로 옮긴다. layoutVersion 이 아니라 «맵이 있나»로 가른다 —
+    // 옛 버전으로 내려갔다 다시 올라온 파일은 그 버전이 모르는 키를 지워 맵이 없다. 옮겼으면 저장해 디스크에서 옛 키를 지운다
+    // (pickKnown 이 이미 뺐다). 그 뒤 옛 버전으로 내려가도 옛 스위치가 없어 정리는 꺼진 채다
+    const tidyMoved = tidyacct.migrate(raw.settings, raw.mailAccounts);
+    const ids = accIds(cache);
+    cache.settings.mailTidyAccounts = tidyacct.normMap(tidyMoved ? tidyMoved.map : cache.settings.mailTidyAccounts, ids);
+    cache.settings.mailTidyResults = tidyMoved ? {} : tidyacct.normResults(cache.settings.mailTidyResults, ids);
     migrate(cache);
+    if (tidyMoved) {
+      save();
+      if (tidyMoved.note) loadNote('설정', tidyMoved.note);
+    }
   } catch {
     cache = base;
   }
@@ -380,11 +423,13 @@ function save() {
     } catch (e2) {
       console.error('store save failed:', e2);
       try { require('./evlog').log('저장', `설정 저장 실패 — ${e2.code || ''} ${e2.message}`); } catch {}
+      saveOk = false;
       return false;
     } finally {
       try { fs.unlinkSync(tmp); } catch {}
     }
   }
+  saveOk = true;
   return true;
 }
 
@@ -457,18 +502,29 @@ module.exports = {
 
   TIDY_DAYS,
   GATED_SETTINGS,
+  /** 실을 때 남길 기록 — 기록을 켠 뒤 main.js 가 한 번 꺼내 남긴다 (꺼내면 비운다) */
+  takeLoadNotes() {
+    const out = loadNotes;
+    loadNotes = [];
+    return out;
+  },
   FORWARD_SETTINGS,
+  FILL_SETTINGS,
   FWD_MAX_TO,
   normFwdAddr,
 
   get settings() { return load().settings; },
   /**
    * 창에 주는 설정 — 자동 전달 설정(받는 주소·계정·지문)은 뺀다. 설정 창은 mail:fwd-status 로만 읽고,
-   * 다른 창(메일 보기 창은 남이 쓴 본문을 그린다)에는 주소를 주지 않는다 (autofwd fwdStatus 와 같은 까닭)
+   * 다른 창(메일 보기 창은 남이 쓴 본문을 그린다)에는 주소를 주지 않는다 (autofwd fwdStatus 와 같은 까닭).
+   * 지난 메일 답도 뺀다 — 화면은 backupStatus 의 fill 로 본다. 서버 정리의 계정 맵도 — 화면은 backupStatus 의 tidy 로 본다
    */
   publicSettings() {
     const out = { ...load().settings };
     for (const k of FORWARD_SETTINGS) delete out[k];
+    for (const k of FILL_SETTINGS) delete out[k];
+    delete out.mailTidyAccounts;
+    delete out.mailTidyResults;
     return out;
   },
   /**
@@ -491,15 +547,21 @@ module.exports = {
       for (const k of fwdBlocked) delete p[k];
       note('설정', `자동 전달 설정(${fwdBlocked.join(', ')})은 일반 설정 길로 바꿀 수 없습니다 — 무시했습니다`);
     }
+    // 지난 메일 답도 — 화면이 yes 를 적으면 묻지 않고 받기 시작한다
+    const fillBlocked = FILL_SETTINGS.filter((k) => Object.prototype.hasOwnProperty.call(p, k));
+    if (fillBlocked.length) {
+      for (const k of fillBlocked) delete p[k];
+      note('설정', '지난 메일 설정은 일반 설정 길로 바꿀 수 없습니다 — 무시했습니다');
+    }
     // 켜고 끄는 값은 참·거짓만 — 0·null·'' 처럼 «거짓 같은» 값이 와도 아래 규칙(정리·전달 끄기)이 빠지지 않게.
     // mailhub 은 !mailEnabled 로 보고 메일 확인을 끄는데 여기서 === false 만 보면 전달·정리는 켜진 채 쉬다가,
     // 다시 켤 때 묻지 않고 돈다
     for (const k of ['mailEnabled', 'mailAutoBackup']) {
       if (Object.prototype.hasOwnProperty.call(p, k)) p[k] = p[k] === true;
     }
-    if (s.settings.mailServerTidy === true && (p.mailAutoBackup === false || p.mailEnabled === false)) {
-      p.mailServerTidy = false;
-      note('설정', '서버 정리 꺼짐 — «자동으로 백업» 또는 «메일 확인하기»를 꺼서 (다시 켜려면 다시 확인합니다)');
+    if (tidyacct.anyOn(s.settings.mailTidyAccounts) && (p.mailAutoBackup === false || p.mailEnabled === false)) {
+      p.mailTidyAccounts = tidyacct.allOff(s.settings.mailTidyAccounts);
+      note('설정', '서버 정리 꺼짐 — «자동으로 백업» 또는 «메일 확인하기»를 꺼서 (모든 계정 · 다시 켜려면 다시 확인합니다)');
     }
     // 메일 확인을 끄면 자동 전달도 끈다 — 몇 달 뒤 메일 확인만 다시 켰을 때 묻지도 않고 메일이 나가면 안 된다.
     // 지문도 지운다 — 다시 켤 때 다시 묻는다
@@ -513,36 +575,59 @@ module.exports = {
     return s.settings;
   },
   /**
-   * 서버 정리 설정을 쓰는 유일한 길 — backup.js 만 부른다 (확인 창을 거친 뒤·폴더를 고른 뒤·결과 기록).
-   * 네 키 말고는 무시하고, 값은 여기서 다시 다듬는다.
+   * 서버 정리 설정을 통째로 쓰는 길 — backup.js 만 부른다 (폴더를 고른 뒤·모든 계정 끄기).
+   * 두 맵과 폴더 말고는 무시하고(옛 키도), 값은 여기서 다시 다듬는다. 지금 없는 계정의 항목은 버린다.
    */
   setGatedSettings(patch) {
     const s = load();
     const src = patch && typeof patch === 'object' ? patch : {};
     const has = (k) => Object.prototype.hasOwnProperty.call(src, k);
     const p = {};
-    if (has('mailServerTidy')) p.mailServerTidy = src.mailServerTidy === true;
-    if (has('mailTidyDays')) {
-      // 목록의 값을 그대로 쓴다 (-0 도 0으로). 0을 거짓으로 보고 30으로 바꾸지 않는다
-      const d = TIDY_DAYS.find((x) => x === src.mailTidyDays);
-      p.mailTidyDays = d === undefined ? 30 : d;
-    }
+    if (has('mailTidyAccounts')) p.mailTidyAccounts = tidyacct.normMap(src.mailTidyAccounts, accIds(s));
+    if (has('mailTidyResults')) p.mailTidyResults = tidyacct.normResults(src.mailTidyResults, accIds(s));
     if (has('mailBackupDir')) {
       p.mailBackupDir = typeof src.mailBackupDir === 'string' && src.mailBackupDir ? src.mailBackupDir : null;
     }
-    if (has('mailTidyLast')) {
-      const v = src.mailTidyLast;
-      const num = (x) => Number(x) || 0;
-      p.mailTidyLast = v && typeof v === 'object' ? {
-        at: num(v.at), moved: num(v.moved), kept: num(v.kept), unsaved: num(v.unsaved),
-        unverified: num(v.unverified), spared: num(v.spared), unread: num(v.unread), skippedBoxes: num(v.skippedBoxes),
-        more: v.more === true,
-        error: typeof v.error === 'string' ? v.error.slice(0, 200) : null
-      } : null;
+    if (has('mailMoveHalt')) {
+      const h = src.mailMoveHalt;
+      p.mailMoveHalt = h && typeof h === 'object' && typeof h.from === 'string' && h.from && typeof h.to === 'string' && h.to
+        ? { from: h.from, to: h.to, at: Number(h.at) || Date.now() }
+        : null;
     }
     s.settings = { ...s.settings, ...p };
     save();
     return s.settings;
+  },
+  /** 마지막 설정 저장이 디스크에 썼나 — setGatedSettings 바로 뒤에 본다 (저장은 동기라 그 사이에 다른 저장이 끼지 않는다) */
+  lastSaveOk() { return saveOk; },
+  /**
+   * 한 계정의 서버 정리 설정 — backup.js 만 부른다 (확인 창을 거친 뒤·끄기·꺼진 채 기간 바꾸기).
+   * 없는 계정과 이상한 값은 무시한다. 객체를 고쳐 쓰지 않고 새로 만든다 — 처음 값은 DEFAULT_SETTINGS 의 것과 같은 객체다
+   * @returns 바뀐 뒤의 { on, days, copyAsk? } (계정이 없으면 null)
+   */
+  setTidyAccount(id, patch) {
+    const s = load();
+    if (!tidyacct.goodId(id) || !accIds(s).includes(id)) return null;
+    const q = patch && typeof patch === 'object' ? patch : {};
+    const cur = tidyacct.entryOf(s.settings.mailTidyAccounts, id);
+    const next = {
+      on: typeof q.on === 'boolean' ? q.on : cur.on,
+      days: Object.prototype.hasOwnProperty.call(q, 'days') ? tidyacct.normDays(q.days) : cur.days
+    };
+    // «복사 길은 묻지 않음» 표시는 켜기·끄기를 거치지 않은 바꾸기(기간 늘리기)에서만 남는다 — 확인 창을 거쳐 켜면 뗀다
+    if (cur.copyAsk && next.on && typeof q.on !== 'boolean') next.copyAsk = true;
+    s.settings.mailTidyAccounts = { ...tidyacct.normMap(s.settings.mailTidyAccounts, accIds(s)), [id]: next };
+    save();
+    return next;
+  },
+  /** 한 계정의 마지막 정리 결과 — backup.js 만 부른다. 정리하는 사이 지운 계정은 되살리지 않는다 */
+  setTidyResult(id, r) {
+    const s = load();
+    if (!tidyacct.goodId(id) || !accIds(s).includes(id)) return;
+    const v = tidyacct.normResult(r);
+    if (!v) return;
+    s.settings.mailTidyResults = { ...tidyacct.normResults(s.settings.mailTidyResults, accIds(s)), [id]: v };
+    save();
   },
   /**
    * 자동 전달 설정을 쓰는 유일한 길 — autofwd.js 만 부른다 (확인 창을 거친 뒤·빼기·결과 기록).
@@ -583,6 +668,43 @@ module.exports = {
     if (s.settings.mailForwardOn === true && !idList(s.settings.mailForwardTo).length) s.settings.mailForwardOn = false;
     save();
     return s.settings;
+  },
+  /**
+   * 지난 메일 답을 쓰는 유일한 길 — backup.js 만 부른다. null 은 지운다. 모르는 값은 무시한다.
+   * 객체를 고쳐 쓰지 않고 새로 만든다 — 처음 값은 DEFAULT_SETTINGS 의 것과 같은 객체다
+   */
+  setFillAnswer(id, v) {
+    if (typeof id !== 'string' || !ACC_ID.test(id) || id === '__proto__') return;
+    if (v !== null && !FILL_ANSWERS.includes(v)) return;
+    const s = load();
+    const next = { ...idMap(s.settings.mailFill) };
+    if (v === null) delete next[id];
+    else next[id] = v;
+    s.settings.mailFill = next;
+    save();
+  },
+  /** 뒤 받기가 나아갔을 때 부른다 — 회차마다 설정 파일을 쓰지 않게 한 시간에 한 번만 저장한다 (3일을 재는 값이다) */
+  setFillAt(id, ms) {
+    if (typeof id !== 'string' || !ACC_ID.test(id) || id === '__proto__') return;
+    const s = load();
+    const at = idMap(s.settings.mailFillAt);
+    if (at[id] && ms - at[id] < FILL_AT_EVERY_MS) return;
+    s.settings.mailFillAt = { ...at, [id]: ms };
+    save();
+  },
+  /** 틱이 한 시간에 한 번 부른다 (backup.js fillClock) */
+  setFillSeen(ms) {
+    if (!Number.isFinite(ms)) return;
+    const s = load();
+    s.settings.mailFillSeen = ms;
+    save();
+  },
+  /** 폴더를 바꾸면 답이 무효다 — 새 폴더에서 다시 묻는다 */
+  clearFillAnswers() {
+    const s = load();
+    s.settings.mailFill = {};
+    s.settings.mailFillAt = {};
+    save();
   },
 
   get reminders() { return load().reminders; },
@@ -742,8 +864,15 @@ module.exports = {
     if (a) {
       const before = fwdPathOf(a);
       const wasOff = a.enabled === false;
+      const tidyBefore = { ...a };
       Object.assign(a, patch);
       fwdAfterUpdate(s, a, before, wasOff);
+      // 서버 정리 — 서버·아이디·폴더를 바꾸거나 계정을 끄면 그 계정만 끈다. 확인 창은 바꾸기 전의 계정을 두고 물었다
+      const t = tidyacct.afterUpdate(tidyacct.entryOf(s.settings.mailTidyAccounts, a.id), tidyBefore, a);
+      if (t.why) {
+        s.settings = { ...s.settings, mailTidyAccounts: { ...tidyacct.normMap(s.settings.mailTidyAccounts, accIds(s)), [a.id]: t.entry } };
+        note('설정', t.why);
+      }
     }
     save();
     return s.mailAccounts;
@@ -913,6 +1042,13 @@ module.exports = {
       }
       s.settings = { ...st, ...p };
     }
+    // 서버 정리의 설정·결과에서도 뺀다 — 같은 id 가 다시 쓰이지는 않지만 쓸모없는 것을 들고 있지 않게
+    const liveIds = accIds(s);
+    s.settings = {
+      ...s.settings,
+      mailTidyAccounts: tidyacct.normMap(s.settings.mailTidyAccounts, liveIds),
+      mailTidyResults: tidyacct.normResults(s.settings.mailTidyResults, liveIds)
+    };
     save();
     return s.mailAccounts;
   },

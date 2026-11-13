@@ -159,7 +159,8 @@ app.whenReady().then(async () => {
   store.setGatedSettings({ mailForwardOn: true, mailForwardTo: ['evil@attacker.example'] });
   ok(store.settings.mailForwardOn === false && store.settings.mailForwardTo.length === 0, '서버 정리 길(setGatedSettings)도 전달 키를 무시한다');
   ok(JSON.stringify(store.FORWARD_SETTINGS) === JSON.stringify(['mailForwardOn', 'mailForwardTo', 'mailForwardAccounts', 'mailForwardSince', 'mailForwardFp', 'mailForwardLast'])
-    && JSON.stringify(store.GATED_SETTINGS) === JSON.stringify(['mailServerTidy', 'mailTidyDays', 'mailBackupDir', 'mailTidyLast']), 'FORWARD_SETTINGS 여섯 키, GATED_SETTINGS 는 그대로 넷');
+    && JSON.stringify(store.GATED_SETTINGS) === JSON.stringify(['mailTidyAccounts', 'mailTidyResults', 'mailBackupDir', 'mailServerTidy', 'mailTidyDays', 'mailTidyLast', 'mailMoveHalt']),
+  'FORWARD_SETTINGS 여섯 키, GATED_SETTINGS 는 서버 정리의 여섯 키 (옛 키 셋 포함)와 백업 옮기기 멈춤');
 
   console.log('\n[3] 정해진 길(setForwardSettings) — 값 다듬기');
   store.setForwardSettings({ mailForwardTo: ['A@Gmail.COM', 'bad', '한글@gmail.com', 'a%b@gmail.com', 'Kim@gmail.com', 'a@gmail.com', 'b@x.io', 'c@x.io', 'd@x.io', 'e@x.io', 'f@x.io'] });
@@ -201,9 +202,9 @@ app.whenReady().then(async () => {
       `{ mailEnabled: ${JSON.stringify(v)} } 도 false 로 저장하고 자동 전달을 끈다`, { on: store.settings.mailForwardOn, enabled: store.settings.mailEnabled });
     store.setSettings({ mailEnabled: true });
   }
-  store.setGatedSettings({ mailServerTidy: true });
+  store.setTidyAccount('a1', { on: true });
   store.setSettings({ mailAutoBackup: 0 });
-  ok(store.settings.mailServerTidy === false && store.settings.mailAutoBackup === false, '{ mailAutoBackup: 0 } 도 false 로 — 서버 정리도 꺼진다', { tidy: store.settings.mailServerTidy });
+  ok(store.settings.mailTidyAccounts.a1.on === false && store.settings.mailAutoBackup === false, '{ mailAutoBackup: 0 } 도 false 로 — 서버 정리도 꺼진다', { tidy: store.settings.mailTidyAccounts });
   store.setForwardSettings(RESET);
 
   console.log('\n[6] 정적 검사');
@@ -735,13 +736,14 @@ app.whenReady().then(async () => {
       tidyTiming: { FIRST_MS: 0, GAP_MS: 0, QUICK_GAP_MS: 0, MORE_GAP_MS: 0 }
     });
     store.setSettings({ mailAutoBackup: true, mailEnabled: true });
-    store.setGatedSettings({ mailBackupDir: bdir, mailServerTidy: true });
+    store.setGatedSettings({ mailBackupDir: bdir });
+    store.setTidyAccount('a1', { on: true });
     await backup.autoBackupNew({ now: true });
     ok(tidyCalls === 0, 'forwardBusy 가 참이면 자동 백업 끝의 정리는 tidyAll 을 부르지 않는다', tidyCalls);
     busy = false;
     await backup.autoBackupNew({ now: true });
-    ok(tidyCalls === 1, '…거짓이면 부른다', tidyCalls);
-    store.setGatedSettings({ mailServerTidy: false });
+    ok(tidyCalls === 1, '…거짓이면 부른다 (켠 계정 하나)', tidyCalls);
+    store.setTidyAccount('a1', { on: false });
   }
 
   ok(server.forbidden().length === 0, '처음부터 끝까지 금지 명령은 한 번도 불리지 않았다');

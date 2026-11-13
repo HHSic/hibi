@@ -6,14 +6,26 @@
 //   · search·fetch·messageMove 는 { uid: true } 없이 부르면 던진다
 //   · fetch 를 도는 동안 다른 명령을 보내면 던진다 (imapflow 는 그 자리에서 멈춘다)
 //   · MOVE가 없으면 imapflow 처럼 this.messageCopy → this.messageDelete 로 대신한다 (연결 객체의 메서드를 부른다)
-//   · 지우기·복사·플래그·폴더 닫기 같은 «쓰면 안 되는» 명령은 log 에 남기고 던진다
+//   · 지우기·복사·플래그·폴더 닫기 같은 «쓰면 안 되는» 공개 메서드는 log 에 남기고 던진다
+//   · 옮기기 도우미(src/mailmove.js)가 쓰는 하위 명령 run('COPY'·'STORE'), exec('EXPUNGE'·'UID EXPUNGE'), status() 는
+//     흉내 낸다 — 그 밖의 exec 는 금지로 남긴다. 고장 손잡이는 makeServer 설명에 있다
+//   · 연결·로그인 거절은 imapflow 처럼 message 'Command failed' 에 responseText·serverResponseCode 를 달아 던진다
 // 가짜 계정의 서버 주소는 모두 *.invalid 이고, 비밀번호 칸은 아예 없다.
 
 let hasCapability = null;
 try { ({ hasCapability } = require('imapflow/lib/tools.js')); } catch { /* 아래 대체 판단 */ }
 
 const FORBIDDEN = ['messageDelete', 'messageCopy', 'messageFlagsAdd', 'messageFlagsSet', 'messageFlagsRemove',
-  'mailboxClose', 'mailboxDelete', 'mailboxRename', 'exec'];
+  'mailboxClose', 'mailboxDelete', 'mailboxRename'];
+
+/** imapflow 의 tagged NO 와 같은 모양 — message 는 늘 'Command failed', 서버 글은 responseText·serverResponseCode 에만 있다 */
+function refusal(text, code, extra = {}) {
+  const e = new Error('Command failed');
+  e.responseStatus = 'NO';
+  if (text) e.responseText = text;
+  if (code) e.serverResponseCode = code;
+  return Object.assign(e, extra);
+}
 
 const utcDay = (d) => Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
 
@@ -96,7 +108,15 @@ class FakeClient {
   async connect() {
     this._cmd('connect');
     await this._wait(this.spec.delay && this.spec.delay.connect);
-    if (this.spec.failConnect) throw new Error('AUTHENTICATIONFAILED Invalid credentials (Failure)');
+    // failConnect: 비밀번호 거절 — Gmail 이 실제로 주는 모양 (NO [AUTHENTICATIONFAILED] Invalid credentials (Failure))
+    if (this.spec.failConnect) throw refusal('Invalid credentials (Failure)', 'AUTHENTICATIONFAILED', { authenticationFailed: true });
+    // authFail: 서버가 로그인을 거절한다 — imapflow 처럼 표시와 응답 코드(AUTHENTICATIONFAILED·UNAVAILABLE 등)를 달아 던진다.
+    // authText 가 없으면 그 코드에 흔한 글을 단다
+    if (this.spec.authFail) {
+      const code = this.spec.authFail;
+      const text = this.spec.authText || (code === 'AUTHENTICATIONFAILED' ? 'Invalid credentials (Failure)' : 'Temporary System Error');
+      throw refusal(text, code, { authenticationFailed: true });
+    }
     this.usable = true;
   }
 
@@ -122,6 +142,10 @@ class FakeClient {
       readOnly: !!(opts && opts.readOnly) || !!box.readOnlyOnly,
       exists: box.msgs.length
     };
+    // noUidValidity: 답에 UIDVALIDITY 가 없다 — 한 번 빠진 답으로 세대가 오르면 안 되는 것을 시험한다
+    if (box.noUidValidity) delete this.mailbox.uidValidity;
+    // noDeletedFlag: PERMANENTFLAGS 에 \Deleted 가 없다 — imapflow store.js 는 STORE 를 보내지도 않고 false
+    if (box.noDeletedFlag) this.mailbox.permanentFlags = new Set(['\\Seen', '\\Flagged']);
     // uidNext: 'auto' 면 진짜 UIDNEXT 처럼 줄지 않는 값 (맨 위 메일을 지워도 내려가지 않는다), 숫자면 그 값.
     // 없으면 키를 넣지 않는다 — UIDNEXT 를 안 주는 서버 (옛 시험과 같은 결과)
     if (box.uidNext === 'auto') {
@@ -133,10 +157,24 @@ class FakeClient {
     return this.mailbox;
   }
 
+  /**
+   * dropAt: 'status' | 'search' — 그 명령의 dropAtN 번째(기본 1)에서 서버가 답 전에 끊는다. imapflow 의 status·search 는
+   * 명령 중에 끊기면 던지지 않고 false 를 준다 (commands/status.js·search.js 의 catch) — 그 모양 그대로
+   */
+  _dropsOn(cmd) {
+    if (this.spec.dropAt !== cmd) return false;
+    this.counts = this.counts || {};
+    this.counts[cmd] = (this.counts[cmd] || 0) + 1;
+    if (this.counts[cmd] !== (this.spec.dropAtN || 1)) return false;
+    this._drop();
+    return true;
+  }
+
   async search(q, opts) {
     this._cmd('search', { path: this.mailbox && this.mailbox.path, q, opts });
     if (!opts || opts.uid !== true) throw new Error('fake: search without { uid: true }');
     const box = this._box();
+    if (this._dropsOn('search')) return false;
     if (box.searchReturns === false || this.spec.searchReturns === false) return false;
     await this._wait(this.spec.delay && this.spec.delay.search);
     let list = box.msgs.slice();
@@ -160,7 +198,9 @@ class FakeClient {
       else if (k === 'all') { /* 전부 */ }
       else throw new Error(`fake: unknown search key ${k}`);
     }
-    const result = list.map((m) => m.uid).sort((a, b) => a - b);
+    const sorted = list.map((m) => m.uid).sort((a, b) => a - b);
+    // searchShort: SEARCH ALL 이 앞 n개만 답하는 서버 — 받은 답을 «이게 전부»로 믿으면 안 되는 것을 시험한다
+    const result = q && q.all && Number.isInteger(box.searchShort) ? sorted.slice(0, box.searchShort) : sorted;
     const h = this.spec.hooks && this.spec.hooks.afterSearch;
     if (h) await h({ client: this, box, q, result });
     return result;
@@ -177,17 +217,28 @@ class FakeClient {
       const list = box.msgs.filter((m) => set.has(m.uid)).sort((a, b) => a.uid - b.uid);
       // fetchNo: 원문을 달라는 FETCH 에 그 메일이 끼면 서버가 명령째 거절한다 (Exchange «Message cannot be fetched») —
       // imapflow 처럼 tagged NO 로 던진다. 연결은 살아 있다
-      if (query.source && list.some((m) => m.fetchNo)) {
+      // headNo: 같은 거절이 머리(봉투)를 달라는 FETCH 에서 난다 — fetchNo 는 원문에서만 던진다
+      // fetchRefuse: 계정 전체의 거절 (Gmail 하루 한도 «[ALERT] Account exceeded command or bandwidth limits» 등) — 원문·머리 FETCH 를 모두 거절
+      const fr = this.spec.fetchRefuse;
+      if (fr && (query.source || query.envelope)) throw refusal(fr.responseText, fr.serverResponseCode);
+      if ((query.source && list.some((m) => m.fetchNo)) || (!query.source && query.envelope && list.some((m) => m.headNo))) {
         const err = new Error('Command failed');
         err.responseStatus = 'NO';
         err.responseText = 'Message cannot be fetched';
         throw err;
       }
+      let rows = 0;
       for (const m of list) {
+        // noRow: 서버가 오류 없이 그 메일 줄만 빼고 답한다
+        if (m.noRow) continue;
         const out = { uid: m.uid };
         if (query.size) out.size = Buffer.byteLength(m.raw, 'latin1');
-        if (query.envelope) out.envelope = { messageId: m.messageId || undefined, subject: m.subject };
-        if (query.internalDate) out.internalDate = m.date;
+        if (query.envelope) {
+          out.envelope = { messageId: m.messageId || undefined, subject: m.subject,
+            ...(m.from ? { from: m.from } : {}), ...(m.to ? { to: m.to } : {}) };
+        }
+        // badDate: 못 읽는 INTERNALDATE — imapflow 는 그때 Date 가 아니라 받은 문자열을 그대로 둔다 (tools.js)
+        if (query.internalDate) out.internalDate = m.badDate ? (typeof m.badDate === 'string' ? m.badDate : 'not-a-date') : m.date;
         if (query.flags) out.flags = new Set(m.flags);
         if (query.labels && this.capabilities.has('X-GM-EXT-1')) out.labels = new Set(m.labels);
         if (query.headers) out.headers = Buffer.from(pickHeaders(m.raw, query.headers), 'latin1');
@@ -195,6 +246,8 @@ class FakeClient {
         if (query.source && !m.noSource) out.source = Buffer.from(m.raw, 'latin1');
         yield out;
         if (this.closed) throw new Error('Connection not available');
+        // notify: FETCH 도중 서버가 먼저 보내는 알림 줄 — imapflow 는 UID 없이 차례 번호만 든 줄로 내준다
+        if (this.spec.notify && ++rows === 1) yield { uid: undefined, seq: 9 };
       }
     } finally {
       this.inFetch = false;
@@ -215,6 +268,11 @@ class FakeClient {
     const box = this._box();
     if (this.mailbox.readOnly) throw new Error('fake: messageMove in a read-only mailbox');
     if (this.spec.moveReturns === false) return false;
+    // moveNo: 서버가 MOVE 를 거절한다 — imapflow move.js 는 오류를 삼키고 false. 서버 글은 log.warn 으로만 간다 (mail.connect 가 lastWarn 에 붙인다)
+    if (this.spec.moveNo && this._hasMove()) {
+      this.lastWarn = refusal(this.spec.moveNo.responseText, this.spec.moveNo.serverResponseCode);
+      return false;
+    }
     if (!this._hasMove()) {
       // imapflow commands/move.js 와 같은 대체 경로 — 연결 객체의 메서드를 부른다
       const result = await this.messageCopy(range, destination, opts);
@@ -249,6 +307,114 @@ class FakeClient {
     return r;
   }
 
+  /** 서버는 명령을 해 놓고 답 전에 끊는다 (dropAt) */
+  _drop() {
+    this.server.log.push({ acc: this.acc, cmd: 'drop' });
+    this.close();
+  }
+
+  /** imapflow run() — 옮기기 도우미가 쓰는 COPY·STORE 만 흉내 낸다 */
+  async run(command, ...args) {
+    const cmd = String(command).toUpperCase();
+    if (cmd === 'COPY') return this._copy(...args);
+    if (cmd === 'STORE') return this._store(...args);
+    throw new Error(`fake: run(${cmd}) is not modeled`);
+  }
+
+  // imapflow copy.js 처럼 거절이면 false (던지지 않는다). UIDPLUS 면 COPYUID(uidMap)를 준다
+  async _copy(range, destination, opts) {
+    this._cmd('COPY', { path: this.mailbox && this.mailbox.path, range, destination, opts });
+    if (!opts || opts.uid !== true) throw new Error('fake: COPY without { uid: true }');
+    if (typeof range !== 'string') throw new Error('fake: run(COPY) wants a packed sequence string');
+    const box = this._box();
+    if (this.spec.copyNo) {
+      this.lastWarn = refusal(this.spec.copyNo.responseText || 'Copy refused', this.spec.copyNo.serverResponseCode);
+      return false;
+    }
+    const target = this.server.box(this.acc, destination);
+    if (!target) { this.lastWarn = refusal('Mailbox does not exist', 'TRYCREATE'); return false; }
+    const set = parseSet(range, box);
+    const uidMap = new Map();
+    for (const m of box.msgs.filter((x) => set.has(x.uid)).sort((a, b) => a.uid - b.uid)) {
+      const nu = target.nextUid;
+      // copyLies: OK 라고 답하지만 아무것도 안 생긴다
+      if (!this.spec.copyLies) {
+        target.nextUid += 3;
+        target.msgs.push({ ...m, uid: nu, flags: new Set(m.flags), labels: new Set(m.labels), copyOf: `${box.path}:${m.uid}` });
+      }
+      uidMap.set(m.uid, nu);
+    }
+    this.server.log.push({ acc: this.acc, cmd: 'copied', from: box.path, destination, uids: this.spec.copyLies ? [] : [...uidMap.keys()] });
+    const h = this.spec.hooks && this.spec.hooks.afterCopy;
+    if (h) await h({ client: this, box });
+    if (this.spec.dropAt === 'copy') { this._drop(); return false; }
+    const r = { path: box.path, destination };
+    if (this.capabilities.has('UIDPLUS') && !this.spec.copyuidMissing) {
+      r.uidValidity = BigInt(String(target.uidValidity || 1));
+      // copyuidPartial: COPYUID 가 첫 UID 를 빼고 답한다
+      r.uidMap = this.spec.copyuidPartial ? new Map([...uidMap].slice(1)) : uidMap;
+    }
+    return r;
+  }
+
+  // imapflow store.js 처럼 PERMANENTFLAGS 에 없는 플래그는 보내지도 않고 false (빼기는 늘 보낸다)
+  async _store(range, flags, opts) {
+    this._cmd('STORE', { path: this.mailbox && this.mailbox.path, range, flags, opts });
+    if (!opts || opts.uid !== true) throw new Error('fake: STORE without { uid: true }');
+    if (typeof range !== 'string') throw new Error('fake: run(STORE) wants a packed sequence string');
+    const box = this._box();
+    const op = String(opts.operation || 'add').toLowerCase();
+    const list = [].concat(flags);
+    const perm = this.mailbox.permanentFlags;
+    if (op !== 'remove' && perm && !perm.has('\\*') && !list.every((f) => perm.has(f))) return false;
+    if (this.spec.storeNo) return false;
+    const set = parseSet(range, box);
+    for (const m of box.msgs) {
+      if (!set.has(m.uid)) continue;
+      for (const f of list) { if (op === 'remove') m.flags.delete(f); else m.flags.add(f); }
+    }
+    this.server.log.push({ acc: this.acc, cmd: 'stored', op, flags: list, uids: [...set] });
+    if (this.spec.dropAt === 'store') { this._drop(); return false; }
+    return true;
+  }
+
+  /** IMAP 명령 보내기 — EXPUNGE·UID EXPUNGE 만 흉내 낸다. 그 밖은 금지로 남기고 던진다 */
+  async exec(command, attributes) {
+    const cmd = String(command).toUpperCase();
+    if (cmd !== 'EXPUNGE' && cmd !== 'UID EXPUNGE') {
+      this.server.log.push({ acc: this.acc, cmd: 'FORBIDDEN', name: `exec ${cmd}` });
+      throw new Error(`fake: forbidden exec ${cmd}`);
+    }
+    this._cmd(cmd, { path: this.mailbox && this.mailbox.path, attributes });
+    const box = this._box();
+    if (this.mailbox.readOnly) throw refusal('Mailbox is read-only');
+    const uidplus = hasCapability ? hasCapability(this, 'UIDPLUS') : this.capabilities.has('UIDPLUS');
+    if (cmd === 'UID EXPUNGE' && !uidplus) throw Object.assign(refusal('Unknown command'), { responseStatus: 'BAD' });
+    const h = this.spec.hooks && this.spec.hooks.beforeExpunge;
+    if (h) await h({ client: this, box });
+    if (this.spec.expungeNo) throw refusal('Expunge refused');
+    // uidExpungeAll: UIDPLUS 를 말하지만 UID 지우기를 폴더 전체 지우기처럼 하는 고장 난 서버
+    const only = cmd === 'UID EXPUNGE' && !this.spec.uidExpungeAll ? parseSet(attributes[0].value, box) : null;
+    const gone = box.msgs.filter((m) => m.flags.has('\\Deleted') && (!only || only.has(m.uid))).map((m) => m.uid);
+    box.msgs = box.msgs.filter((m) => !gone.includes(m.uid));
+    this.server.log.push({ acc: this.acc, cmd: 'expunged', path: box.path, uids: gone });
+    if (this.spec.dropAt === 'expunge') { this._drop(); throw new Error('Connection not available'); }
+    return { response: { attributes: [] }, next: () => {} };
+  }
+
+  // statusNoUidNext: 답에 UIDNEXT 가 없다    statusStale: 늘 처음 값을 준다 (캐시하는 서버)
+  async status(p, q) {
+    this._cmd('status', { path: p, q });
+    const target = this.server.box(this.acc, p);
+    if (!target) throw refusal(`Mailbox doesn't exist: ${p}`, 'NONEXISTENT');
+    if (this._dropsOn('status')) return false;
+    if (this.spec.statusStale && target.staleNext === undefined) target.staleNext = target.nextUid;
+    const out = { path: p };
+    if (q && q.messages) out.messages = target.msgs.length;
+    if (q && q.uidNext && !this.spec.statusNoUidNext) out.uidNext = this.spec.statusStale ? target.staleNext : target.nextUid;
+    return out;
+  }
+
   async logout() {
     this.server.log.push({ acc: this.acc, cmd: 'logout' });
     this.loggedOut = true;
@@ -274,11 +440,16 @@ for (const name of FORBIDDEN) {
 }
 
 /**
- * @param spec { [계정 id]: { caps, enabled, namespaces, failConnect, noUidPlus, emptyUidMap, moveReturns,
+ * @param spec { [계정 id]: { caps, enabled, namespaces, failConnect, authFail, notify, noUidPlus, emptyUidMap, moveReturns,
  *   searchReturns, searchIgnoresBefore, searchIgnoresSeen, delay: { connect, search, fetch, move }, hooks: { afterSearch, afterFetch },
- *   boxes: [{ path, name, delimiter, flags, specialUse, useGuessed, uidValidity, uidNext, readOnlyOnly, searchReturns, msgs }] } }
- *   msgs: [{ uid, raw, date, flags, labels, messageId, subject, noSource, fetchNo }]
+ *   boxes: [{ path, name, delimiter, flags, specialUse, useGuessed, uidValidity, noUidValidity, uidNext, readOnlyOnly, searchReturns, searchShort, msgs }] } }
+ *   msgs: [{ uid, raw, date, flags, labels, messageId, subject, from, to, noSource, fetchNo, headNo, noRow, badDate }]
  *   uidNext: 'auto'(줄지 않는 UIDNEXT) | 숫자 | 없음(UIDNEXT 를 안 주는 서버)
+ *   authFail: 응답 코드 — connect 가 { authenticationFailed: true, serverResponseCode } 로 던진다
+ *   notify: FETCH 도중 { uid: undefined, seq: 9 } 줄을 끼운다    searchShort: SEARCH ALL 이 앞 n개만 답한다
+ *   headNo: 머리 FETCH 거절    noRow: 그 메일 줄 없이 답함    badDate: internalDate 를 문자열로 (true 면 'not-a-date')
+ *   from·to: 봉투의 주소 칸 ([{ name, address }]). 없으면 지금처럼 칸을 넣지 않는다
+ *   dropAt: 'copy'·'store'·'expunge'(해 놓고 끊김) · 'status'·'search'(dropAtN 번째에서 끊기고 false)   uidExpungeAll: UID 지우기가 폴더 전체를 지움
  */
 function makeServer(spec) {
   const state = {};

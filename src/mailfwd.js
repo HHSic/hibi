@@ -778,7 +778,8 @@ async function forwardAll(accounts, opts = {}) {
         open.add(client);
         let failed = false;
         try {
-          await client.connect();
+          // 연결 중에 끊겨도 끝나야 한다 — 전달이 굳으면 그 뒤에 잇는 자동 저장이 돌지 않는다 (mail.connectOrClose)
+          await mail.connectOrClose(client);
           // EXAMINE — 읽음 표시가 바뀌지 않는다
           const box = await client.mailboxOpen(boxPath, { readOnly: true });
           const v = String(box && box.uidValidity);
@@ -964,7 +965,7 @@ async function forwardAll(accounts, opts = {}) {
           if (!src) {
             let file = null;
             if (backupDir && bsame) {
-              file = ((files && files.get(uid)) || [])[0] || mailbackup.savedFile(backupDir, acc, boxPath, uid);
+              file = mailbackup.newestOf(files && files.get(uid)) || mailbackup.savedFile(backupDir, acc, boxPath, uid);
             }
             let raw = null;
             let readFailed = false;

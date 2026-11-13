@@ -623,6 +623,19 @@ const allErrors = [];
     };
     r = await c.run({ backupDir, backupOn: true });
     ok(r.sent === 1 && (await subjects(c.tx)).slice(-1)[0] === 'FW: moved-mid-run', '1단계 뒤에 옮겨진 메일도 그 자리에서 파일을 찾아 보낸다', { sent: r.sent, skips: r.skips });
+    // ④-2 같은 UID 파일이 둘 — 상태 파일을 잃고 번호가 새로 매겨진 폴더다. 이름순으로 고르면 번호만 같은 옛 메일을 집어 «지운 메일»로 건너뛴다
+    const twin = rawOf({ subject: 'twin-new', body: 'new file' });
+    saveFile(2022, twin);
+    const oldTwin = path.join(boxDir, '20200101_0900_2022_옛메일.eml');
+    fs.writeFileSync(oldTwin, Buffer.from(rawOf({ subject: 'twin-old', body: 'old file' }), 'latin1'));
+    const dayAgo = new Date(Date.now() - 86_400_000);
+    fs.utimesSync(oldTwin, dayAgo, dayAgo);
+    c.add(2022, twin);
+    c.box().msgs = c.box().msgs.filter((m) => m.uid !== 2022);
+    c.add(2025, rawOf({ subject: 'next3' }));
+    r = await c.run({ backupDir, backupOn: true });
+    const s6 = (await subjects(c.tx)).slice(-2);
+    ok(r.sent === 2 && s6.join() === 'FW: twin-new,FW: next3', '같은 UID 파일이 둘이면 나중에 받은 파일로 보낸다', { sent: r.sent, s6, skips: r.skips });
     // ⑤ 백업 폴더를 못 읽는다 — 던지지 않고 서버 메일은 보낸다
     const c5 = setup(one([]), {});
     const bd5 = path.join(TMP, 'backup5');

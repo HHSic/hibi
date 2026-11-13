@@ -1,0 +1,267 @@
+{
+ "kr": {
+  "samsung": {
+   "stockEndType": "stock",
+   "itemCode": "005930",
+   "reutersCode": "005930",
+   "stockName": "삼성전자",
+   "closePrice": "209,500",
+   "closePriceRaw": "209500",
+   "fluctuationsRatio": "-3.90",
+   "marketValue": "12,247,954",
+   "marketValueRaw": "1224795368376000",
+   "marketValueHangeul": "1,224조 7,954억원",
+   "accumulatedTradingValue": "403,190",
+   "accumulatedTradingValueRaw": "403190000000",
+   "accumulatedTradingValueKrwHangeul": "4,032억원",
+   "localTradedAt": "2026-11-05T09:20:21+09:00",
+   "marketStatus": "OPEN",
+   "stockExchangeType": {
+    "code": "KS",
+    "name": "KOSPI"
+   }
+  },
+  "hynix": {
+   "stockEndType": "stock",
+   "itemCode": "000660",
+   "reutersCode": "000660",
+   "stockName": "SK하이닉스",
+   "closePrice": "1,305,000",
+   "closePriceRaw": "1305000",
+   "fluctuationsRatio": "-6.52",
+   "marketValue": "9,532,925",
+   "marketValueRaw": "953292536325000",
+   "marketValueHangeul": "953조 2,925억원",
+   "accumulatedTradingValue": "490,743",
+   "accumulatedTradingValueRaw": "490743000000",
+   "accumulatedTradingValueKrwHangeul": "4,907억원",
+   "localTradedAt": "2026-11-05T09:20:18+09:00",
+   "marketStatus": "OPEN",
+   "stockExchangeType": {
+    "code": "KS",
+    "name": "KOSPI"
+   }
+  },
+  "etf": {
+   "stockEndType": "etf",
+   "itemCode": "069500",
+   "reutersCode": "069500",
+   "stockName": "KODEX 200",
+   "closePrice": "87,250",
+   "closePriceRaw": "87250",
+   "fluctuationsRatio": "-2.75",
+   "marketValue": "216,293",
+   "marketValueRaw": "21629275000000",
+   "marketValueHangeul": "21조 6,293억원",
+   "accumulatedTradingValue": "200,335",
+   "accumulatedTradingValueRaw": "200335000000",
+   "accumulatedTradingValueKrwHangeul": "2,003억원",
+   "localTradedAt": "2026-11-05T09:20:16+09:00",
+   "marketStatus": "OPEN",
+   "stockExchangeType": {
+    "code": "KS",
+    "name": "KOSPI"
+   }
+  },
+  "etn": {
+   "stockEndType": "etn",
+   "itemCode": "520096",
+   "reutersCode": "520096",
+   "stockName": "미래에셋 인버스 2X WTI원유 선물 ETN",
+   "closePrice": "12,950",
+   "closePriceRaw": "12950",
+   "fluctuationsRatio": "17.73",
+   "marketValue": "324",
+   "marketValueRaw": "32375000000",
+   "marketValueHangeul": "324억원",
+   "accumulatedTradingValue": "1,815",
+   "accumulatedTradingValueRaw": "1815000000",
+   "accumulatedTradingValueKrwHangeul": "18.2억원",
+   "localTradedAt": "2026-11-05T09:20:20+09:00",
+   "marketStatus": "OPEN",
+   "stockExchangeType": {
+    "code": "KS",
+    "name": "KOSPI"
+   }
+  },
+  "oddCode": {
+   "stockEndType": "etf",
+   "itemCode": "0167A0",
+   "reutersCode": "0167A0",
+   "stockName": "SOL AI반도체TOP2플러스",
+   "closePrice": "13,570",
+   "closePriceRaw": "13570",
+   "fluctuationsRatio": "-6.25",
+   "marketValue": "41,565",
+   "marketValueRaw": "4156491000000",
+   "marketValueHangeul": "4조 1,565억원",
+   "accumulatedTradingValue": "26,319",
+   "accumulatedTradingValueRaw": "26319000000",
+   "accumulatedTradingValueKrwHangeul": "263억원",
+   "localTradedAt": "2026-11-05T09:20:21+09:00",
+   "marketStatus": "OPEN",
+   "stockExchangeType": {
+    "code": "KS",
+    "name": "KOSPI"
+   }
+  }
+ },
+ "us": {
+  "apple": {
+   "stockEndType": "stock",
+   "symbolCode": "AAPL",
+   "reutersCode": "AAPL.O",
+   "stockName": "애플",
+   "stockNameEng": "Apple Inc.",
+   "closePrice": "349.51",
+   "closePriceRaw": "349.51",
+   "fluctuationsRatio": "5.31",
+   "fluctuationsRatioRaw": "5.31",
+   "marketValue": "5,079,142,931",
+   "marketValueRaw": "5079142930820",
+   "marketValueHangeul": "5조 791억 USD",
+   "accumulatedTradingValue": "312억 USD",
+   "accumulatedTradingValueRaw": "31183905000",
+   "accumulatedTradingValueKrwHangeul": "41조 7,864억원",
+   "localTradedAt": "2026-11-04T16:00:00-05:00",
+   "marketStatus": "CLOSE",
+   "currencyType": {
+    "code": "USD"
+   },
+   "stockExchangeType": {
+    "code": "NSQ",
+    "name": "NASDAQ"
+   }
+  },
+  "brk": {
+   "stockEndType": "stock",
+   "symbolCode": "BRK B",
+   "reutersCode": "BRKb",
+   "stockName": "버크셔 해서웨이 Class B",
+   "stockNameEng": "Berkshire Hathaway Inc Class B",
+   "closePrice": "579.09",
+   "closePriceRaw": "579.09",
+   "fluctuationsRatio": "3.95",
+   "fluctuationsRatioRaw": "3.95",
+   "marketValue": "815,379,081",
+   "marketValueRaw": "815379081383",
+   "marketValueHangeul": "8,154억 USD",
+   "accumulatedTradingValue": "38.6억 USD",
+   "accumulatedTradingValueRaw": "3856860000",
+   "accumulatedTradingValueKrwHangeul": "5조 1,682억원",
+   "localTradedAt": "2026-11-04T16:00:00-05:00",
+   "marketStatus": "CLOSE",
+   "currencyType": {
+    "code": "USD"
+   },
+   "stockExchangeType": {
+    "code": "NYS",
+    "name": "NYSE"
+   }
+  },
+  "whrPref": {
+   "stockEndType": "stock",
+   "symbolCode": "WHR PRA",
+   "reutersCode": "WHR_pa",
+   "stockName": "월풀 우선주 Series A 8.5%",
+   "stockNameEng": "Whirlpool Dep Shs Repstg 1 20th Int Mandatory Conv Prf Series A",
+   "closePrice": "28.69",
+   "closePriceRaw": "28.69",
+   "fluctuationsRatio": "5.59",
+   "fluctuationsRatioRaw": "5.59",
+   "marketValue": "329,935,000",
+   "marketValueRaw": "329935000000",
+   "marketValueHangeul": "3,299억 USD",
+   "accumulatedTradingValue": "937,000 USD",
+   "accumulatedTradingValueRaw": "937000",
+   "accumulatedTradingValueKrwHangeul": "12.6억원",
+   "localTradedAt": "2026-11-04T16:00:00-05:00",
+   "marketStatus": "CLOSE",
+   "currencyType": {
+    "code": "USD"
+   },
+   "stockExchangeType": {
+    "code": "NYS",
+    "name": "NYSE"
+   }
+  },
+  "right": {
+   "stockEndType": "stock",
+   "symbolCode": "CELG RT",
+   "reutersCode": "CELG_r.K",
+   "stockName": "브리스톨 마이어스 스퀴브",
+   "stockNameEng": "Bristol Myers Squibb Company Contingent Rights Exp 31 Dec 2030",
+   "closePrice": "0.23",
+   "closePriceRaw": "0.23",
+   "fluctuationsRatio": "110.62",
+   "fluctuationsRatioRaw": "110.62",
+   "marketValue": "-",
+   "marketValueRaw": "",
+   "marketValueHangeul": "-",
+   "accumulatedTradingValue": "21,000 USD",
+   "accumulatedTradingValueRaw": "21000",
+   "accumulatedTradingValueKrwHangeul": "0.28억원",
+   "localTradedAt": "2026-11-04T16:00:00-05:00",
+   "marketStatus": "CLOSE",
+   "currencyType": {
+    "code": "USD"
+   },
+   "stockExchangeType": {
+    "code": "NYS",
+    "name": "NYSE"
+   }
+  },
+  "unit": {
+   "stockEndType": "stock",
+   "symbolCode": "GRAF.U",
+   "reutersCode": "GRAF_u.K",
+   "stockName": "Graf Global Units",
+   "stockNameEng": "Graf Global Units",
+   "closePrice": "11.39",
+   "closePriceRaw": "11.39",
+   "fluctuationsRatio": "0.00",
+   "fluctuationsRatioRaw": "0.00",
+   "marketValue": "327,463",
+   "marketValueRaw": "327462500",
+   "marketValueHangeul": "3.27억 USD",
+   "accumulatedTradingValue": "-",
+   "accumulatedTradingValueRaw": "",
+   "accumulatedTradingValueKrwHangeul": "-",
+   "localTradedAt": "2026-07-24T16:00:00-04:00",
+   "marketStatus": "CLOSE",
+   "currencyType": {
+    "code": "USD"
+   },
+   "stockExchangeType": {
+    "code": "AMX",
+    "name": "AMEX"
+   }
+  },
+  "amex": {
+   "stockEndType": "stock",
+   "symbolCode": "ET",
+   "reutersCode": "ET",
+   "stockName": "Energy Transfer Units",
+   "stockNameEng": "Energy Transfer Units",
+   "closePrice": "19.46",
+   "closePriceRaw": "19.46",
+   "fluctuationsRatio": "-3.47",
+   "fluctuationsRatioRaw": "-3.47",
+   "marketValue": "67,018,294",
+   "marketValueRaw": "67018294000",
+   "marketValueHangeul": "670억 USD",
+   "accumulatedTradingValue": "3.87억 USD",
+   "accumulatedTradingValueRaw": "387120000",
+   "accumulatedTradingValueKrwHangeul": "5,187억원",
+   "localTradedAt": "2026-11-04T16:00:00-05:00",
+   "marketStatus": "CLOSE",
+   "currencyType": {
+    "code": "USD"
+   },
+   "stockExchangeType": {
+    "code": "AMX",
+    "name": "AMEX"
+   }
+  }
+ }
+}

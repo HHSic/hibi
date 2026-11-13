@@ -16,7 +16,8 @@
  *    원문을 서버와 파일에서 맞대 본다.
  *  - 진짜 삭제(\Deleted + EXPUNGE)는 되돌릴 수 없다. imapflow 는 서버가 MOVE를 모르면
  *    COPY 결과를 보지 않고 곧바로 EXPUNGE한다 — 복사가 실패해도 원본이 사라진다.
- *    그래서 MOVE가 없는 서버는 정리하지 않고, 그 길로 가는 메서드는 연결에서 막아 둔다.
+ *    그래서 옮기기는 mailmove 한 곳에서 한다: MOVE 가 없으면 복사를 증명한 뒤 그 메일만 지운다.
+ *    서버 탓으로 되풀이될 실패를 낸 계정은 멈추고(일지의 blocked), imapflow 의 대체 경로는 연결에서 막아 둔다.
  *  - 쓰기 모드로 연 폴더에서는 CLOSE도 EXPUNGE다. 후보를 고르는 동안은 늘 읽기 전용으로 연다.
  *  - 공유 폴더의 메일을 «내» 휴지통으로 옮기면 동료는 되찾을 길이 없다. 남의 폴더는 열지도 않는다.
  *
@@ -26,6 +27,7 @@ const fs = require('fs');
 const path = require('path');
 const mail = require('./mail');
 const mailbackup = require('./mailbackup');
+const mailmove = require('./mailmove');
 
 // 0 은 «바로» — 받은 지 기간 대신 읽음(\Seen)을 본다. 0이 거짓 값이라 `days || 30` 같은 꼴은 쓰지 않는다
 const DAYS = [0, 7, 30, 90];
@@ -54,7 +56,10 @@ const FORBIDDEN = ['messageDelete', 'messageCopy', 'messageFlagsAdd', 'messageFl
 // 판정 — «확인 안 돼 남김»과 «일부러 남김»을 나눠 센다 (화면이 다르게 말한다)
 const UNVERIFIED = new Set(['nofile', 'empty', 'damaged', 'idmismatch', 'sizemismatch', 'headmismatch']);
 const SPARED = new Set(['flagged', 'deleted', 'important', 'note', 'recovered']);
-const NO_MOVE = '이 서버는 «옮기기»(MOVE)를 지원하지 않아 정리하지 않았습니다';
+// 계정마다의 결과(res.per)에 나눠 적는 수
+const PER_COUNTS = ['moved', 'verified', 'kept', 'unsaved', 'unverified', 'spared', 'important', 'flagged', 'uncertain', 'unread'];
+// 옛 설정에서 옮겨 온 켜짐 — 그때 확인 창은 MOVE 없는 서버를 «옮기지 않음»으로 셌다. 복사한 뒤 지우는 방식은 묻지 않은 것이다
+const COPY_ASK = '이 서버는 옮기기(MOVE)가 없어 복사한 뒤 지웁니다 — 이 방식은 아직 묻지 않아 옮기지 않았습니다';
 
 /**
  * 기간은 0(바로)·7·30·90일 넷뿐이다. 숫자가 아니거나 다른 값이면 기본 30일.
@@ -138,7 +143,8 @@ function keepsFolder(b, { trash, junk } = {}) {
   if (NO_TIDY_USE.some((u) => b.specialUse === u || flags.has(u))) return true;
   const p = String(b.path || '');
   const d = b.delimiter || '/';
-  const names = [String(b.name || ''), p.split(d).pop()];
+  // 앞뒤 공백이 붙은 이름도 같은 폴더다 (mail.pickBox 도 다듬어 고른다)
+  const names = [String(b.name || '').trim(), p.split(d).pop().trim()];
   if (names.some((n) => NO_TIDY_NAME.test(n) || mail.BOX_NAMES.trash.test(n) || mail.BOX_NAMES.junk.test(n))) return true;
   for (const x of [trash, junk]) {
     if (!x || !x.path) continue;
@@ -147,13 +153,8 @@ function keepsFolder(b, { trash, junk } = {}) {
   return false;
 }
 
-/** imapflow tools.hasCapability(c, 'MOVE')와 같은 판단 — IMAP4rev2 에는 MOVE가 기본으로 들어 있다 */
-function canMove(client) {
-  const caps = client && client.capabilities;
-  if (!caps || typeof caps.has !== 'function') return false;
-  const enabled = client.enabled && typeof client.enabled.has === 'function' ? client.enabled : new Set();
-  return caps.has('MOVE') || enabled.has('IMAP4REV2') || (caps.has('IMAP4rev2') && !caps.has('IMAP4rev1'));
-}
+/** imapflow tools.hasCapability(c, 'MOVE')와 같은 판단 — IMAP4rev2 에는 MOVE가 기본으로 들어 있다 (mailmove 와 한 곳) */
+const canMove = mailmove.canMove;
 
 /** 정리 연결에서 지우기·복사·플래그·폴더 닫기를 아예 못 하게 한다 (대체 경로가 COPY에서 멈춘다) */
 function guard(client) {
@@ -179,6 +180,21 @@ function maskAddr(s) {
 function labelOf(acc, i) {
   const n = String((acc && acc.name) || '').trim();
   return n && !n.includes('@') ? n.slice(0, 30) : `계정 ${i + 1}`;
+}
+
+/** 오류 글에서 계정 이름 앞머리(«이름: »·«이름 · »)를 뗀다 — 계정 줄은 이름을 이미 보인다 */
+function bareError(label, s) {
+  const t = String(s || '');
+  for (const head of [`${label} · `, `${label}: `]) if (t.startsWith(head)) return t.slice(head.length);
+  return t;
+}
+
+/** 저장된 파일 이름(YYYYMMDD_HHMM_uid…, mailbackup stamp — PC 시각)의 받은 때 (ms). 못 읽으면 0 */
+function fileTime(file) {
+  const m = path.basename(String(file || '')).match(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})_\d+/);
+  if (!m) return 0;
+  const t = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]).getTime();
+  return Number.isFinite(t) && t > 0 ? t : 0;
 }
 
 /**
@@ -363,10 +379,23 @@ async function verdict(msg, names, { cutoff, seenOnly = false, wasMoved = () => 
  * @param opts.memo «바로»에서 늘 남김 판정을 받는 메일(Gmail 중요·메모·되찾음·확인 안 됨)을 기억해 두는 곳(Map, 부르는 쪽이 들고 있다).
  *   «바로»는 몇 분마다 돈다 — 그런 메일의 봉투·헤더를 매번 다시 받으면 서버를 두드린다. memoMs 동안은 다시 받지 않고
  *   기억한 판정으로 센다 (옮기지 않는 쪽이라 틀려도 안전하다). 세기만 하기(dryRun)에서는 쓰지 않는다
+ * @param opts.journal 옮기기 일지 (mailmove) — 서버 탓으로 멈춘 계정·남은 지움 표시·믿는 계정. 기본은 앱의 일지
+ * @param opts.labelOf (acc, i) → 오류 글에 쓸 계정 이름. 기본은 이 모듈의 labelOf (넘겨받은 목록 안의 순번)
+ * @param opts.copyOk (acc) → MOVE 없는 서버에서 복사한 뒤 지우는 방식을 써도 되나 (확인 창에서 물었나). 거짓이면 그 계정은
+ *   옮기기 전에 멈추고 res.per[열쇠].copyAsk 를 세운다 — 부르는 쪽이 끄고 다시 묻는다. 세기만 하기(dryRun)는 막지 않는다
+ * @returns res.noMove — 서버 탓으로 옮기기를 멈춘 계정 열쇠 (이 실행에서 멈췄거나 이미 멈춰 있던 계정).
+ *   res.spared 가운데 important(Gmail 중요·별표 라벨)·flagged(별표) 는 따로도 센다.
+ *   res.oldest — 본 폴더에 저장된 가장 오래된 메일의 받은 때(ms, 파일 이름에서). 없으면 0 — «아직 기간이 안 지남»을 말할 때 쓴다.
+ *   res.per[계정 열쇠] — 계정마다 같은 수와 more·error(이름 앞머리를 뗀 첫 오류)·errors·oldest·blocked(멈춘 까닭 또는 null)·
+ *   copy(MOVE 없는 서버라 복사 길)·copyAsk(copyOk 가 거짓이라 멈춤)·unsavedBoxes.
+ *   res.unsavedBoxes — skippedBoxes 가운데 PC 에 저장 기록이 없어 건너뛴 폴더 (나머지는 번호가 바뀌었거나 못 읽은 폴더)
  */
 async function tidyAll(accounts, dir, opts = {}) {
   const {
     days, dryRun = false, cap = CAP,
+    journal = mailmove.journal(),
+    labelOf: nameOf = labelOf,
+    copyOk = () => true,
     shouldStop = () => false,
     accountLive = () => true,
     inView = () => false,
@@ -380,10 +409,42 @@ async function tidyAll(accounts, dir, opts = {}) {
     into
   } = opts;
   const res = Object.assign(into || {}, {
-    moved: 0, verified: 0, kept: 0, unsaved: 0, unverified: 0, spared: 0, uncertain: 0, unread: 0,
-    skippedBoxes: [], errors: [], accounts: 0, failedAccounts: 0,
+    moved: 0, verified: 0, kept: 0, unsaved: 0, unverified: 0, spared: 0, important: 0, flagged: 0, uncertain: 0, unread: 0,
+    skippedBoxes: [], unsavedBoxes: [], errors: [], accounts: 0, failedAccounts: 0, noMove: [], oldest: 0, per: {},
     more: false, complete: false, aborted: false, halt: false
   });
+  // 지금 보는 계정의 결과 — 오류는 이 계정 것만 따로도 모은다 (계정은 하나씩 차례로 본다)
+  let cur = null;
+  const fail = (msg, front = false) => {
+    if (front) res.errors.unshift(msg);
+    else res.errors.push(msg);
+    if (cur) {
+      if (front) cur.errors.unshift(msg);
+      else cur.errors.push(msg);
+    }
+  };
+  /** 일부러 남긴 메일 — 중요(Gmail 라벨)·별표는 따로도 센다. 화면이 «Gmail이 중요 표시한 n통»을 말한다 */
+  const spare = (code, n = 1) => {
+    res.spared += n;
+    if (code === 'important') res.important += n;
+    else if (code === 'flagged') res.flagged += n;
+  };
+  /** 저장된 파일 이름의 받은 때 — 가장 오래된 것을 적어 둔다 */
+  const noteOldest = (files) => {
+    for (const list of files.values()) {
+      for (const f of list) {
+        const t = fileTime(f);
+        if (!t) continue;
+        if (!res.oldest || t < res.oldest) res.oldest = t;
+        if (cur && (!cur.oldest || t < cur.oldest)) cur.oldest = t;
+      }
+    }
+  };
+  /** 건너뛴 폴더 — PC 에 저장 기록이 없는 것은 따로도 적는다 (화면이 «새 메일이 저장되면 대상이 됩니다»라고 말한다) */
+  const skip = (p, unsaved = false) => {
+    res.skippedBoxes.push(p);
+    if (unsaved) res.unsavedBoxes.push(p);
+  };
   const span = normDays(days);
   // «바로» — 받은 지 기간 대신 읽음을 본다. 안 읽은 메일은 읽을 때까지 서버에 남아 위젯·폰에서 새 메일로 보인다
   const seenOnly = span === 0;
@@ -432,7 +493,7 @@ async function tidyAll(accounts, dir, opts = {}) {
     };
 
     const tidyAccount = async (acc, i, share) => {
-      const label = labelOf(acc, i);
+      const label = nameOf(acc, i);
       const accKey = mailbackup.accountKey(acc);
       const client = connect(acc);
       open.add(client);
@@ -446,17 +507,41 @@ async function tidyAll(accounts, dir, opts = {}) {
       const cut = () => aborted() || late;
       const stopHere = () => stopNow() || late;
       try {
-        await client.connect();
-        if (!canMove(client)) throw new Error(NO_MOVE);
+        // 연결 중에 끊겨도(시간 몫·끊기) 끝나야 한다 — 안 끝나면 tidy.running 이 굳어 자동 저장이 돌아간다 (mail.connectOrClose)
+        await mail.connectOrClose(client);
         const mine = mineOf(client);
         if (!mine) throw new Error('내 폴더와 공유 폴더를 구분할 수 없어 정리하지 않았습니다');
+        // MOVE 없는 서버는 복사한 뒤 지운다 — 그 방식을 묻지 않은 켜짐(옛 설정에서 옮겨 옴)이면 아무것도 하기 전에 멈춘다
+        const copy = !canMove(client);
+        if (cur) cur.copy = copy;
+        if (copy && !dryRun && !copyOk(acc)) throw Object.assign(new Error(COPY_ASK), { copyAsk: true });
         const own = (await client.list() || []).filter(mine);
         // 휴지통은 내 폴더 안에서만 고른다 — 공유 트리의 Trash 로 옮기면 남의 휴지통이다
         const trash = mail.pickBox(own, 'trash');
-        if (!trash) throw new Error('휴지통 폴더를 찾지 못해 정리하지 않았습니다');
+        if (!trash) {
+          // 폴더 이름은 말하지 않는다 (기록에도 간다) — 몇 개 중에 용도 표시·아는 이름이 없었는지만
+          const uses = own.filter((x) => x.specialUse).length;
+          throw new Error(`휴지통 폴더를 찾지 못해 정리하지 않았습니다 — 폴더 ${own.length}개 중 휴지통 용도 표시도, 휴지통으로 아는 이름도 없습니다`
+            + (uses ? '' : ' (이 서버는 폴더 용도 표시를 주지 않습니다)'));
+        }
         const junk = mail.pickBox(own, 'junk');
         const recs = state[accKey] || {};
         const boxes = own.filter((b) => mailbackup.backsUp(b) && !keepsFolder(b, { trash, junk }));
+
+        // 지난번 끊겨 남은 «내» 지움 표시를 먼저 푼다 — 그 폴더에 옮길 후보가 없어도 (후보 검색은 \Deleted 를 빼므로 안 풀면 영영 남는다).
+        // 지우지 않고 푼다: 원본과 휴지통 복사본이 둘 다 남을 뿐이다. 세기만 하기는 쓰기 모드로 열지 않는다
+        if (!dryRun) {
+          for (const p of journal.pendingBoxes(accKey)) {
+            if (!own.some((x) => x.path === p) || stopHere()) continue;
+            try {
+              await client.mailboxOpen(p, { readOnly: false });
+              await mailmove.settle(client, { accKey, journal });
+            } catch (e) {
+              if (cut() || client.usable === false) throw e;
+              fail(maskAddr(`${label} · ${p}: ${mail.friendly(e)}`));
+            }
+          }
+        }
 
         // UID는 폴더마다 따로 돈다 — 지금 열린 폴더가 그 폴더가 아니면 한 통도 건드리지 않는다
         const sameBox = (b) => {
@@ -469,7 +554,7 @@ async function tidyAll(accounts, dir, opts = {}) {
           res.uncertain += n;
           const msg = `${why} 마지막 ${n}통은 옮겨졌을 수 있습니다 — 서버 휴지통을 확인하세요`;
           // 맨 앞에 둔다 — 상태 줄은 첫 오류 하나만 보이는데, 이것이 사용자가 꼭 알아야 할 것이다
-          res.errors.unshift(maskAddr(`${label} · ${b.path}: ${msg}`));
+          fail(maskAddr(`${label} · ${b.path}: ${msg}`), true);
           const e = new Error(msg);
           e.counted = true;
           return e;
@@ -494,16 +579,18 @@ async function tidyAll(accounts, dir, opts = {}) {
           // 쓰기 모드로 여는 것은 여기가 처음이다 (imapflow 는 같은 폴더여도 SELECT를 다시 보낸다)
           const rw = await client.mailboxOpen(b.path, { readOnly: false });
           if (!rw || !goodV(rw.uidValidity) || String(rw.uidValidity) !== String(rec.uidValidity)) {
-            res.skippedBoxes.push(b.path);
+            skip(b.path);
             return;
           }
           if (rw.path === trash.path || (junk && rw.path === junk.path)) return;
           if (rw.readOnly) throw new Error('이 폴더는 읽기 전용으로만 열립니다');
-          for (let k = 0; k < ok.length; k += CHUNK) {
+          // 묶음 크기는 mailmove 가 정한다 — 복사 길을 끝까지 해 본 적 없는 계정은 첫 묶음을 1통으로 시험한다
+          for (let k = 0, size = 0; k < ok.length; k += size) {
             if (stopHere()) { res.more = true; break; }
             if (!accountLive(acc)) break;
             sameBox(b);
-            const part = ok.slice(k, k + CHUNK);
+            size = mailmove.chunkFor(client, journal, accKey);
+            const part = ok.slice(k, k + size);
             // 고른 뒤에 별표가 붙었거나 다른 곳에서 지웠을 수 있다 — 옮기기 직전에 다시 묻는다.
             // «바로»는 읽음도 다시 묻는다 — 그 사이 «안 읽음»으로 되돌린 메일은 남긴다
             const still = await client.search({
@@ -521,7 +608,7 @@ async function tidyAll(accounts, dir, opts = {}) {
             }
             // 고른 뒤에 보기 창으로 연 메일도 여기서 뺀다 (창을 닫은 뒤 다음 정리 때 옮긴다)
             const go = pre.filter((u) => !viewing(acc, b.path, u, sidOf.get(u)));
-            res.spared += part.length - go.length;
+            spare('other', part.length - go.length);
             if (!go.length) continue;
             // 옮기기 «전에» 열쇠를 적어 둔다 — MOVE 를 보낸 뒤 끊겨 답을 못 받아도, 그 묶음을 휴지통에서
             // 되찾았을 때 다시 옮기지 않게. 못 옮긴 것이 확실해지면 아래에서 지운다 (모르면 남긴다)
@@ -534,54 +621,35 @@ async function tidyAll(accounts, dir, opts = {}) {
               const drop = new Set(leftUids.map((u) => keyOf.get(u)).filter((x) => !keep.has(x)));
               return forget(fresh.filter((x) => drop.has(x)));
             };
-            // 이 둘(폴더·MOVE)과 messageMove 사이에는 await가 없다 — 그 사이에 MOVE가 사라지면 대체 경로를 탄다.
-            // 여기서 멈추면 아무것도 옮기지 않았으니 방금 적은 열쇠를 지운다 (남기면 그 메일은 영영 정리되지 않는다)
-            const blocked = (() => {
-              try { sameBox(b); } catch (e) { return e; }
-              return canMove(client) ? null : new Error(NO_MOVE);
-            })();
-            if (blocked) {
-              await forgetLeft(go, []);
-              throw blocked;
-            }
+            // 폴더가 바뀌었으면 아무것도 옮기지 않았으니 방금 적은 열쇠를 지운다 (남기면 그 메일은 영영 정리되지 않는다)
+            try { sameBox(b); } catch (e) { await forgetLeft(go, []); throw e; }
+            // 옮기기는 mailmove 한 곳에서 — MOVE 면 UID MOVE, 없으면 복사 → 증명 → 일지 → 지움 표시 → 그것만 지우기.
+            // 옮긴 수는 서버가 준 목록(COPYUID)이 아니라 폴더에 남은 것을 다시 물어 센다 (imapflow 는 목록을 덮어쓰기도 한다)
             let r;
-            let moveErr = null;
             try {
-              r = await client.messageMove(go, trash.path, { uid: true });
+              r = await mailmove.moveUids(client, go, trash.path, { accKey, journal });
             } catch (e) {
-              r = false;
-              moveErr = e;
+              // 옮기기는 UID 를 받은 뒤 던지지 않는다 — 여기 오는 것은 시작 전에 막힌 것이라 아무것도 옮기지 않았다
+              await forgetLeft(go, []);
+              throw e;
             }
-            if (!r) {
-              // 끊겨서 답을 못 받았다 — 서버가 옮겼는지 모른다. 열쇠는 남긴다
-              if (cut() || client.usable === false) throw unsure(b, go.length, '옮기는 중에 연결이 끊겨');
-              // 연결은 살아 있다 — 무엇이 남았는지 다시 물어, 못 옮긴 것의 열쇠는 지운다
-              let leftUids = null;
-              try {
-                sameBox(b);
-                const s = await client.search({ uid: go }, { uid: true });
-                if (Array.isArray(s)) leftUids = go.filter((u) => s.includes(u));
-              } catch { leftUids = null; }
-              if (!leftUids) throw unsure(b, go.length, '서버가 옮기기에 제대로 답하지 않아');
-              const gone = go.filter((u) => !leftUids.includes(u));
-              res.moved += gone.length;
-              await forgetLeft(leftUids, gone);
-              throw new Error(`서버가 옮기기를 거부했습니다${gone.length ? ` (${gone.length}통만 옮겨짐)` : ''}`
-                + (moveErr ? ` — ${mail.friendly(moveErr)}` : ''));
+            res.moved += r.moved.length;
+            // 복사도 옮기기도 안 된 것이 확실한 것만 열쇠를 지운다. kept(복사본이 있거나 있을 수 있음)는 열쇠를 남긴다 — 다시 복사하지 않게
+            if (r.left.length) await forgetLeft(r.left, [...r.moved, ...r.kept]);
+            // 끊겨서 답을 못 받았다 — 서버가 옮겼는지 모른다. 열쇠는 남긴다
+            if (r.unsure) throw unsure(b, r.kept.length, r.unsure);
+            if (r.halt) {
+              // 일지를 못 쓴다 — 이대로 돌면 묶음마다 복사본만 쌓인다
+              res.halt = true;
+              throw new Error(r.error);
             }
-            // 서버가 옮긴 목록(COPYUID)은 믿지 않는다 — imapflow 는 답이 여러 줄로 오면 마지막 줄로 덮어쓰고,
-            // 목록을 비워 주는 서버도 있다. 그걸 믿으면 실제보다 적게 세어 상한(CAP)을 넘겨 옮기고,
-            // 실제로 옮긴 메일의 열쇠까지 지운다. 폴더에 남은 것을 다시 물어 센다.
-            // 못 물으면 다 옮긴 것으로 센다 — 상한은 줄이는 쪽, 열쇠는 남기는 쪽이 안전하다
-            let stayed = null;
-            try {
-              sameBox(b);
-              const s = await client.search({ uid: go }, { uid: true });
-              if (Array.isArray(s)) stayed = go.filter((u) => s.includes(u));
-            } catch { stayed = null; }
-            const done = stayed ? go.filter((u) => !stayed.includes(u)) : go;
-            res.moved += done.length;
-            if (stayed && stayed.length) await forgetLeft(stayed, done);
+            if (r.block) {
+              // 서버 탓으로 되풀이될 실패 — 이 계정은 다음 실행부터 연결하지 않는다 (매 실행마다 복사본을 만들지 않게)
+              await journal.block(accKey, r.block);
+              if (!res.noMove.includes(accKey)) res.noMove.push(accKey);
+              throw Object.assign(new Error(r.block), { block: true });
+            }
+            if (r.error) throw new Error(r.error);
           }
         };
 
@@ -590,14 +658,15 @@ async function tidyAll(accounts, dir, opts = {}) {
           const box = await client.mailboxOpen(b.path, { readOnly: true });
           const rec = recs[b.path];
           // 서버가 UID를 새로 매겼거나 기록이 없으면 파일의 UID를 믿을 수 없다 — 검색도 하지 않는다
-          if (!rec || !goodV(rec.uidValidity) || !goodV(box && box.uidValidity)
-            || String(rec.uidValidity) !== String(box.uidValidity)) {
-            res.skippedBoxes.push(b.path);
+          if (!rec) { skip(b.path, true); return; }
+          if (!goodV(rec.uidValidity) || !goodV(box && box.uidValidity) || String(rec.uidValidity) !== String(box.uidValidity)) {
+            skip(b.path);
             return;
           }
           const boxDir = mailbackup.boxDirFor(dir, acc, b.path, mailbackup.genOf(state, acc, b.path));
           const files = await mailbackup.uidFiles(boxDir);
-          if (!files) { res.skippedBoxes.push(b.path); return; }
+          if (!files) { skip(b.path); return; }
+          noteOldest(files);
 
           sameBox(b);
           // «바로»는 날짜 조건 없이 읽은 것만 고른다. 서버가 조건을 흘려들어도 받아 온 뒤 판정(verdict)이 다시 본다
@@ -656,7 +725,7 @@ async function tidyAll(accounts, dir, opts = {}) {
             for (const u of cand) {
               const code = mm.codes.get(u);
               if (UNVERIFIED.has(code)) { res.unverified += 1; res.kept += 1; }
-              else if (SPARED.has(code)) res.spared += 1;
+              else if (SPARED.has(code)) spare(code);
               else fresh.push(u);
             }
             cand = fresh;
@@ -689,7 +758,7 @@ async function tidyAll(accounts, dir, opts = {}) {
               const sid = normId(m && m.envelope && m.envelope.messageId);
               if (v === 'ok' && viewing(acc, b.path, u, sid)) {
                 // 지금 보기 창에 떠 있다 — 창을 닫은 뒤 다음 정리 때 옮긴다 (기억하지 않는다)
-                res.spared += 1;
+                spare('view');
               } else if (v === 'ok') {
                 ok.push(u);
                 idOf.set(u, recoverId(m));
@@ -700,7 +769,7 @@ async function tidyAll(accounts, dir, opts = {}) {
                 res.kept += 1;
                 if (mm) mm.codes.set(u, v);
               } else if (SPARED.has(v)) {
-                res.spared += 1;
+                spare(v);
                 if (mm) mm.codes.set(u, v);
               } else if (v === 'unread') {
                 // 읽으면 판정이 바뀐다 — 기억하지 않는다
@@ -721,7 +790,9 @@ async function tidyAll(accounts, dir, opts = {}) {
             await tidyBox(b);
           } catch (e) {
             if (cut()) throw e;
-            if (!e.counted) res.errors.push(maskAddr(`${label} · ${b.path}: ${mail.friendly(e)}`));
+            // 서버 탓으로 멈춘 계정·일지를 못 쓰는 실행 — 남은 폴더도 같다
+            if (e.block || res.halt) throw Object.assign(e, { where: b.path });
+            if (!e.counted) fail(maskAddr(`${label} · ${b.path}: ${mail.friendly(e)}`));
             // 연결이 끊겼으면 이 계정의 남은 폴더는 다음에
             if (client.usable === false) { res.more = true; break; }
           }
@@ -752,20 +823,54 @@ async function tidyAll(accounts, dir, opts = {}) {
       if (stopNow() || left() <= 0) { res.more = true; break; }
       if (!accountLive(acc)) continue;      // 끄거나 지운 계정 — 오류가 아니다
       res.accounts += 1;
-      // 남은 시간을 남은 계정 수로 나눈다 — 빨리 끝난 계정의 몫은 뒤 계정이 쓴다
-      const share = deadline ? Math.max(accountMinMs, Math.floor((deadline - Date.now()) / (list.length - i))) : 0;
+      const accKey = mailbackup.accountKey(acc);
+      const label = nameOf(acc, i);
+      // 계정마다의 결과 — 이 계정 앞뒤의 수를 견준다. more 는 이 계정 것만 보려고 잠시 내린다
+      const snap = Object.fromEntries(PER_COUNTS.map((k) => [k, res[k]]));
+      const skipped0 = res.skippedBoxes.length;
+      const unsaved0 = res.unsavedBoxes.length;
+      const more0 = res.more;
+      res.more = false;
+      cur = { errors: [], oldest: 0, copy: false, copyAsk: false };
       try {
-        await tidyAccount(acc, i, share);
-      } catch (e) {
-        if (aborted()) { res.aborted = true; res.more = true; break; }
-        if (e && e.late) {
-          // 실패가 아니다 — 이 계정의 남은 것은 다음 실행에서 이어서 본다
-          res.more = true;
-          res.errors.push(maskAddr(`${labelOf(acc, i)}: ${e.message}`));
+        // 서버 탓으로 옮기기를 멈춘 계정 — 연결도 하지 않는다. 설정 창의 «다시 해 보기»나 사람이 누른 휴지통 단추가 풀어 준다
+        const stopWhy = journal.blocked(accKey);
+        if (stopWhy) {
+          res.noMove.push(accKey);
+          res.failedAccounts += 1;
+          fail(maskAddr(`${label}: 이 서버에서는 옮기기를 멈췄습니다 — ${stopWhy}`));
           continue;
         }
-        res.failedAccounts += 1;
-        res.errors.push(maskAddr(`${labelOf(acc, i)}: ${mail.friendly(e)}`));
+        // 남은 시간을 남은 계정 수로 나눈다 — 빨리 끝난 계정의 몫은 뒤 계정이 쓴다
+        const share = deadline ? Math.max(accountMinMs, Math.floor((deadline - Date.now()) / (list.length - i))) : 0;
+        try {
+          await tidyAccount(acc, i, share);
+        } catch (e) {
+          if (aborted()) { res.aborted = true; res.more = true; break; }
+          if (e && e.late) {
+            // 실패가 아니다 — 이 계정의 남은 것은 다음 실행에서 이어서 본다
+            res.more = true;
+            fail(maskAddr(`${label}: ${e.message}`));
+            continue;
+          }
+          res.failedAccounts += 1;
+          if (e && e.copyAsk) cur.copyAsk = true;
+          fail(maskAddr(`${label}${e && e.where ? ` · ${e.where}` : ''}: ${mail.friendly(e)}`));
+        }
+      } finally {
+        const p = Object.fromEntries(PER_COUNTS.map((k) => [k, res[k] - snap[k]]));
+        p.skippedBoxes = res.skippedBoxes.slice(skipped0);
+        p.unsavedBoxes = res.unsavedBoxes.slice(unsaved0);
+        p.copy = cur.copy;
+        p.copyAsk = cur.copyAsk;
+        p.more = res.more;
+        p.errors = cur.errors.map((x) => bareError(label, x));
+        p.error = p.errors[0] || null;
+        p.oldest = cur.oldest;
+        p.blocked = res.noMove.includes(accKey) ? String(journal.blocked(accKey) || '서버가 옮기기를 거절했습니다') : null;
+        res.per[accKey] = p;
+        res.more = res.more || more0;
+        cur = null;
       }
     }
   } finally {
@@ -777,7 +882,7 @@ async function tidyAll(accounts, dir, opts = {}) {
 }
 
 module.exports = {
-  DAYS, DAY_MS, CAP, CHUNK, HEADS, MOVED_FILE, MOVED_MAX, FORBIDDEN,
+  DAYS, DAY_MS, CAP, CHUNK, HEADS, MOVED_FILE, MOVED_MAX, FORBIDDEN, COPY_ASK,
   normDays, normId, headerFields, searchBefore, mineOf, keepsFolder, canMove, guard,
-  goodV, maskAddr, labelOf, movedKey, loadMoved, carryMoved, recoverId, verdict, tidyAll, ACCOUNT_MIN_MS
+  goodV, maskAddr, labelOf, bareError, fileTime, movedKey, loadMoved, carryMoved, recoverId, verdict, tidyAll, ACCOUNT_MIN_MS
 };

@@ -36,7 +36,8 @@ let host = {
   widgetWin: () => null,
   openSettings: () => {},
   revealWidget: () => {},
-  holdReason: () => null
+  holdReason: () => null,
+  prepareMail: () => {}
 };
 function init(h) { host = { ...host, ...h }; }
 
@@ -58,6 +59,9 @@ const mailState = {
   // 것만 센다. 비어 있으면 «아직 한 번도 안 봤다»는 뜻이라 그 판은 세지 않는다 —
   // 앱을 켤 때마다 쌓여 있던 메일이 전부 «새 메일»이 되면 안 된다.
   known: null,          // Set<'계정:uid'> — 지난 폴링에서 본 것들
+  // 창은 «마지막 N통»이라 서버 정리가 옮긴 자리로 옛 메일이 밀려 들어온다. known 에 없어도 그건 새 메일이 아니다 —
+  // 지난 성공 폴링의 맨 위 UID 보다 큰 것만 새 메일이다. 폴링이 실패한 계정은 그대로 둔다 (mailtally.topsAfter).
+  tops: new Map(),      // 계정 id → { top, v }
   filtered: 0,          // 이번에 화면에서 걷어낸 통수 (설정 화면에 보여준다)
   groups: [],           // 묶인 것들 [{ name, items }]
   folders: [],          // 화면에 보일 폴더 [{ id, acct, name, items, count, unread }]
@@ -85,7 +89,12 @@ const seenMarks = new mailmark.SeenMarks({ ttlMs: 10 * 60_000, max: 500 });
 
 const RULE_RETRY_MS = 5 * 60_000;
 const ruleLog = new mailtally.WorkLog({ tries: 3, retryMs: RULE_RETRY_MS });
+// 옮기기를 멈춘 계정이라 스팸 규칙을 못 보낸다고 이미 알린 계정 id — 멈춰 있는 동안 한 번만 알린다
+const ruleStopSaid = new Set();
 let ruleBusy = false;
+// 자동 읽음·스팸이 서버에 나가도 되는 바닥 — 계정 id → 규칙을 처음 적용한 판의 창 최솟값 UID.
+// 창으로 밀려 들어온 옛 메일을 서버에서 옮기면 안 된다. 화면에서 숨기는 일은 따로라 그대로 한다.
+const ruleFloors = new Map();
 
 /**
  * 저장된 계정마다 «쓸 수 있나»와 푼 비밀번호. 비밀번호는 여기서만 푼다.
@@ -281,6 +290,7 @@ async function refreshMail({ force = false } = {}) {
     return;
   }
   mailState.blocked = '';
+  host.prepareMail();
   skipLog = { line: '', at: 0 };
   // 켜 둔 계정 중 못 쓰는 것이 있으면 «확인 완료» 줄에 같이 적는다 — 말없이 빠지면 안 된다
   const left = mailacct.tally(problems.filter((x) => x.problem && x.problem !== 'off'));
@@ -296,6 +306,7 @@ async function refreshMail({ force = false } = {}) {
     let unread = 0;
     let total = 0;
     let messages = [];
+    const polled = [];   // 이번에 성공한 계정의 맨 위 UID — 실패한 계정은 모으지 않는다 (그 계정의 경계는 그대로 둔다)
     for (const acc of accounts) {
       try {
         const r = await mail.fetchSummary(acc, {
@@ -305,10 +316,13 @@ async function refreshMail({ force = false } = {}) {
         unread += r.unread;
         total += r.total || 0;
         messages.push(...r.messages.map((m) => ({ ...m, account: acc.name, accountId: acc.id })));
+        polled.push({ id: acc.id, top: r.top, uidValidity: r.uidValidity, messages: r.messages });
       } catch (e) {
         errors.push({ name: acc.name, message: mail.friendly(e) });
       }
     }
+    // 이번 판의 경계 — UIDVALIDITY 가 바뀐 계정은 그 판을 세지 않는다
+    const bounds = mailtally.boundsFor(mailState.tops, polled);
     // 주소록은 받은 메일에서 자란다 — 이름과 주소가 한 쌍씩 들어 있다.
     // 이렇게 해두면 나중에 «김부장»만 쳐도 주소가 나온다.
     //
@@ -316,9 +330,10 @@ async function refreshMail({ force = false } = {}) {
     // 아니라 «메일함에 오래 머무른 사람»을 세게 된다 — 몇 분마다 도니까 하룻밤 두면
     // 한 통이 백 통이 되고, 자동완성 차례가 통째로 뒤집힌다.
     // (mailState.known은 지난번에 본 목록이다. 아래에서 이번 것으로 바뀐다.)
+    // 창으로 밀려 들어온 옛 메일도 known 에는 없다 — 경계 아래면 새로 온 것이 아니다.
     const seenLastTime = mailState.known;
     store.rememberContacts(messages
-      .filter((m) => m.fromAddress && (!seenLastTime || !seenLastTime.has(mailtally.keyOf(m))))
+      .filter((m) => m.fromAddress && (!seenLastTime || !seenLastTime.has(mailtally.keyOf(m))) && mailtally.isNew(bounds, m))
       .map((m) => ({ address: m.fromAddress, name: m.fromName })));
 
     messages.sort((a, b) => b.at - a.at);
@@ -358,8 +373,13 @@ async function refreshMail({ force = false } = {}) {
     mailState.accountTabs = split || [];
     mailState.folders = mailrules.folders(cut, Math.max(want, 30), { accounts: split });
     mailState.messages = cut.visible.slice(0, want);
-    mailState.toRead = cut.read;
-    mailState.toSpam = cut.spam;
+    // 서버를 바꾸는 규칙은 바닥 위의 메일에만 나간다. 바닥이 없는 계정은 이번 창의 최솟값이 바닥이다 —
+    // 그래서 규칙을 바꾸면 그때 창에 있는 메일까지는 걸린다 («새 규칙은 있던 메일에도 걸려야 한다»를 이 범위로 지킨다)
+    // 번호가 새로 매겨진 계정의 옛 바닥은 잴 수 없다 — 그대로 두면 새 번호가 작을 때 규칙이 영영 서버로 안 나간다
+    for (const p of polled) if (mailtally.renumbered(mailState.tops, p)) ruleFloors.delete(p.id);
+    mailtally.noteFloors(ruleFloors, messages);
+    mailState.toRead = cut.read.filter((m) => mailtally.aboveFloor(ruleFloors, m));
+    mailState.toSpam = cut.spam.filter((m) => mailtally.aboveFloor(ruleFloors, m));
     mailState.errors = errors;
     mailState.fetchedAt = Date.now();
 
@@ -369,9 +389,10 @@ async function refreshMail({ force = false } = {}) {
       ...cut.hidden.map(mailtally.keyOf),
       ...[...cut.visible, ...groupedAll].filter((m) => cut.mutedUids.has(m.uid)).map(mailtally.keyOf)
     ]);
-    const tally = mailtally.freshCount(messages, mailState.known, quietUids);
+    const tally = mailtally.freshCount(messages, mailState.known, quietUids, bounds);
     mailState.pending += tally.fresh;
     mailState.known = tally.known;
+    mailState.tops = mailtally.topsAfter(mailState.tops, polled);
     if (!tally.primed) evlog.log('메일', '첫 확인 — 이미 있던 것은 «새 메일»로 세지 않습니다');
 
     evlog.log('메일', `확인 완료 · 계정 ${accounts.length}개 · 안읽음 ${mailState.unread}`
@@ -389,10 +410,9 @@ async function refreshMail({ force = false } = {}) {
   // 새로 온 것 — 먼저 자동 전달, 그다음 파일로 남긴다(그 끝에 서버 정리). 기다리지 않는다 — 목록은 이미 화면에 올라갔다.
   // 순서가 중요하다: «서버 정리 바로»가 받은편지함에서 옮긴 뒤에 전달하면 서버에서 원문을 못 받는다
   // (그래도 놓치지는 않는다 — 정리가 옮긴 메일은 PC 백업 파일로 보낸다. 전달이 도는 동안 정리는 시작하지 않는다)
-  autofwd.forwardNew().catch(() => {}).then(() => autoBackupNew()).catch(() => {});
-  // 본문도 미리 받아둔다 — 목록은 이미 올라갔고, 이건 뒤에서 천천히 해도 된다.
-  // 그래야 메일을 두 번 눌렀을 때 창이 곧바로 뜬다.
-  prefetchBodies();
+  // 본문 미리 받기는 저장이 끝난 뒤에 — 그래야 메일을 두 번 눌렀을 때 창이 곧바로 뜬다. 같은 틱에 시작하면
+  // 저장과 미리 받기의 연결이 겹친다 (느린 서버에서 명령이 겹치면 소켓이 끊긴다)
+  autofwd.forwardNew().catch(() => {}).then(() => autoBackupNew()).catch(() => {}).then(() => prefetchBodies()).catch(() => {});
   // 서버를 만지는 규칙(자동 읽음·스팸)도 뒤에서 따로 돈다. 여기서 기다리면
   // 느린 서버에서 목록이 1분 넘게 안 뜬다 (실제로 88초가 걸린 적이 있다).
   runServerRules();
@@ -424,8 +444,9 @@ async function runServerRules() {
         try {
           if (action === 'spam') {
             const r = await mail.moveToSpam(acc, uids);
-            evlog.log('메일', `규칙 · 스팸으로 ${r.moved}통 → ${r.mailbox}`);
+            evlog.log('메일', `규칙 · 스팸으로 ${r.moved}통 → ${r.mailbox}${r.how === 'copy' ? ' · 복사 후 지움' : ''}`);
             did += r.moved;
+            ruleStopSaid.delete(id);
           } else {
             const r = await mail.markRead(acc, uids, { read: true });
             evlog.log('메일', `규칙 · 자동 읽음 ${r.changed}통`);
@@ -434,6 +455,16 @@ async function runServerRules() {
           // 서버가 받아준 뒤에야 «했다»고 적는다
           ruleLog.ok(action, keys);
         } catch (e) {
+          if (e && e.blocked) {
+            // 옮기기를 멈춘 계정 — 사람이 «다시 해 보기»로 풀기 전까지 같다. 실패로 세지 않는다: 풀리면 다음 폴링에 바로 나간다.
+            // 그동안 규칙은 연결도 하지 않고(moveToSpam 이 연결 전에 던진다) 알림·기록은 한 번만
+            if (!ruleStopSaid.has(id)) {
+              ruleStopSaid.add(id);
+              evlog.log('메일', `규칙 · ${action} · ${uids.length}통 · 옮기기를 멈춘 계정이라 서버에 적용하지 않음 (설정의 «다시 해 보기» 전까지)`);
+              notice('bad', `${acc.name || '메일 계정'} · 스팸 규칙을 서버에 적용하지 않았습니다 — 옮기기를 멈춘 계정입니다 (설정 › 메일 › «다시 해 보기»)`);
+            }
+            continue;
+          }
           // 시간을 두고 몇 번 더 — 다만 무한정은 아니다. 곧바로 되돌려 놓으면
           // 끝에서 부르는 새로고침과 맞물려 느린 서버를 계속 두드리게 된다.
           const { n, giveUp } = ruleLog.bad(action, keys);
@@ -455,6 +486,7 @@ async function runServerRules() {
 /** 규칙이 바뀌면 «이미 처리함»도 «해봤다 안 됐다»도 지운다 — 새 규칙은 있던 메일에도 걸려야 한다 */
 function forgetRuleWork() {
   ruleLog.clear();
+  ruleFloors.clear();
 }
 
 /**

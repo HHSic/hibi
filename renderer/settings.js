@@ -759,7 +759,10 @@ function bindSwitch(key) {
     paint();
     window.nunsseom.setApp({ [key]: on });
     // 메일을 켜면 다음 주기를 기다리지 않고 바로 한 번 확인한다
-    if (key === 'mailEnabled' && on) window.nunsseom.mailRefresh();
+    // 확인이 시작돼야 메인이 자동 저장과 폴더를 맞춘다 (ensureLocalFirst) — 끝난 뒤 다시 읽는다. 자동 저장이 꺼진 답이면 폴링이 없다
+    if (key === 'mailEnabled' && on) {
+      Promise.resolve(window.nunsseom.mailRefresh()).catch(() => {}).then(() => window.nunsSetMail.loadBackup()).catch(() => {});
+    }
     // 켜자마자 무슨 일이 일어나는지 바로 알려준다
     if (key === 'mailAutoBackup') window.nunsSetMail.loadBackup();
     // 만지기를 끄면 골골 소리 줄을 감춘다
@@ -1198,7 +1201,11 @@ for (const t of TABS) $(`tab-${t}`).onclick = () => showTab(t);
 // 창이 이미 떠 있으면 주소로는 못 바꾸니 메인이 따로 알려준다.
 if (TABS.includes(params.get('tab'))) showTab(params.get('tab'));
 if (window.nunsseom.onSettingsTab) {
-  window.nunsseom.onSettingsTab((t) => { if (TABS.includes(t)) showTab(t); });
+  window.nunsseom.onSettingsTab((t) => {
+    if (TABS.includes(t)) showTab(t);
+    // 알림·위젯 줄을 눌러 왔다 — 창을 열어 둔 사이 메인이 폴더를 잡았을 수 있다. 그 답의 «정하기» 단추가 없으면 눌러도 소용없다
+    if (t === 'mail') window.nunsSetMail.loadBackup().catch(() => {});
+  });
 }
 
 $('btn-done').append(window.nunsIcon('close'));

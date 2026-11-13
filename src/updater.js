@@ -37,6 +37,8 @@ const FIRST_CHECK_DELAY_MS = 20 * 1000;
 let autoUpdater = null;
 let timer = null;
 let onStatus = () => {};
+// 지금 설치하면 안 되는 까닭 (없으면 '') — 메일 백업을 옮기는 중 (main.js 가 넘긴다)
+let busy = () => '';
 
 /** 현재 상태 — 설정 창이 그대로 보여준다 */
 const state = {
@@ -52,8 +54,9 @@ function setState(patch) {
   try { onStatus({ ...state }); } catch {}
 }
 
-function init({ onUpdate } = {}) {
+function init({ onUpdate, busy: why } = {}) {
   if (onUpdate) onStatus = onUpdate;
+  if (typeof why === 'function') busy = why;
 
   if (!app.isPackaged) {
     setState({ status: 'unsupported', message: '개발 모드 · 업데이트 확인 안 함' });
@@ -119,12 +122,24 @@ function startAuto(enabled) {
  * 첫 인자가 isSilent다. false로 주면 NSIS 설치 마법사가 떠서
  * "설치 파일을 다시 받아 새로 설치하는" 것처럼 보인다. true면 창 없이 적용되고
  * 두 번째 인자(isForceRunAfter)로 앱이 다시 켜진다.
+ *
+ * quitAndInstall 은 설치 파일을 먼저 띄우고 앱을 끈다 — before-quit 에서 미뤄도 설치 파일이 앱을 닫는다.
+ * 그래서 끄면 안 되는 때(메일 백업을 옮기는 중)는 여기서 먼저 거절한다. 끝난 뒤 다시 누르면 된다.
+ * @returns 설치를 시작했나
  */
 function installNow() {
+  let why = '';
+  try { why = busy() || ''; } catch { why = ''; }
+  if (why) {
+    setState({ message: why });
+    return false;
+  }
   if (autoUpdater && state.status === 'ready') {
     app.isQuitting = true;
     autoUpdater.quitAndInstall(true, true);
+    return true;
   }
+  return false;
 }
 
 module.exports = { init, check, startAuto, installNow, getState: () => ({ ...state }) };

@@ -22,6 +22,10 @@ const known = {
   mailBackupStatus: () => ipcRenderer.invoke('mail:backup-status'),
   // 서버 정리 켜기·끄기·기간 — 무엇을 부탁했는지 남긴다 (일반 setApp 으로 새지 않는지 시험이 본다)
   mailTidySet: (req) => { (window.__tidySet = window.__tidySet || []).push(req); return ipcRenderer.invoke('mail:tidy-set', req); },
+  // 지난 메일 받기 — 무엇을 부탁했는지 남긴다 (일반 setApp 으로 새지 않는지 시험이 본다)
+  mailFillSet: (req) => { (window.__fillSet = window.__fillSet || []).push(req); return ipcRenderer.invoke('mail:fill-set', req); },
+  // 메인이 «이 탭을 보여라» 하는 것을 시험이 대신 부른다
+  onSettingsTab: (cb) => { window.__settingsTab = cb; },
   // 주소록은 이 시험과 상관없다 (contacts.js 를 싣지 않는다)
   mailContacts: () => Promise.resolve([])
 };

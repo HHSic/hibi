@@ -35,13 +35,16 @@ async function markRead(opts) {
 
 function paintNote(box) {
   const nt = (box && box.notice) || null;
+  // 지난 메일을 받을지 묻는 줄 — 결과 한 줄이 있으면 그것이 먼저다. 틱마다 다시 오므로 결과가 사라지면 다시 보인다
+  const ask = !nt && box && box.fillAsk ? box.fillAsk : '';
   for (const id of ['mail-note', 'mp-note']) {
     const el = $(id);
     if (!el) continue;
-    el.textContent = nt ? nt.text : '';
+    el.textContent = nt ? nt.text : ask;
     // 위젯이 좁아 글이 잘린다 — 전체는 올려두면 보이게
-    el.title = nt ? nt.text : '';
-    el.className = 'note' + (nt ? ' ' + nt.kind : '');
+    el.title = nt ? nt.text : ask;
+    el.className = 'note' + (nt ? ' ' + nt.kind : ask ? ' ask' : '');
+    el.onclick = ask ? (e) => { e.stopPropagation(); window.nunsseom.openSettings('mail'); } : null;
   }
 }
 
@@ -592,6 +595,8 @@ for (const id of ['mail-write', 'mp-write']) {
   };
   $(id).addEventListener('pointerdown', (e) => e.stopPropagation());
 }
+// 묻는 줄은 단추다 — 시트가 열려 있을 때 누르면 시트가 먼저 닫혀 클릭이 사라진다. 결과 한 줄은 지금처럼 빈 곳으로 둔다
+$('mail-note').addEventListener('pointerdown', (e) => { if (e.currentTarget.classList.contains('ask')) e.stopPropagation(); });
 $('mailpanel').addEventListener('pointerdown', (e) => e.stopPropagation());
 if (nw.params.get('mailpanel') === '1') {
   nw.card.classList.add('mailon');

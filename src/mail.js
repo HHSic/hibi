@@ -12,6 +12,7 @@ const crypto = require('crypto');
 const { ImapFlow } = require('imapflow');
 const { simpleParser } = require('mailparser');
 const { cleanHtml } = require('./htmlclean');
+const mailmove = require('./mailmove');
 
 const CONNECT_TIMEOUT_MS = 20_000;
 // 플래그를 바꾸는 일은 통수만큼 오래 걸린다 — 읽기보다 넉넉히 준다
@@ -106,8 +107,72 @@ function senderOf(envelope) {
   return `${from.address || ''}`.slice(0, 40);
 }
 
-function connect(account, { timeoutMs = CONNECT_TIMEOUT_MS } = {}) {
+// 앞쪽 연결 추적 — 지난 메일을 받는 뒤 일(mailfill)이 «사용자 쪽 일»에 비켜 주려고 본다.
+// 폴링·메일 열기·규칙·전달·정리·저장이 모두 connect() 를 지나므로 여기 한 곳에 건다.
+const FRONT_TTL_MS = 5 * 60_000;
+const front = new Map();   // 계정 열쇠 → { live: Map<client, 시작 시각>, last, okAt }
+let frontHook = null;
+/** 앞쪽 연결이 생길 때마다 불린다 — 같은 계정의 뒤 받기를 끊을 기회 */
+function setFrontHook(fn) { frontHook = fn; }
+
+function trackFront(account, client) {
+  const k = account.id || account.user;
+  let f = front.get(k);
+  if (!f) { f = { live: new Map(), last: 0, okAt: 0 }; front.set(k, f); }
+  f.live.set(client, Date.now());
+  f.last = Date.now();
+  client.once('close', () => { f.live.delete(client); f.last = Date.now(); });
+  // 폴더를 열었으면 로그인이 된 것이다 — 뒤 받기가 일시 거절을 비밀번호 탓으로 잘못 멈췄다면 이것으로 푼다
+  client.once('mailboxOpen', () => { f.okAt = Date.now(); });
+  if (frontHook) { try { frontHook(account); } catch { /* 연결은 막지 않는다 */ } }
+}
+
+/** @returns { busy, last, okAt } — 5분 지난 연결은 없는 셈 친다 (인증 거절 뒤 close 가 소켓 제한까지 늦는 경우를 덮는다) */
+function frontState(account, now = Date.now()) {
+  const f = front.get(account.id || account.user);
+  if (!f) return { busy: false, last: 0, okAt: 0 };
+  for (const [c, at] of f.live) if (now - at > FRONT_TTL_MS) f.live.delete(c);
+  return { busy: f.live.size > 0, last: f.last, okAt: f.okAt };
+}
+
+/**
+ * connect() 를 기다리되, 그사이 연결이 닫히면 끝낸다.
+ * TCP·TLS 단계에서 close() 를 부르면 connect() 가 영원히 끝나지 않는다 — close() 가 제한 타이머를 지우는데
+ * 거절 함수는 onConnect 뒤에만 생긴다 (imap-flow.js:2320, :2229, :2350). close 이벤트는 그래도 온다.
+ */
+function connectOrClose(client) {
+  const p = client.connect();
+  if (typeof client.once !== 'function') return p;   // 시험의 가짜 연결
+  return new Promise((resolve, reject) => {
+    const onClose = () => {
+      const e = new Error('Connection closed during connect');
+      e.code = 'ClosedDuringConnect';
+      reject(e);
+    };
+    client.once('close', onClose);
+    p.then((v) => { client.removeListener('close', onClose); resolve(v); },
+      (e) => { client.removeListener('close', onClose); reject(e); });
+  });
+}
+
+/**
+ * imapflow 는 MOVE·COPY 거절을 false 로만 돌려주고 서버의 까닭은 log.warn 에만 남긴다.
+ * 그 오류만 연결의 lastWarn 에 붙여 둔다 — 화면이 «거부했습니다»에 까닭을 붙일 수 있게. 나머지 기록은 버린다
+ * (명령 원문을 남기지 않는다). 모든 수준을 함수로 둔다 — 빠진 수준의 error·fatal 은 imapflow 가 console 에 찍는다.
+ * @param holder { client } — 연결을 만든 뒤 채운다
+ */
+function warnCatcher(holder) {
+  const keep = (o) => { if (holder.client && o && o.err) holder.client.lastWarn = o.err; };
+  const drop = () => {};
+  return { trace: drop, debug: drop, info: drop, warn: keep, error: keep, fatal: keep };
+}
+
+/**
+ * @param background 뒤 받기의 연결 — 앞쪽 연결로 세지 않는다 (자기가 자기를 끊지 않게)
+ */
+function connect(account, { timeoutMs = CONNECT_TIMEOUT_MS, background = false } = {}) {
   const secure = account.port === 143 ? false : true;
+  const caught = {};
   const client = new ImapFlow({
     host: account.host,
     port: Number(account.port) || 993,
@@ -120,13 +185,14 @@ function connect(account, { timeoutMs = CONNECT_TIMEOUT_MS } = {}) {
     // requireTLS와 같은 태도다.
     doSTARTTLS: secure ? undefined : true,
     auth: { user: account.user, pass: account.pass },
-    logger: false,
+    logger: warnCatcher(caught),
     // 서버가 응답하지 않을 때 앱이 붙잡히지 않게
     socketTimeout: timeoutMs,
     greetingTimeout: CONNECT_TIMEOUT_MS,
     connectionTimeout: CONNECT_TIMEOUT_MS,
     tls: { rejectUnauthorized: true }
   });
+  caught.client = client;
 
   // 소켓이 끊기거나 시간이 초과되면 ImapFlow는 'error' 이벤트를 낸다.
   // EventEmitter는 듣는 사람이 없는 'error'를 그냥 던져버린다 — 그러면 우리가 await하던
@@ -135,6 +201,7 @@ function connect(account, { timeoutMs = CONNECT_TIMEOUT_MS } = {}) {
   // 사유 자체는 await하던 쪽이 던지는 오류에 이미 들어 있으므로 여기서는 흘려보낸다 —
   // 듣는 사람이 있다는 것 자체가 목적이다.
   client.on('error', () => {});
+  if (!background) trackFront(account, client);
   return client;
 }
 
@@ -142,7 +209,8 @@ function connect(account, { timeoutMs = CONNECT_TIMEOUT_MS } = {}) {
  * 받은편지함 요약.
  * @param onlyUnread 안 읽은 것만 볼지, 최근 온 것을 모두 볼지
  * @param limit      제목을 몇 개까지 들고 올지
- * @returns { unread, total, messages: [{ uid, subject, from, at, seen }] }
+ * @returns { unread, total, top, uidValidity, messages: [{ uid, subject, from, at, seen }] }
+ *   top — 서버의 맨 위 UID (UIDNEXT − 1, 모르면 0). «새 메일» 경계로 쓴다 (mailtally.topsAfter)
  */
 /**
  * @param box 'inbox'(기본) | 'sent' — 보낸메일함은 폴더 이름이 서버마다 달라 찾아서 연다.
@@ -178,6 +246,7 @@ async function fetchSummary(account, { limit = 5, onlyUnread = true, box: which 
     for (const m of messages) m.mailbox = path;
     return {
       unread: unseen.length, total: box.exists || 0, mailbox: path,
+      top: Number.isFinite(box.uidNext) ? box.uidNext - 1 : 0, uidValidity: box.uidValidity,
       messages: messages.slice(0, take)
     };
   } finally {
@@ -270,7 +339,8 @@ async function markRead(account, uids, { read = true, mailbox = '' } = {}) {
 const BOX_NAMES = {
   junk: /^(junk|junk e-?mail|spam|bulk mail|스팸|스팸메일함|스팸 메일함|정크)$/i,
   sent: /^(sent|sent items|sent messages|sent mail|보낸편지함|보낸 편지함|보낸메일함|보낸 메일함)$/i,
-  trash: /^(trash|deleted|deleted items|deleted messages|bin|휴지통|지운편지함|지운 편지함|삭제된 항목)$/i
+  // 국내 메일은 이름이 제각각이다 (용도 표시가 없는 서버가 많다). 정리(mailtidy keepsFolder)도 이 이름의 폴더는 빼므로 넓혀도 안전한 쪽이다
+  trash: /^(trash|deleted|deleted items|deleted messages|deleted mail|bin|recycle bin|휴지통|지운편지함|지운 편지함|지운메일함|지운 메일함|삭제메일함|삭제된 메일|삭제된메일|삭제된 항목)$/i
 };
 const BOX_USE = { junk: '\\Junk', sent: '\\Sent', trash: '\\Trash' };
 
@@ -302,10 +372,12 @@ async function findBox(client, kind) {
 function pickBox(boxes, kind) {
   const re = BOX_NAMES[kind];
   if (!re || !Array.isArray(boxes)) return null;
+  // 앞뒤 공백이 붙은 이름을 주는 서버가 있다 («휴지통 »)
+  const named = (s) => re.test(String(s == null ? '' : s).trim());
   return boxes.find((b) => b.specialUse === BOX_USE[kind])
-    || boxes.find((b) => re.test(b.name))
+    || boxes.find((b) => named(b.name))
     // 하위 폴더로 둔 서버도 있다 (INBOX/보낸편지함)
-    || boxes.find((b) => re.test(String(b.path).split(b.delimiter || '/').pop()))
+    || boxes.find((b) => named(String(b.path).split(b.delimiter || '/').pop()))
     || null;
 }
 
@@ -321,14 +393,21 @@ function findJunk(client) {
  * 웹메일에서 지운 메일이 휴지통에 남는 것과 다르게 동작하면 «지웠는데 어디 갔지»가 되고,
  * 잘못 지웠을 때 되찾을 길도 없다. 그래서 옮기기만 한다.
  * 휴지통을 못 찾으면 지우지 않고 그 사실을 말한다 — 조용히 EXPUNGE로 넘어가면 안 된다.
+ *
+ * MOVE를 모르는 서버(이카운트 등)는 mailmove 가 «복사 → 증명 → 지움 표시 → 그것만 지우기»로 옮긴다.
+ * imapflow 의 대체 경로는 복사가 실패해도 원본을 지워서 쓰지 않는다.
+ * 사람이 누른 단추라 서버 탓으로 멈춘 계정이어도 해 보고, 끝까지 되면 멈춤을 푼다.
+ * @param connect·journal 시험이 넣는다 (가짜 연결·메모리 일지)
+ * @returns { moved, mailbox, how: 'move'|'copy', already }
  */
-async function moveToTrash(account, uids, { mailbox = '' } = {}) {
+async function moveToTrash(account, uids, { mailbox = '', connect: open = connect, journal = mailmove.journal() } = {}) {
   const list = uidList(uids);
   if (!list.length) return { moved: 0 };
+  const accKey = keyOfAccount(account);
 
-  const client = connect(account, { timeoutMs: WRITE_TIMEOUT_MS });
-  await client.connect();
+  const client = open(account, { timeoutMs: WRITE_TIMEOUT_MS });
   try {
+    await connectOrClose(client);
     const trash = await findBox(client, 'trash');
     if (!trash) throw new Error('휴지통 폴더를 찾지 못했습니다');
     // UID는 폴더마다 따로 돈다 — 보낸메일함에서 지울 때 받은편지함의 같은 번호를
@@ -338,14 +417,9 @@ async function moveToTrash(account, uids, { mailbox = '' } = {}) {
     // «한 번 더 누르면 영영 사라진다»는 것은 화면이 따로 물어봐야 할 일이다.
     if (box.path === trash.path) return { moved: 0, mailbox: trash.path, already: true };
 
-    let moved = 0;
-    for (let i = 0; i < list.length; i += FLAG_CHUNK) {
-      const part = list.slice(i, i + FLAG_CHUNK);
-      const r = await client.messageMove(part, trash.path, { uid: true });
-      if (r === false) throw new Error('서버가 옮기기를 거부했습니다');
-      moved += part.length;
-    }
-    return { moved, mailbox: trash.path };
+    const r = await moveAll(client, list, trash.path, { accKey, journal });
+    await journal.unblock(accKey);
+    return { moved: r.moved, mailbox: trash.path, how: r.how };
   } finally {
     try { await client.logout(); } catch { client.close(); }
   }
@@ -357,15 +431,20 @@ async function moveToTrash(account, uids, { mailbox = '' } = {}) {
  * 화면에서 숨기는 것과 다르다 — 서버에서 실제로 치우므로 웹메일에서도 사라지고,
  * 다음에 다시 안 내려온다. 그래서 «되돌릴 수 없는 일»에 가깝고, 규칙이 정확할 때만 쓴다.
  *
- * MOVE를 모르는 서버에서는 라이브러리가 알아서 복사 + 삭제표시 + 정리로 대신한다.
+ * MOVE를 모르는 서버는 휴지통 단추와 같은 길(mailmove)로 옮긴다.
+ * 규칙은 자동 일이다 — 서버 탓으로 멈춘 계정은 연결도 하지 않는다 (규칙이 돌 때마다 복사본을 만들지 않게).
  */
-async function moveToSpam(account, uids, { mailbox = '' } = {}) {
+async function moveToSpam(account, uids, { mailbox = '', connect: open = connect, journal = mailmove.journal() } = {}) {
   const list = uidList(uids);
   if (!list.length) return { moved: 0 };
+  const accKey = keyOfAccount(account);
+  const stop = journal.blocked(accKey);
+  // blocked — 사람이 «다시 해 보기»로 풀기 전까지 같다. 규칙은 이것을 보고 «다시 해봅니다»를 되풀이하지 않는다
+  if (stop) throw Object.assign(new Error(`이 서버에서는 옮기기를 멈췄습니다 — ${stop}`), { blocked: true });
 
-  const client = connect(account, { timeoutMs: WRITE_TIMEOUT_MS });
-  await client.connect();
+  const client = open(account, { timeoutMs: WRITE_TIMEOUT_MS });
   try {
+    await connectOrClose(client);
     const junk = await findJunk(client);
     if (!junk) throw new Error('스팸 폴더를 찾지 못했습니다');
     // 여기도 UID는 폴더마다 따로 돌다 — 언젠가 받은편지함 밖에서 불리면
@@ -373,33 +452,69 @@ async function moveToSpam(account, uids, { mailbox = '' } = {}) {
     const box = await client.mailboxOpen(mailbox || account.mailbox || 'INBOX', { readOnly: false });
     if (box.path === junk.path) return { moved: 0, mailbox: junk.path };
 
-    let moved = 0;
-    for (let i = 0; i < list.length; i += FLAG_CHUNK) {
-      const part = list.slice(i, i + FLAG_CHUNK);
-      const r = await client.messageMove(part, junk.path, { uid: true });
-      if (r === false) throw new Error('서버가 옮기기를 거부했습니다');
-      moved += part.length;
-    }
-    return { moved, mailbox: junk.path };
+    const r = await moveAll(client, list, junk.path, { accKey, journal });
+    return { moved: r.moved, mailbox: junk.path, how: r.how };
   } finally {
     try { await client.logout(); } catch { client.close(); }
   }
 }
 
+/** 계정 열쇠 — mailbackup.accountKey 와 같다 (순환이라 여기서 다시 쓴다) */
+function keyOfAccount(account) {
+  return String((account && (account.id || account.user)) || '');
+}
+
+/**
+ * 열린 폴더의 UID 들을 묶음으로 옮긴다. 거절·끊김은 그 문장으로 던진다 — 지운 척하지 않는다.
+ * 묶음 크기는 mailmove.chunkFor — 복사 길을 처음 쓰는 계정은 1통으로 시험한다.
+ * 서버 탓으로 되풀이될 실패면 그 계정을 멈춘다 (자동 일이 같은 실패로 복사본을 쌓지 않게).
+ */
+async function moveAll(client, list, dest, { accKey, journal }) {
+  let moved = 0;
+  let how = 'move';
+  for (let i = 0; i < list.length;) {
+    const part = list.slice(i, i + mailmove.chunkFor(client, journal, accKey));
+    i += part.length;
+    const r = await mailmove.moveUids(client, part, dest, { accKey, journal });
+    how = r.how;
+    moved += r.moved.length;
+    if (r.block) await journal.block(accKey, r.block);
+    // 멈췄으면 그 말도 — 단추를 누른 사람이 자동 정리·스팸 규칙까지 멈춘 줄 알게 (휴지통 단추는 멈춘 계정에서도 해 본다)
+    if (r.error) throw new Error(r.block ? `${r.error} (자동 정리·스팸 규칙은 설정 › 메일의 «다시 해 보기» 전까지 멈춤)` : r.error);
+  }
+  return { moved, how };
+}
+
+/**
+ * 받은 시각을 ms 로 (못 읽으면 0).
+ * imapflow 는 못 읽는 INTERNALDATE 를 Date 가 아니라 문자열로 둔다 (imapflow/lib/tools.js) —
+ * 바로 getTime() 을 부르면 그 한 통 때문에 묶음 전체가 던진다.
+ */
+function timeOf(d) {
+  return d instanceof Date ? d.getTime() : Number.isFinite(Date.parse(d)) ? Date.parse(d) : 0;
+}
+
+/** FETCH 한 줄 → 목록 한 줄. 목록과 PC 색인(mailindex)이 같은 칸을 쓰게 한 곳에 둔다 */
+function rowOf(msg) {
+  const flags = msg.flags instanceof Set ? msg.flags : new Set(msg.flags || []);
+  return {
+    uid: msg.uid,
+    subject: String((msg.envelope && msg.envelope.subject) || '(제목 없음)').slice(0, 120),
+    from: senderOf(msg.envelope),
+    // 주소록은 여기서 자란다 — 받은 메일마다 «이름 ↔ 주소»가 한 쌍씩 들어 있다
+    fromAddress: ((msg.envelope && msg.envelope.from && msg.envelope.from[0]) || {}).address || '',
+    fromName: ((msg.envelope && msg.envelope.from && msg.envelope.from[0]) || {}).name || '',
+    at: timeOf(msg.internalDate) || Date.now(),
+    // IMAP 플래그는 역슬래시로 시작한다 ('\Seen') — 소스에서는 두 번 써야 한다
+    seen: flags.has('\\Seen')
+  };
+}
+
 async function collect(client, range, opts, out) {
   for await (const msg of client.fetch(range, { envelope: true, internalDate: true, flags: true }, opts)) {
-    const flags = msg.flags instanceof Set ? msg.flags : new Set(msg.flags || []);
-    out.push({
-      uid: msg.uid,
-      subject: String((msg.envelope && msg.envelope.subject) || '(제목 없음)').slice(0, 120),
-      from: senderOf(msg.envelope),
-      // 주소록은 여기서 자란다 — 받은 메일마다 «이름 ↔ 주소»가 한 쌍씩 들어 있다
-      fromAddress: ((msg.envelope && msg.envelope.from && msg.envelope.from[0]) || {}).address || '',
-      fromName: ((msg.envelope && msg.envelope.from && msg.envelope.from[0]) || {}).name || '',
-      at: (msg.internalDate || new Date()).getTime(),
-      // IMAP 플래그는 역슬래시로 시작한다 ('\Seen') — 소스에서는 두 번 써야 한다
-      seen: flags.has('\\Seen')
-    });
+    // 서버가 먼저 보낸 알림 줄에는 UID 가 없다 — 목록의 메일이 아니다
+    if (!Number.isInteger(msg.uid)) continue;
+    out.push(rowOf(msg));
   }
 }
 
@@ -943,14 +1058,31 @@ async function test(account) {
   }
 }
 
-/** IMAP 오류 문구는 그대로 보여주면 알아볼 수 없다 */
+/**
+ * IMAP 오류 문구는 그대로 보여주면 알아볼 수 없다.
+ * imapflow 의 서버 거절(tagged NO·BAD)은 message 가 늘 'Command failed' 다 — 서버 글은 responseText·serverResponseCode 에만
+ * 있어 같이 본다. 안 보면 Gmail 의 로그인 거절·동시 연결 초과·하루 한도가 모두 «Command failed»로만 보인다.
+ */
 function friendly(e) {
-  const raw = String((e && e.message) || e);
-  if (/AUTHENTICATIONFAILED|Invalid credentials|LOGIN failed/i.test(raw)) {
+  const msg = String((e && e.message) || e);
+  const text = e && typeof e === 'object' && e.responseText ? String(e.responseText) : '';
+  const code = e && typeof e === 'object' && e.serverResponseCode ? String(e.serverResponseCode) : '';
+  const raw = [msg, code && `[${code}]`, text].filter(Boolean).join(' ');
+  if (/AUTHENTICATIONFAILED|Invalid credentials|LOGIN failed|Application-specific password/i.test(raw)) {
     // 실제로 비밀번호를 틀린 경우보다, «앱 비밀번호가 아니라 평소 비밀번호를 넣은» 경우가
     // 훨씬 많다. 네이버·구글은 이제 앱 비밀번호가 아니면 아예 거절한다 —
     // 그걸 «비밀번호가 틀렸다»로만 말하면 맞는 걸 몇 번이고 다시 넣게 된다.
     return '로그인이 거절됐습니다 — 평소 비밀번호가 아닌 앱 비밀번호를 넣으세요';
+  }
+  // 계정 전체의 거절 — 비밀번호 탓이 아니다. 비밀번호를 다시 넣게 만들면 안 된다
+  // Gmail 은 의심 로그인을 «Please log in via your web browser»로도 막는다 — 영어 원문을 그대로 보이지 않게
+  if (/WEBALERT|Web login required|log in via (your )?web browser/i.test(raw)) return '서버가 웹에서 먼저 로그인하라고 합니다 — 브라우저로 그 계정에 한 번 로그인한 뒤 다시 됩니다';
+  // 이 글은 사람이 누른 단추·연결 시험에도 나간다 — «다시 합니다»를 약속하지 않는다. 자동 일(정리·받기)의 줄이 각자 «n분 뒤 다시 합니다»를 붙인다
+  if (/Too many simultaneous connections/i.test(raw)) return '동시 연결이 너무 많습니다 — 폰·다른 메일 프로그램도 연결을 씁니다';
+  if (/exceeded command or bandwidth|bandwidth limits/i.test(raw)) return '메일 서버의 하루 사용량 한도를 넘었습니다 — 하루쯤 뒤 다시 됩니다';
+  if (/THROTTLED/i.test(raw)) return '서버가 잠시 속도를 제한했습니다';
+  if (/not enabled for IMAP|IMAP.{0,40}(disabled|not enabled)|(disabled|not enabled).{0,40}IMAP/i.test(raw)) {
+    return 'IMAP을 쓸 수 없습니다 — 메일 설정에서 IMAP을 켜세요';
   }
   if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(raw)) return '서버 주소를 찾을 수 없습니다';
   if (/ECONNREFUSED/i.test(raw)) return '연결이 거부되었습니다 — 포트를 확인하세요';
@@ -961,10 +1093,11 @@ function friendly(e) {
   }
   if (/timeout|ETIMEDOUT/i.test(raw)) return '서버가 응답하지 않습니다';
   if (/certificate|self.signed/i.test(raw)) return '서버 인증서를 확인할 수 없습니다';
-  if (/Command failed.*IMAP|not enabled|disabled/i.test(raw)) {
-    return 'IMAP을 쓸 수 없습니다 — 메일 설정에서 IMAP을 켜세요';
+  // 그 밖의 서버 거절 — 서버 글을 붙인다 (주소는 가린다). 'Command failed' 한 마디로는 무엇이 막혔는지 알 길이 없다
+  if (msg === 'Command failed' && (text || code)) {
+    return `서버가 거절했습니다 — ${(text || code).replace(/[^\s@<>"'(),;:]+@[^\s@<>"'(),;:]+/g, '•••@•••').slice(0, 100)}`;
   }
-  return raw.slice(0, 120);
+  return msg.slice(0, 120);
 }
 
-module.exports = { PRESETS, preset, connect, smtpOf, fromOf, cleanHtml, fetchSummary, fetchBody, markRead, moveToSpam, moveToTrash, findJunk, findBox, pickBox, BOX_NAMES, viewFromSource, fetchSources, test, popMistake, senderOf, friendly, htmlToText, attachmentsForView, realAttachmentsOf, bodyPicsOf, attachmentName, viewPayload, buildViewHtml, visibleHtml };
+module.exports = { rowOf, timeOf, connectOrClose, setFrontHook, frontState, PRESETS, preset, connect, warnCatcher, smtpOf, fromOf, cleanHtml, fetchSummary, fetchBody, markRead, moveToSpam, moveToTrash, findJunk, findBox, pickBox, BOX_NAMES, viewFromSource, fetchSources, test, popMistake, senderOf, friendly, htmlToText, attachmentsForView, realAttachmentsOf, bodyPicsOf, attachmentName, viewPayload, buildViewHtml, visibleHtml };

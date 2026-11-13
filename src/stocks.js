@@ -8,6 +8,7 @@
 // 시세는 야후에서 받는다. 키가 필요 없고 국내(코스피·코스닥)·해외·지수가 다 되지만
 // 20분 지연이다 (실측 1203초). 시세를 받는 곳은 fetchQuote() 하나뿐이니,
 // 실시간이 필요해지면 그것만 KIS로 갈아끼우면 된다.
+// TOP 100 만은 네이버 순위 목록에서 값까지 같이 받는다 (아래 top()).
 
 const https = require('https');
 const fs = require('fs');
@@ -140,6 +141,11 @@ function getJson(url) {
         try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); }
         catch (e) { reject(e); }
       });
+      // 본문 도중 끊기면 'end' 도 요청 쪽 오류도 안 온다 — 이 약속이 영영 안 끝나, 부르는 쪽의 «받는 중»이 앱을 다시 켤 때까지 남는다.
+      // 제대로 끝난 뒤의 close 는 이미 끝난 약속이라 아무 일도 안 한다.
+      const cut = () => reject(new Error('연결이 끊겼습니다'));
+      res.on('error', cut);
+      res.on('close', cut);
     });
     req.on('timeout', () => { req.destroy(); reject(new Error('시간 초과')); });
     req.on('error', reject);
@@ -502,7 +508,195 @@ function importFrom(file) {
   return readWatchlist(file);
 }
 
+// ── 순위 (TOP 100) ──────────────────────────────────────
+//
+// 증권사 앱의 순위 화면 같은 것. 야후에는 순위가 없어 네이버 목록을 쓴다 — 100줄이 한 번에 오고
+// 값도 같이 오므로 줄마다 야후를 부를 일이 없다. 그래서 이 보기는 시세 출처가 관심 종목(야후, 20분 지연)과 다르고
+// 거의 실시간이다. 머리글에 그렇게 적는다.
+
+const TOP_SIZE = 100;
+// priceTop 은 이름과 달리 거래대금 순위다 (실측: SK하이닉스 3,344억이 삼성전자 2,727억보다 앞).
+// 인기(searchTop)는 국내뿐이다. 미국은 400 을 준다.
+const TOP_SORTS = ['marketValue', 'priceTop', 'up', 'down', 'searchTop'];
+const TOP_KR = 'https://m.stock.naver.com/api/stocks';
+const TOP_US = 'https://api.stock.naver.com/stock/exchange';
+// 미국 전체를 한 번에 주는 목록은 없다 (USA·ALL 같은 이름은 400 — 실측)
+const US_EXCHANGES = ['NASDAQ', 'NYSE', 'AMEX'];
+const TOP_BROKEN = '순위 자료를 읽지 못했습니다';
+
+/**
+ * 저장된 값에서 지금 고른 것을 읽는다. 이상한 값은 여기서 기본값으로 — 정렬은 주소에 들어가는 값이고,
+ * 설정 파일을 손으로 고쳤거나 예전 버전이 남긴 값이 그대로 오면 400 만 받다 끝난다.
+ * 미국의 인기는 시가총액으로 «보여 줄» 뿐 저장값을 바꾸지 않는다 — 국내로 돌아오면 인기 그대로다.
+ */
+function topPick(s = {}) {
+  const market = s.stocksTopMarket === 'US' ? 'US' : 'KR';
+  let sort = TOP_SORTS.includes(s.stocksTopSort) ? s.stocksTopSort : 'marketValue';
+  if (sort === 'searchTop' && market === 'US') sort = 'marketValue';
+  return { view: s.stocksView === 'top' ? 'top' : 'watch', market, sort };
+}
+
+/**
+ * 네이버 기호를 야후 기호로 — 차트와 관심 종목 넣기가 야후로 간다.
+ * 실측: BRK B→BRK-B, WHR PRA→WHR-PA(우선주), CELG RT→CELG-RI(권리), GRAF.U·TONT U→-UN(유닛).
+ * 그 밖의 꼬리는 하이픈만 붙인다. 야후가 모르는 기호여도 빈 차트·«못 찾았습니다»로 끝나니 망가지지는 않는다.
+ */
+function yahooTicker(code) {
+  const [base, tail] = String(code || '').trim().toUpperCase().split(/[\s.]+/);
+  if (!tail) return base;
+  if (tail === 'RT') return `${base}-RI`;
+  if (tail === 'U') return `${base}-UN`;
+  const pref = tail.match(/^PR([A-Z]?)$/);
+  return `${base}-${pref ? `P${pref[1]}` : tail}`;
+}
+
+/**
+ * 글자로 온 수. ''·'-'·'N/A'·null 은 «모름»이다 — Number('')·Number(null) 은 0 이라 그대로 쓰면 0원 줄이 된다.
+ * 지수 표기와 터무니없이 긴 수도 모름이다. 네이버가 쓰지 않는 모양이고, 그대로 두면 300자리 금액이 화면에 나간다.
+ */
+function numOf(v) {
+  const s = typeof v === 'number' ? String(v) : v;
+  if (typeof s !== 'string') return null;
+  const t = s.replace(/,/g, '').trim();
+  return /^[+-]?\d{1,20}(\.\d+)?$/.test(t) ? Number(t) : null;
+}
+
+const textOf = (v) => (typeof v === 'string' ? v.trim() : '');
+
+/** 큰 금액을 좁은 줄에 — 1,225조 · 49.4조 · 5.08조 · 4,907억 · 2만 */
+function shortAmount(v) {
+  const fmt = (n, digits) => n.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  const jo = v / 1e12;
+  if (jo >= 100) return `${fmt(jo, 0)}조`;
+  if (jo >= 10) return `${fmt(jo, 1)}조`;
+  if (jo >= 1) return `${fmt(jo, 2)}조`;
+  if (v >= 1e8) return `${fmt(v / 1e8, 0)}억`;
+  return v >= 1e4 ? `${fmt(v / 1e4, 0)}만` : null;
+}
+
+/**
+ * 우선주인가 — 네이버 기호의 꼬리로 본다 (WHR PRA, PCG PRC, AHT.PRI).
+ * 우선주의 시가총액은 네이버 값이 틀리다: 28.69달러인 WHR PRA 가 3,299억 달러로 미국 38위에 오고, 보통주 WHR 은 상위 100에 없다 (실측).
+ */
+function isPreferred(x) {
+  return /[\s.]PR[A-Z]?$/.test(textOf(x && x.symbolCode).toUpperCase());
+}
+
+/** 네이버 한 줄 → 화면 한 줄. 값을 읽을 수 없으면 null (NaN 줄을 내보내지 않는다) */
+function topRow(x, market, sort) {
+  if (!x || typeof x !== 'object') return null;
+  const us = market === 'US';
+  const ticker = us ? yahooTicker(textOf(x.symbolCode)) : textOf(x.itemCode);
+  const price = numOf(x.closePriceRaw) ?? numOf(x.closePrice);
+  // 국내 줄에는 fluctuationsRatioRaw 가 없다
+  const pct = numOf(x.fluctuationsRatioRaw) ?? numOf(x.fluctuationsRatio);
+  if (!ticker || price == null || price <= 0 || pct == null) return null;
+  // raw 금액은 국내는 원, 미국은 달러다 (실측: 삼성전자 1224795368376000 = 1,224조 7,954억원)
+  const amount = sort === 'marketValue' ? numOf(x.marketValueRaw)
+    : sort === 'priceTop' ? numOf(x.accumulatedTradingValueRaw) : null;
+  // 금액 순위에서 그 금액을 못 읽으면 필드가 바뀐 것이다 — 금액 없는 100줄이 멀쩡한 척 나가면 안 된다.
+  // (권리 증서는 시가총액이 «-» 로 오지만 상승·하락에만 나오고, 거기서는 등락률로 줄 세운다)
+  if ((sort === 'marketValue' || sort === 'priceTop') && amount == null) return null;
+  const short = amount ? shortAmount(amount) : null;
+  const end = textOf(x.stockEndType).toLowerCase();
+  // 네이버는 권리 증서를 stock 으로, 본주 이름으로 준다 (CELG RT «브리스톨 마이어스 스퀴브» +110%, GENVR «젠 디지털» — 실측).
+  // 표시가 없으면 대형주가 그만큼 오른 것으로 읽힌다. GENVR 은 기호가 평범해 영문 이름도 본다
+  const right = us && (/-RI$/.test(ticker) || /\b(contingent|rights?)\b/i.test(textOf(x.stockNameEng)));
+  return {
+    ticker,
+    name: textOf(x.stockName) || textOf(x.stockNameEng) || ticker,
+    market,
+    kind: end === 'etf' || end === 'etn' ? end : right ? 'right' : 'stock',
+    price,
+    pct,
+    currency: us ? 'USD' : 'KRW',
+    metric: short && (us ? `${short} 달러` : short),
+    exchange: textOf(x.stockExchangeType && x.stockExchangeType.name) || null,
+    rankBy: amount ?? pct
+  };
+}
+
+/**
+ * 답 하나를 줄로. 모양이 바뀌었으면 던진다 — 부르는 쪽이 실패로 알린다.
+ * 잘린 답(전체는 2770개라는데 3줄)은 줄이 멀쩡해도 빠진 목록이다. totalCount 가 없으면 따지지 못한다.
+ * 국내는 값이 «-» 인 줄 하나로 그 순위가 통째로 죽으면 안 되니 그 줄만 빼고 번호는 네이버 자리 그대로 둔다 (당겨 매기면 2등이 1등으로 보인다).
+ * 열에 하나를 넘게 못 읽으면 줄이 이상한 것이 아니라 답의 모양이 바뀐 것으로 본다.
+ * 미국은 한 줄도 못 뺀다 — 합친 자리를 정할 수 없어 빼면 그 아래 순위가 틀린다. 실제 답 12개에 그런 줄은 없었다.
+ */
+function topRows(j, market, sort) {
+  const list = j && j.stocks;
+  if (!Array.isArray(list) || !list.length) throw new Error(TOP_BROKEN);
+  if (list.length < Math.min(TOP_SIZE, Number(j.totalCount) || 0)) throw new Error(TOP_BROKEN);
+  // 우선주는 줄을 읽기 전에 뺀다 — 시가총액이 «-» 로 와도 «못 읽는 줄»로 세지 않게
+  const kept = market === 'US' && sort === 'marketValue' ? list.filter((x) => !isPreferred(x)) : list;
+  const rows = kept.flatMap((x) => {
+    const r = topRow(x, market, sort);
+    return r ? [{ ...r, rank: list.indexOf(x) + 1 }] : [];
+  });
+  const lost = kept.length - rows.length;
+  if (!rows.length || lost > (market === 'US' ? 0 : kept.length * 0.1)) throw new Error(TOP_BROKEN);
+  return rows;
+}
+
+/** 큰 값부터, 하락만 작은 값부터. 같은 값이면 받은 순서 그대로 */
+const byRank = (sort) => {
+  const dir = sort === 'down' ? 1 : -1;
+  return (a, b) => dir * (a.rankBy - b.rankBy);
+};
+
+/**
+ * 국내 상승·하락은 네이버 순서가 등락률 순서가 아니다 (실측: 37위 8.54% 가 42위 11.25% 보다 위, 100줄에 역전 30여 곳).
+ * «상승» 아래 숫자가 뒤섞이면 고장처럼 보이니 받은 줄 안에서 다시 줄 세운다. 번호 자리는 그대로 — 깨져서 빠진 줄의 번호는 계속 빈다.
+ */
+function sortMovers(rows, sort) {
+  const slots = rows.map((r) => r.rank);
+  return [...rows].sort(byRank(sort)).map((r, i) => ({ ...r, rank: slots[i] }));
+}
+
+/** 거래소 셋을 하나로 — 값으로 다시 줄 세우고 번호를 새로 매긴다. 각 거래소의 상위 100이면 합친 상위 100은 그 안에 다 있다 */
+function mergeTop(rows, sort) {
+  const seen = new Set();
+  return [...rows]
+    .sort(byRank(sort))
+    .filter((r) => {
+      if (seen.has(r.ticker)) return false;
+      seen.add(r.ticker);
+      return true;
+    })
+    .map((r, i) => ({ ...r, rank: i + 1 }));
+}
+
+/**
+ * 순위 하나를 받아 온다.
+ * 미국은 거래소 하나라도 실패하면 통째로 실패다 — 빠진 목록을 «미국 TOP 100»이라고 내놓으면 거짓말이다.
+ * ETF·ETN 은 네이버가 준 대로 둔다 (걸러 주는 인자도 없다 — 실측).
+ */
+async function top(want = {}) {
+  const { market, sort } = topPick({ stocksTopMarket: want.market, stocksTopSort: want.sort });
+  const query = `?page=1&pageSize=${TOP_SIZE}`;
+  const urls = market === 'US'
+    ? US_EXCHANGES.map((ex) => `${TOP_US}/${ex}/${sort}${query}`)
+    : [sort === 'searchTop' ? `${TOP_KR}/searchTop${query}` : `${TOP_KR}/${sort}/all${query}`];
+  let answers;
+  try {
+    answers = await Promise.all(urls.map((u) => getJson(u)));
+  } catch (e) {
+    // 점검 안내 같은 HTML 이 오면 JSON 오류가 나온다 — 그대로 화면에 낼 말이 아니다
+    throw e instanceof SyntaxError ? new Error(TOP_BROKEN) : e;
+  }
+  const rows = answers.flatMap((j) => topRows(j, market, sort));
+  const ordered = market === 'US' ? mergeTop(rows, sort)
+    : sort === 'up' || sort === 'down' ? sortMovers(rows, sort) : rows;
+  // 답 머리에 없으면 줄에서 읽는다. 어느 쪽에도 없으면 모른다고 둔다
+  const marks = answers.map((j) => j.marketStatus || (j.stocks[0] && j.stocks[0].marketStatus));
+  return {
+    rows: ordered.slice(0, TOP_SIZE).map(({ rankBy, ...r }) => r),
+    status: marks.includes('OPEN') ? 'OPEN' : marks.includes('CLOSE') ? 'CLOSE' : null
+  };
+}
+
 module.exports = {
   build, lookup, search, history, importFrom, readWatchlist, toMarket, MARKETS, defaultWatchPath,
-  session, localParts, INDEXES, HOURS, _fetchQuote: fetchQuote
+  session, localParts, INDEXES, HOURS, _fetchQuote: fetchQuote,
+  top, topPick, yahooTicker, TOP_SORTS
 };

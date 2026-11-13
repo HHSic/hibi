@@ -56,6 +56,10 @@ function getJson(url) {
         try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); }
         catch (e) { reject(e); }
       });
+      // 본문 도중 끊기면 'end' 도 요청 쪽 오류도 안 온다 — 안 막으면 pending 이 안 지워져 이 통화의 다음 부름이 전부 멎는다 (stocks.js 와 같은 병)
+      const cut = () => reject(new Error('연결이 끊겼습니다'));
+      res.on('error', cut);
+      res.on('close', cut);
     });
     // timeout 은 «연결이 조용한 시간»이라 스스로 끊어주지 않는다 — 직접 죽여야 한다
     req.on('timeout', () => { req.destroy(); reject(new Error('시간 초과')); });

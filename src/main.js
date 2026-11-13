@@ -1,6 +1,6 @@
 const {
   app, BrowserWindow, Tray, Menu, ipcMain, screen,
-  powerMonitor, nativeImage, shell, nativeTheme
+  powerMonitor, nativeImage, shell, nativeTheme, Notification
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -61,6 +61,7 @@ const { slotOf, doTrash } = mailwin;
 
 const backup = require('./backup');
 const { autoBackupNew } = backup;
+const mailmove = require('./mailmove');
 // 자동 전달 — mailhub 가 이미 실었다 (폴링 끝에 부른다). 같은 모듈이다
 const autofwd = require('./autofwd');
 backup.init({
@@ -77,12 +78,30 @@ backup.init({
   // 방금 «안 읽음»으로 되돌린 메일도 — 느린 서버의 STORE 가 끝나기 전에 «바로»가 옮기지 않게
   markedUnread: (k) => mailhub.seenMarks.markedUnread(k),
   // 자동 전달이 도는 동안은 서버 정리를 미룬다 — 전달이 받기 전에 받은편지함에서 옮겨지지 않게
-  forwardBusy: () => autofwd.busy()
+  forwardBusy: () => autofwd.busy(),
+  // 지난 메일을 묻는 알림은 방해 금지가 끝난 뒤에
+  holdReason: (ms) => holdReason(ms),
+  // 뒤 받기가 다음 폴링 앞에서 회차를 줄이려고 본다 — 아래 메일 타이머와 같은 주기다
+  nextPollAt: () => mailhub.mailState.fetchedAt + Math.max(2, store.settings.mailPollMin || 10) * 60_000,
+  // 앱 시작 때 창을 띄우지 않는다 — 눌렀을 때 설정 › 메일이 열리고, 거기서 묻는다
+  notifyFill: (title, body) => {
+    if (!Notification.isSupported()) return;
+    const n = new Notification({ title, body, silent: true });
+    n.on('click', () => openSettings('mail'));
+    n.show();
+  },
+  // 메일 백업을 옮기는 동안 «종료»를 눌렀다 — 끝난 뒤에 끈다고 알린다 (말없이 안 꺼지면 작업 관리자로 끌 수 있다)
+  quitHeld: () => {
+    if (!Notification.isSupported()) return;
+    new Notification({ title: 'Hibi', body: '메일 백업을 옮기는 중입니다 — 끝나면 종료합니다.', silent: true }).show();
+  }
 });
 autofwd.init({
   mailAccountsForUse: () => mailhub.mailAccountsForUse(),
   // 자동 전달을 켜거나 주소·계정을 더하는 요청은 설정 창에서 온 것만 받는다
-  isSettingsWin: (wc) => isSettingsSender(wc)
+  isSettingsWin: (wc) => isSettingsSender(wc),
+  // 백업 폴더를 옮기는 동안은 전달을 시작하지 않는다 — 전달은 백업 파일·정리 기록을 읽는다
+  backupMoving: () => backup.moving()
 });
 // 화살표로 감싸 둔다 — 여기서 바로 값을 넘기면 아직 선언되지 않은 것이 섞인다.
 composewin.init({
@@ -389,7 +408,9 @@ function pushTick() {
       accounts: mailhub.mailState.accountTabs || [],
       filtered: mailhub.mailState.filtered,
       // 쓸 수 있는 계정이 없을 때 그 까닭 — 빈 목록에 «새 메일 없음»만 뜨면 고장인 줄 모른다
-      blocked: mailhub.mailState.blocked || ''
+      blocked: mailhub.mailState.blocked || '',
+      // 지난 메일을 받을지 아직 답이 없으면 위젯에 한 줄. 눌러서 설정 › 메일로 간다
+      fillAsk: backup.fillAskLine()
     }
     : null;
   logMailPayload(mailBox);
@@ -910,8 +931,23 @@ if (!app.requestSingleInstanceLock()) {
     // 창이 뜨기 전에 — 메일 본문의 원격 그림이 윈도우 계정으로 인증을 걸지 않게 (win.js)
     blockWindowsLogin();
     evlog.init(app.getPath('userData'));
+    // 옮기기 일지 — MOVE 없는 서버에서 지움 표시 뒤 끊긴 메일·서버 탓으로 멈춘 계정을 앱을 다시 켜도 안다 (메일 일보다 먼저).
+    // 깨진 일지를 비켰으면 기록에 남긴다 — 그 안의 내 지움 표시는 아무도 풀지 않으니 알아야 한다. 기록은 아래에서 켜져 그 전 것은 모아 둔다
+    const journalNotes = [];
+    let logReady = false;
+    const journalBroken = (moved) => {
+      const msg = moved ? `옮기기 일지가 깨져 ${mailmove.JOURNAL_FILE}.broken 으로 비키고 새로 시작함 — 끊긴 옮기기의 지움 표시가 서버에 남았을 수 있음`
+        : '옮기기 일지가 깨졌는데 비키지 못함 — 다음 저장이 새로 씀';
+      if (logReady) evlog.log('메일', msg);
+      else journalNotes.push(msg);
+    };
+    mailmove.setJournalFile(path.join(app.getPath('userData'), mailmove.JOURNAL_FILE), { onBroken: journalBroken });
     tray = new Tray(nativeImage.createFromPath(ICON));
     if (store.settings.eventLog) setEventLog(true);
+    // 설정을 실을 때 생긴 기록(옛 서버 정리 설정 옮기기 등) — 그때는 기록이 아직 꺼져 있었다
+    for (const [cat, msg] of store.takeLoadNotes()) evlog.log(cat, msg);
+    logReady = true;
+    for (const msg of journalNotes.splice(0)) evlog.log('메일', msg);
     // 트레이 아이콘을 더블클릭하면 위젯이 다시 나온다 (Windows 관례)
     tray.on('double-click', revealWidget);
     // 예전 버전에서 설정값으로만 켜 두었던 경우를 실제 바로가기로 옮긴다
@@ -945,12 +981,15 @@ if (!app.requestSingleInstanceLock()) {
       widgetWin: () => widgetWin,
       openSettings: (tab) => openSettings(tab),
       revealWidget: () => revealWidget(),
-      holdReason: (ms) => holdReason(ms)
+      holdReason: (ms) => holdReason(ms),
+      // 메일 확인이 돌 때마다 — 폴더를 잡고 자동 저장을 켠다 (값이 같으면 아무 일도 안 한다)
+      prepareMail: () => backup.ensureLocalFirst()
     });
     // 설정의 어느 계정도 가리키지 않는 비밀번호 항목을 치운다 (계정 추가 중에 죽었거나 저장이 실패해 남은 것)
     mailhub.sweepPasswords();
     statswin.init({ scheduler, startBreak: (ids) => breakwin.startBreak(ids) });
-    mailbody.init({ mailAccountsForUse: () => mailhub.mailAccountsForUse(), mailState: mailhub.mailState });
+    // 백업 폴더를 옮기는 동안은 본문을 백업 파일에서 읽지 않는다 (backup.js moving)
+    mailbody.init({ mailAccountsForUse: () => mailhub.mailAccountsForUse(), mailState: mailhub.mailState, backupMoving: () => backup.moving() });
     mailfilter.init({
       mailState: mailhub.mailState,
       refreshMail: (o) => mailhub.refreshMail(o),
@@ -974,6 +1013,8 @@ if (!app.requestSingleInstanceLock()) {
       const every = Math.max(2, store.settings.mailPollMin || 10) * 60_000;
       if (Date.now() - mailhub.mailState.fetchedAt >= every) mailhub.refreshMail();
     }, 30_000);
+    // 지난 메일 뒤 받기 — 돌릴지는 안에서 판단한다. 답한 사람이 없으면 연결을 만들지 않는다
+    setInterval(() => { backup.fillTick().catch(() => {}); }, 30_000);
     setInterval(updateTray, 30_000);
 
     calhub.refreshCalendars();
@@ -983,12 +1024,16 @@ if (!app.requestSingleInstanceLock()) {
       onUpdate: (s) => {
         if (settingsWin && !settingsWin.isDestroyed()) settingsWin.webContents.send('update:status', s);
         updateTray();
-      }
+      },
+      // 메일 백업을 옮기는 중에는 «지금 설치»(앱을 끈다)를 하지 않는다 — 복사 도중에 꺼지면 새 폴더에 조각이 남는다
+      busy: () => (backup.moveRunning() ? '메일 백업을 옮기는 중입니다 — 끝난 뒤 다시 눌러주세요.' : '')
     });
     updater.startAuto(store.settings.autoUpdate);
 
     // 강제 종료로 세션을 잃지 않게 주기적으로도 저장한다
     setInterval(saveSession, 60_000);
+    // 메일 백업을 옮기는 중이면 종료를 미루고, 끝나면 backup.js 가 다시 종료한다 (트레이 «종료»·업데이트 뒤 종료)
+    app.on('before-quit', (e) => backup.holdQuit(e));
     app.on('before-quit', saveSession);
 
     // 개발용: NUNS_DEV=settings,break 로 창을 바로 띄워 확인한다
