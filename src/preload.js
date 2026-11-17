@@ -140,6 +140,14 @@ contextBridge.exposeInMainWorld('nunsseom', {
     }
     return ipcRenderer.invoke('compose:attach-dropped', paths);
   },
+  /**
+   * 붙여넣은 파일마다 «디스크의 진짜 파일인가» — 참·거짓만 돌려준다 (경로 글자는 화면에 안 준다).
+   * 화면 캡처처럼 클립보드에만 있는 그림은 경로가 없다 — 본문 그림으로 넣거나, 못 붙인다고 말한다.
+   * 경로가 있는 것(탐색기에서 복사한 파일)은 위 composeDropFiles 로 첨부한다.
+   */
+  composeFileHasPath: (files) => Array.from(files || []).map((f) => {
+    try { return !!webUtils.getPathForFile(f); } catch { return false; }
+  }),
   composePickImage: () => ipcRenderer.invoke('compose:pick-image'),
   composeLimits: () => ipcRenderer.invoke('compose:limits'),
   mailRowMenu: (m) => ipcRenderer.invoke('mail:row-menu', m),

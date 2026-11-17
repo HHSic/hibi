@@ -188,6 +188,11 @@
   /* 흰 종이 위 안내 글 — 예전 #9aa0a6 은 2.6:1 이라 안 읽혔다. 종이는 테마와 상관없이 흰색이라 두 테마 같은 값 */
   .body:empty::before { content: attr(data-ph); color: #6b7078; }
   .body img { max-width: 100%; height: auto; }
+  /* 붙이는 중인 그림 자리 «그림 넣는 중…» — 다 줄이면 그림으로 바뀐다 (compose.js makeSlot). 흰 종이 위라 두 테마 같은 값 */
+  .body img.pasting {
+    padding: 1px 4px; margin: 0 1px; vertical-align: middle;
+    border: 1px dashed #b0b4ba; border-radius: 6px; user-select: none;
+  }
   /* 서명은 대개 표로 짜여 있다. 이 창에 doctype이 빠져 있던 동안 표 안 글자가
      흰 종이 위에서 흰색으로 나왔다 — quirks mode에서 크롬은 표의 색을 부모가 아니라
      페이지 <body>(다크 테마라 흰색)에서 물려받게 한다.
@@ -376,4 +381,6 @@
 
 <script src="pickfield.js"></script>
 <script src="drag.js"></script>
+<!-- 붙여넣은 그림을 어떻게 받을지 정하는 셈 (window.nunsPaste) — compose.js 가 쓴다 -->
+<script src="pastepick.js"></script>
 <script src="compose.js"></script>

@@ -486,6 +486,31 @@ function catOf(s, id, today) {
   return c;
 }
 
+// 임시 저장 본문의 상한 (글자 수). 설정 파일 하나에 다 들어가므로 둔다. 쓰기 창(renderer/pastepick.js)도 같은 값이다.
+const DRAFT_HTML_MAX = 2 * 1024 * 1024;
+// 못 담은 그림 자리 — 쓰기 창이 넣는 자리표(renderer/pastepick.js PLACEHOLDER)와 글자까지 같다 (시험이 맞춰 본다).
+// 이어 쓸 때 보이고, 남은 채로는 안 보낸다. 편집 안 되는 덩어리라 그 바로 앞·뒤에 그림을 붙이면 그림으로 바뀐다
+const PIC_GONE = '<span data-pic-gone="1" contenteditable="false" style="display:inline-block;padding:1px 8px;border:1px dashed #b0b4ba;'
+  + 'border-radius:6px;color:#6b7078;font-size:12px">그림 자리 — 다시 붙여 주세요</span>';
+
+/**
+ * 임시 저장할 본문 — 절대 중간에서 자르지 않는다.
+ * 예전엔 2MB 에서 잘라 적었다. 붙여넣은 화면 캡처 하나면 base64 한가운데가 잘려, 이어 쓸 때 그림이 깨지고
+ * 그 뒤의 글(서명·인용문)까지 사라졌다. 쓰기 창이 먼저 큰 그림부터 자리표로 바꿔 보내지만, 그래도 넘으면
+ * 여기서 data: 그림을 모두 자리표로 바꾸고, 그래도 넘으면(글만으로 2MB) 본문을 비우고 그렇다고 적는다.
+ * @returns { html, droppedPics, bodyDropped }
+ */
+function draftBody(v) {
+  let html = String(v === null || v === undefined ? '' : v);
+  if (html.length > DRAFT_HTML_MAX) {
+    // <img …> 를 따옴표째 통으로 잡는다 — 인용문 그림의 alt 에 «>» 가 들어 있어도 태그 중간에서 끊기지 않게
+    html = html.replace(/<img\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi,
+      (tag) => (/\ssrc\s*=\s*["']?\s*data:/i.test(tag) ? PIC_GONE : tag));
+  }
+  if (html.length > DRAFT_HTML_MAX) return { html: '', droppedPics: 0, bodyDropped: true };
+  return { html, droppedPics: (html.match(/data-pic-gone="1"/g) || []).length, bodyDropped: false };
+}
+
 module.exports = {
   /**
    * 파일에 실제로 무엇이 들어 있는지 (저장이 됐는지 확인용).
@@ -502,6 +527,7 @@ module.exports = {
 
   TIDY_DAYS,
   GATED_SETTINGS,
+  DRAFT_HTML_MAX,
   /** 실을 때 남길 기록 — 기록을 켠 뒤 main.js 가 한 번 꺼내 남긴다 (꺼내면 비운다) */
   takeLoadNotes() {
     const out = loadNotes;
@@ -924,6 +950,7 @@ module.exports = {
   setMailDraft(d) {
     const s = load();
     const str = (v, n) => String(v === null || v === undefined ? '' : v).slice(0, n);
+    const body = d ? draftBody(d.bodyHtml) : null;
     s.mailDraft = d ? {
       at: Date.now(),
       accountId: str(d.accountId, 60),
@@ -933,9 +960,11 @@ module.exports = {
       cc: str(d.cc, 2000),
       bcc: str(d.bcc, 2000),
       subject: str(d.subject, 500),
-      // 본문은 그림이 base64로 들어있을 수 있어 큼직하다.
-      // 설정 파일 하나에 다 들어가므로 상한을 둔다 (넘으면 저장 자체를 안 한다).
-      bodyHtml: str(d.bodyHtml, 2 * 1024 * 1024),
+      // 본문은 그림이 base64로 들어있을 수 있어 큼직하다. 상한(DRAFT_HTML_MAX)을 넘으면 자르지 않고
+      // 그림을 자리표로 바꾼다 (draftBody). 못 담은 그림 수·본문을 비웠는지는 그럴 때만 칸을 더해 적는다.
+      bodyHtml: body.html,
+      ...(body.droppedPics ? { droppedPics: body.droppedPics } : {}),
+      ...(body.bodyDropped ? { bodyDropped: true } : {}),
       inReplyTo: str(d.inReplyTo, 500),
       references: str(d.references, 2000),
       attachNames: (Array.isArray(d.attachNames) ? d.attachNames : [])

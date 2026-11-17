@@ -224,7 +224,10 @@ function startCompose({ kind = 'new', accountId, source, files, bodyPics } = {})
       to: kept.to, cc: kept.cc, bcc: kept.bcc, subject: kept.subject,
       bodyHtml: kept.bodyHtml, inReplyTo: kept.inReplyTo, references: kept.references,
       restored: true, restoredAt: kept.at, restoredNames: kept.attachNames || [],
-      restoredCarried: kept.carriedNames || []
+      restoredCarried: kept.carriedNames || [],
+      // 임시 저장 칸에 다 안 들어가 자리표로 바꾼 본문 그림 수 · 글만으로 넘쳐 본문을 비웠나 (store.setMailDraft)
+      restoredPicsGone: Number(kept.droppedPics) || 0,
+      restoredBodyGone: !!kept.bodyDropped
     }
     : (kind === 'new' ? { to: '', subject: '', text: '' } : send.draftFrom(kind, source, { self: selfAddresses(accounts) }));
   // 원문 첨부는 답장·전달에만 — 새 메일(이어 쓰기 포함)에는 실을 원문이 없다.
@@ -508,9 +511,73 @@ ipcMain.handle('compose:attach-dropped', (_e, paths) => {
 });
 
 const ATTACH_MAX = 25 * 1024 * 1024;   // 대부분의 메일 서버가 이쯤에서 거절한다
+// 본문 그림 하나 — 화면(renderer/pastepick.js)이 붙여넣기·«그림» 단추에서 이 아래로 줄여 넣는다
+const IMAGE_MAX = 5 * 1024 * 1024;
+// «그림» 단추로 고른 파일을 읽는 한도 — 이보다 크면 읽지 않고 까닭을 돌려준다 (줄이는 것은 화면 몫)
+const IMAGE_READ_MAX = 30 * 1024 * 1024;
 
 /** 화면이 «얼마까지 되는지»를 미리 알려줄 수 있게 */
-ipcMain.handle('compose:limits', () => ({ attachMax: ATTACH_MAX }));
+ipcMain.handle('compose:limits', () => ({
+  attachMax: ATTACH_MAX, imageMax: IMAGE_MAX, draftHtmlMax: store.DRAFT_HTML_MAX
+}));
+
+// 본문 그림(msg.inline) — 화면이 data: 그림을 떼어 cid 로 넘긴 것 (compose.js bodyForSend).
+// 화면이 준 것이라 그대로 믿지 않는다: 메일 클라이언트가 그리는 형식만, base64 글자만, 우리가 붙이는 cid 꼴만.
+// 어긋나면 그 그림만 말 없이 빼지 않고 통째로 거절한다 — 본문에 보이던 그림이 빠진 채 나가면 받는 사람이 되묻고 나서야 안다.
+const INLINE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif']);
+const INLINE_COUNT = 300;                       // 서명 로고가 줄줄이 달린 인용문도 넉넉히
+const INLINE_ONE = IMAGE_MAX + 64 * 1024;       // 화면이 줄여 넣는 한도 + 조금
+const INLINE_CID = /^img\d{1,6}@hibi$/;
+const B64 = /^[A-Za-z0-9+/]+={0,2}$/;
+// 이름에 못 오는 글자 — 제어 글자(C0·C1·머리글을 끊는 줄바꿈), 경로 글자, 줄·문단 구분, 글자 방향을 바꾸는 표시와 BOM.
+// 방향 표시(RLO 등)가 있으면 «사진\u202egnp.exe» 가 받는 쪽에 «사진exe.png» 처럼 보인다. 화면(renderer/pastepick.js safeName)도 같은 글자를 뺀다
+const BAD_NAME = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069\ufeff/\\]/;
+// 형식마다 받는 확장자 — 다르면(.exe 등) 첫째 것으로 바꿔 싣는다 (화면 nameFor 와 같은 표)
+const INLINE_EXT = { 'image/png': ['png'], 'image/jpeg': ['jpg', 'jpeg', 'jpe', 'jfif'], 'image/gif': ['gif'] };
+function inlineName(filename, type) {
+  const exts = INLINE_EXT[type];
+  const m = filename.match(/\.([A-Za-z0-9]{1,8})$/);
+  if (m && exts.includes(m[1].toLowerCase())) return filename;
+  return `${m ? filename.slice(0, -m[0].length) : filename}.${exts[0]}`;
+}
+
+/**
+ * @returns { parts: [{ cid, contentType, base64, filename }], bytes } 또는 { message } (거절)
+ */
+function inlineOf(list) {
+  if (list === undefined || list === null) return { parts: [], bytes: 0 };
+  const no = (why, message) => {
+    evlog.log('메일', `보내기 거절 · 본문 그림 ${why}`);
+    return { message };
+  };
+  if (!Array.isArray(list)) return no('꼴이 배열이 아님', '본문 그림을 읽지 못했습니다 — 다시 넣어 주세요');
+  if (list.length > INLINE_COUNT) return no('너무 많음', `본문 그림이 너무 많습니다 (최대 ${INLINE_COUNT}개)`);
+  const parts = [];
+  const seen = new Set();
+  let bytes = 0;
+  for (const a of list) {
+    if (!a || typeof a !== 'object') return no('항목이 객체가 아님', '본문 그림을 읽지 못했습니다 — 다시 넣어 주세요');
+    const cid = typeof a.cid === 'string' ? a.cid : '';
+    if (!INLINE_CID.test(cid) || seen.has(cid)) return no('cid 꼴이 다름', '본문 그림 표시가 잘못됐습니다 — 다시 넣어 주세요');
+    seen.add(cid);
+    const type = typeof a.contentType === 'string' ? a.contentType.toLowerCase() : '';
+    if (!INLINE_TYPES.has(type)) return no('형식이 다름', '본문 그림은 PNG·JPEG·GIF만 보낼 수 있습니다');
+    const b64 = a.base64;
+    if (typeof b64 !== 'string' || !b64 || b64.length % 4 || !B64.test(b64)) {
+      return no('자료가 base64 가 아님', '본문 그림 자료가 잘못됐습니다 — 다시 넣어 주세요');
+    }
+    const size = (b64.length / 4) * 3 - (b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0);
+    if (size > INLINE_ONE) return no('하나가 너무 큼', `본문 그림 하나가 너무 큽니다 (최대 ${Math.round(IMAGE_MAX / 1048576)}MB)`);
+    const filename = typeof a.filename === 'string' ? a.filename : '';
+    // 제어·방향 글자·경로 글자는 이름에 못 온다 — 화면은 nameFor 로 다듬어 보낸다
+    if (!filename || filename.length > 200 || BAD_NAME.test(filename)) {
+      return no('이름 꼴이 다름', '본문 그림 이름이 잘못됐습니다 — 다시 넣어 주세요');
+    }
+    parts.push({ cid, contentType: type, base64: b64, filename: inlineName(filename, type) });
+    bytes += size;
+  }
+  return { parts, bytes };
+}
 
 ipcMain.handle('compose:send', async (e, msg) => {
   // 보내기는 쓰기 창만 — 메일 보기 창(남의 HTML)이 뚫려도 사용자 계정으로 메일을 내보내지 못하게 (fromComposeWin)
@@ -554,14 +621,24 @@ ipcMain.handle('compose:send', async (e, msg) => {
       try { bytes += fs.statSync(a.path).size; } catch { /* 없으면 보낼 때 걸린다 */ }
     }
   }
+  // 본문 그림도 메일 크기다 — 첨부와 합쳐 한도를 본다 (붙여넣은 화면 캡처 몇 장이면 금방 찬다)
+  const inline = inlineOf(msg && msg.inline);
+  if (inline.message) return { ok: false, message: inline.message };
+  // 본문 글(html·text)도 센다 — 화면이 cid 로 못 뗀 data: 그림이 html 에 남으면 그만큼 한도 밖으로 나가던 길을 막는다
+  const textBytes = Buffer.byteLength(String((msg && msg.html) || '')) + Buffer.byteLength(String((msg && msg.text) || ''));
+  const fileBytes = bytes;
+  bytes += inline.bytes + textBytes;
   if (bytes > ATTACH_MAX) {
-    return { ok: false, message: `첨부가 너무 큽니다 (${Math.round(bytes / 1048576)}MB · 최대 25MB)` };
+    const what = textBytes > fileBytes + inline.bytes ? '본문이'
+      : fileBytes && inline.bytes ? '첨부와 본문 그림이' : inline.bytes ? '본문 그림이' : '첨부가';
+    return { ok: false, message: `${what} 너무 큽니다 (${Math.round(bytes / 1048576)}MB · 최대 25MB)` };
   }
 
   sendingNow = true;
   let r;
   try {
-    r = await send.sendMail(acc, { ...msg, attachments: outAtts });
+    // 화면이 준 inline 이 아니라 확인한 것만 싣는다
+    r = await send.sendMail(acc, { ...msg, inline: inline.parts, attachments: outAtts });
   } finally {
     sendingNow = false;
   }
@@ -594,30 +671,51 @@ ipcMain.handle('compose:send', async (e, msg) => {
  * 직접 그리면 창 밖으로 잘린다.
  */
 
-/** 본문에 넣을 그림 — 대화상자로 고른 것만 읽어 화면에 돌려준다 */
-const IMAGE_MAX = 5 * 1024 * 1024;
+/**
+ * 본문에 넣을 그림 — 대화상자로 고른 것만 읽어 화면에 돌려준다.
+ * 예전엔 5MB 넘는 것을 말 없이 건너뛰었다 (사진 한 장이 그냥 안 들어갔다). 이제는 넘기고 화면이 줄인다
+ * (붙여넣기와 같은 길 — renderer/compose.js). 너무 큰 것·못 읽는 것만 까닭과 함께 skipped 로 돌려준다 (이름만, 경로는 안 준다).
+ * @returns { images: [{ filename, contentType, size, dataUrl }], skipped: [{ name, why }] }
+ */
+const IMAGE_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp' };
+// 한 번에 읽어 넘기는 양 — 큰 그림 여러 장을 한 답으로 넘기면 화면 메모리가 치솟고 줄이는 데도 한참 걸린다
+const PICK_COUNT = 20;
+const PICK_TOTAL = 60 * 1024 * 1024;
 ipcMain.handle('compose:pick-image', async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog(composeWin || undefined, {
     title: '본문에 넣을 그림',
-    filters: [{ name: '그림', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'] }],
+    filters: [{ name: '그림', extensions: Object.keys(IMAGE_TYPES) }],
     properties: ['openFile', 'multiSelections']
   });
-  if (canceled) return [];
-  const out = [];
-  for (const p of filePaths) {
+  const images = [];
+  const skipped = [];
+  if (canceled) return { images, skipped };
+  let total = 0;
+  for (const p of filePaths || []) {
+    const name = path.basename(p);
     try {
+      const size = fs.statSync(p).size;
+      if (size > IMAGE_READ_MAX) {
+        skipped.push({ name, why: `${Math.round(IMAGE_READ_MAX / 1048576)}MB가 넘는 그림은 넣을 수 없습니다` });
+        continue;
+      }
+      if (images.length >= PICK_COUNT) {
+        skipped.push({ name, why: `한 번에 ${PICK_COUNT}장까지 넣을 수 있습니다 — 나눠서 넣어 주세요` });
+        continue;
+      }
+      if (total + size > PICK_TOTAL) {
+        skipped.push({ name, why: `한 번에 넣는 그림이 ${Math.round(PICK_TOTAL / 1048576)}MB를 넘습니다 — 나눠서 넣어 주세요` });
+        continue;
+      }
       const buf = fs.readFileSync(p);
-      if (buf.length > IMAGE_MAX) continue;   // 본문 그림은 크면 메일이 통째로 무거워진다
-      const ext = path.extname(p).slice(1).toLowerCase();
-      const type = ext === 'jpg' ? 'image/jpeg' : `image/${ext || 'png'}`;
-      out.push({
-        filename: path.basename(p),
-        contentType: type,
-        dataUrl: `data:${type};base64,${buf.toString('base64')}`
-      });
-    } catch { /* 못 읽는 파일은 건너뛴다 */ }
+      total += buf.length;
+      const type = IMAGE_TYPES[path.extname(p).slice(1).toLowerCase()] || 'image/png';
+      images.push({ filename: name, contentType: type, size: buf.length, dataUrl: `data:${type};base64,${buf.toString('base64')}` });
+    } catch {
+      skipped.push({ name, why: '파일을 못 읽었습니다' });
+    }
   }
-  return out;
+  return { images, skipped };
 });
 
 ipcMain.handle('compose:bounds', () => {
