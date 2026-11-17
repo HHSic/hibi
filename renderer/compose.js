@@ -101,7 +101,7 @@ for (const b of document.querySelectorAll('.bar button[data-cmd]')) {
   b.addEventListener('pointerdown', keepFocus);
   b.onclick = () => run(b.dataset.cmd);
 }
-for (const el of [$('color'), $('btn-image'), $('btn-link')]) {
+for (const el of [$('color'), $('btn-image'), $('btn-table'), $('btn-link')]) {
   el.addEventListener('pointerdown', keepFocus);
 }
 
@@ -342,15 +342,9 @@ function holeAt(r) {
   return is(prev) ? prev : is(next) ? next : null;
 }
 
-/**
- * 붙일 자리에 «그림 넣는 중…» 표식을 넣는다 — 되돌리기(Ctrl+Z)에 실리게 execCommand 로.
- * 고른 글이 있으면 그 글을 바꾼다. 커서가 이어 쓰기 자리표(그림 자리) 안이나 바로 옆이면, 그림이 들어갈 때
- * 그 자리표를 없앤다 (자리표의 안내대로 «그 자리에 다시 붙이면» 그림이 된다).
- * @param range 넣을 자리 (없으면 지금 커서, 그것도 본문 밖이면 본문 맨 앞)
- * @returns 표식 번호
- */
-function makeSlot(range) {
-  const sel = getSelection();
+/** 넣을 자리 — range(본문 안이면), 아니면 지금 커서, 그것도 본문 밖이면 본문에 포커스를 준 뒤의 커서, 그래도 없으면 본문 맨 앞.
+ *  «그림» 단추·붙여넣은 그림·«표» 단추가 같은 자리에 넣는다 */
+function insertSpot(range) {
   let r = range && body.contains(range.startContainer) ? range : caretRange();
   if (!r) {
     body.focus();
@@ -361,6 +355,19 @@ function makeSlot(range) {
     r.selectNodeContents(body);
     r.collapse(true);
   }
+  return r;
+}
+
+/**
+ * 붙일 자리에 «그림 넣는 중…» 표식을 넣는다 — 되돌리기(Ctrl+Z)에 실리게 execCommand 로.
+ * 고른 글이 있으면 그 글을 바꾼다. 커서가 이어 쓰기 자리표(그림 자리) 안이나 바로 옆이면, 그림이 들어갈 때
+ * 그 자리표를 없앤다 (자리표의 안내대로 «그 자리에 다시 붙이면» 그림이 된다).
+ * @param range 넣을 자리 (없으면 지금 커서, 그것도 본문 밖이면 본문 맨 앞)
+ * @returns 표식 번호
+ */
+function makeSlot(range) {
+  const sel = getSelection();
+  let r = insertSpot(range);
   const id = ++slotSeq;
   const hole = r.collapsed ? holeAt(r) : null;
   if (hole) {
@@ -588,15 +595,155 @@ $('btn-image').onclick = () => {
   });
 };
 
-// 붙여넣기 — 글이 있으면 글만 (엑셀 칸·워드 글을 복사하면 그 모양을 찍은 그림도 같이 오는데, 그건 버린다).
-// 글 없이 그림만 왔으면(화면 캡처·«이미지 복사») 본문 그림으로. 남이 만든 HTML 은 절대 넣지 않는다 —
+// ── 표 붙여넣기 ──
+// 엑셀·구글 시트·워드·한글에서 복사한 표는 표로 넣는다 (예전엔 탭으로 이은 글만 들어갔다).
+// 클립보드 HTML 을 그대로 넣지는 않는다 — pastetable.js 가 DOMParser 로 읽어 허락한 태그·속성·스타일만 새로 지은 것을 넣는다.
+const tableKit = window.nunsTable;
+
+// Ctrl+Shift+V — 서식 없이 글로만. 붙여넣기 이벤트에는 어느 키로 붙였는지가 없어서, 키를 누른 순간을 적어 두고
+// 바로 다음 붙여넣기 하나가 가져간다 (1초가 지나면 버린다). 한글 조합 중의 키는 안 센다
+let plainAt = 0;
+body.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === 'KeyV' && !e.isComposing && !composing) plainAt = Date.now();
+});
+function takePlain() {
+  const on = !!plainAt && Date.now() - plainAt < 1000;
+  plainAt = 0;
+  return on;
+}
+
+/** 커서가 본문의 표 안(칸)인가 — 거기에 표를 넣으면 표 안에 표가 생긴다 */
+function caretInTable() {
+  const r = caretRange();
+  if (!r) return false;
+  const el = (n) => (n && n.nodeType === 1 ? n : n && n.parentElement);
+  return [r.startContainer, r.endContainer].some((n) => {
+    const c = el(n) && el(n).closest('td, th, table');
+    return !!c && body.contains(c);
+  });
+}
+
+/** 커서 뒤로 같은 줄에 남은 것이 없나 — 없으면 표 뒤에 빈 줄을 같이 넣는다 (커서가 표 마지막 칸이나 서명 안으로 가지 않게) */
+function lineEndsHere(r) {
+  const line = lineOf(r.endContainer);
+  const rest = document.createRange();
+  rest.setStart(r.endContainer, r.endOffset);
+  rest.setEnd(line, line.childNodes.length);
+  const f = rest.cloneContents();
+  return !/\S/.test(f.textContent) && !f.querySelector('img, table, hr, [data-pic-gone]');
+}
+
+/**
+ * 커서가 표 바로 뒤(빈 줄)에 있나 — 거기에 표를 넣으면 크로미움이 그 빈 줄을 새 표로 바꿔 두 표가 붙는다. 그러면 사이에
+ * 글을 쓸 줄이 없고 받는 쪽에서도 한 표처럼 보인다. 표를 붙인 직후 커서가 바로 이 자리라 «붙이고 바로 표 넣기»에서 흔하다
+ */
+function rightAfterTable(r) {
+  if (!r) return false;
+  let c = r.startContainer;
+  let at = r.startOffset;
+  // 줄 상자 바로 뒤 자리(본문 끝을 통째로 고른 것 등)면 그 상자의 맨 끝으로 내려가 본다 — 크로미움도 거기에 넣는다
+  while (c.nodeType === 1 && at > 0) {
+    const prev = c.childNodes[at - 1];
+    if (prev.nodeName === 'TABLE') return true;
+    if (prev.nodeType !== 1 || !prev.matches(LINE) || prev.matches('td, th')) break;
+    c = prev;
+    at = prev.childNodes.length;
+  }
+  const line = lineOf(c);
+  if (line === body || line.matches('td, th')) return false;
+  if (/\S/.test(line.textContent) || line.querySelector('img, table, hr, [data-pic-gone]')) return false;
+  let p = line.previousSibling;
+  while (p && p.nodeType === 3 && !/\S/.test(p.nodeValue)) p = p.previousSibling;
+  return !!p && p.nodeName === 'TABLE';
+}
+
+/** 커서를 표 바로 뒤로 — 뒤따르는 줄의 맨 앞. insertHTML 은 커서를 표의 마지막 칸 안에 둔다 (실측) */
+function caretAfterTable(t) {
+  const r = document.createRange();
+  const next = t.nextSibling;
+  const text = next && (next.nodeType === 3 ? next : next.firstChild && next.firstChild.nodeType === 3 ? next.firstChild : null);
+  if (text) r.setStart(text, 0);
+  else if (next) r.setStart(next, 0);
+  else r.setStartAfter(t);
+  r.collapse(true);
+  const s = getSelection();
+  s.removeAllRanges();
+  s.addRange(r);
+}
+
+/**
+ * 붙여넣기에 표가 있으면 표로 넣는다. 넣었으면(글로 대신 넣었어도) true, 표로 볼 것이 없으면 false (보통 붙여넣기로).
+ *   · 커서가 표 칸 안이면 글로 — 표 안에 표를 만들지 않는다
+ *   · 너무 큰 표(2000칸·다듬은 HTML 100만 글자 넘음)는 글로, 그렇다고 알린다
+ *   · execCommand('insertHTML') 로 넣는다 — Ctrl+Z 한 번에 빠지고, input 이 와서 임시 저장·합계도 다시 센다.
+ *     크로미움은 넣을 때 표·인라인 스타일을 지킨다 (실측). 기본값과 같은 스타일을 적으면 그 칸의 style 을 다시 쓰므로
+ *     pastetable.js 가 그런 것은 안 적는다
+ */
+function pasteTable(text, html) {
+  // 아주 큰 표에 글도 같이 왔으면 다듬지 않고 바로 글로 — 다듬어도 글로 붙일 것이라 그만큼 멈추기만 한다 (2만 칸이면 1초 남짓).
+  // 숨긴 행·열이 있을 수 있으면 숨긴 것을 빼야 하니 다듬는다
+  if (text && !tableKit.mayHide(html)) {
+    const n = tableKit.countCells(html);
+    if (n > tableKit.MAX_CELLS) {
+      document.execCommand('insertText', false, text);
+      say('bad', tableKit.bigText(n));
+      return true;
+    }
+  }
+  let got;
+  try { got = tableKit.build(html); } catch { return false; }
+  // 엑셀은 숨긴 행·열의 글까지 클립보드 글에 싣는다 — 숨긴 것이 있으면 표에서 뽑은 글(숨긴 것은 뺐다)로
+  const plain = got.hidden ? got.text : text || got.text;
+  if (got.single) {
+    // 칸 하나 (엑셀 칸 하나) — 표가 아니라 글로. 엑셀 글 몫 끝의 줄바꿈은 뗀다 (문장 가운데에 숫자 하나를 붙이는 일이 흔하다)
+    const one = String(plain || '').replace(/[\r\n]+$/, '');
+    if (one) document.execCommand('insertText', false, one);
+    return true;
+  }
+  if (!got.ok) return false;
+  const asText = () => { if (plain) document.execCommand('insertText', false, plain); };
+  if (caretInTable()) { asText(); return true; }
+  if (got.big) {
+    asText();
+    say('bad', tableKit.bigText(got.cells));
+    return true;
+  }
+  let r = caretRange();
+  if (!r) { body.focus(); r = caretRange(); }
+  const known = new Set(body.querySelectorAll('table'));
+  // 표로 끝나면 표 뒤에 빈 줄을 같이 넣고 커서를 표 바로 뒤로. 글로 끝나면(워드·웹의 «앞 문단 + 표 + 뒤 문단») insertHTML 이 둔
+  // 커서 — 붙인 글 끝 — 를 그대로 둔다 (보통 붙여넣기처럼). 빈 줄도 안 덧붙인다
+  const endsTable = /<\/table>\s*$/i.test(got.html);
+  // 표로 시작하는데 커서가 표 바로 뒤 빈 줄이면 앞에 빈 줄 — 두 표가 붙지 않게
+  const lead = /^\s*<table/i.test(got.html) && rightAfterTable(r) ? '<div><br></div>' : '';
+  document.execCommand('insertHTML', false, lead + got.html + (endsTable && r && lineEndsHere(r) ? '<div><br></div>' : ''));
+  const added = [...body.querySelectorAll('table')].filter((t) => !known.has(t) && !t.parentElement.closest('table'));
+  // 크로미움이 표를 떨어뜨렸으면 글로라도
+  if (!added.length) { asText(); return true; }
+  if (endsTable) caretAfterTable(added[added.length - 1]);
+  // 다듬은 표가 Gmail 이 접는 크기(약 100KB)를 넘으면 같이 알린다
+  const heavy = tableKit.heavy(got.html);
+  say(heavy ? 'bad' : '', tableKit.doneText({ ...got, heavy }));
+  return true;
+}
+
+// 붙여넣기 — 표가 있으면 표로 (위 pasteTable). 아니면 글이 있으면 글만 (엑셀 칸·워드 글을 복사하면 그 모양을 찍은 그림도
+// 같이 오는데, 그건 버린다). 글 없이 그림만 왔으면(화면 캡처·«이미지 복사») 본문 그림으로. 남이 만든 HTML 은 그대로 넣지 않는다 —
 // 남의 스타일과 바깥 그림 주소까지 딸려 들어와 메일이 깨지고, 바깥 주소는 열어 본 사실을 흘린다.
 body.addEventListener('paste', (e) => {
   e.preventDefault();
+  const plainKey = takePlain();
   const cd = e.clipboardData || window.clipboardData;
   if (!cd) return;
   const text = cd.getData('text/plain') || '';
   const html = cd.getData('text/html') || '';
+  // Ctrl+Shift+V — 글로만 (글이 없으면 보통 붙여넣기로)
+  if (plainKey && text) {
+    document.execCommand('insertText', false, text);
+    return;
+  }
+  // 표 — 같이 실려 온 그림(엑셀·워드가 그 표를 찍어 같이 싣는 비트맵)은 버린다
+  if (/<table\b/i.test(html) && pasteTable(text, html)) return;
   const files = clipFiles(cd);
   const paths = files.length ? filesHavePath(files) : [];
   const plan = kit.decide({
@@ -639,6 +786,1136 @@ body.addEventListener('paste', (e) => {
   }, slot);
 });
 
+// ── 표 편집 ──────────────────────────────────────
+// 노션의 간단한 표처럼 — «표» 단추로 넣고, 마우스를 올린 줄·열의 손잡이(⋮⋮)와 + 띠, 오른쪽 클릭 메뉴로 행·열을 넣고 빼고,
+// 칸을 끌어 골라 합치고 나눈다. 칸 지도 셈(합친 칸까지 펴서 «몇째 열»을 보는 것)은 tablegrid.js (window.nunsGrid) 가 한다 —
+// 여기서는 본문 표를 그 꼴로 읽고(readRaw) 셈의 답을 본문에 넣는다(commit).
+//   · 바뀐 표는 표를 통째로 골라 execCommand('insertHTML') 로 갈아 끼운다 — Ctrl+Z 한 번에 돌아가고, input 이 와서 임시 저장·합계가 다시 돈다.
+//     크로미움은 합친 칸·인라인 스타일·bgcolor·너비를 그대로 넣는다 (실측 — 본문 가운데·맨 앞·맨 뒤·혼자·인용문·서명·표 안 표).
+//     그래도 넣은 표가 바란 꼴과 다르면 되돌리고 DOM 으로 바로 바꾼다 (그 한 번은 되돌리기에 안 실린다 — tgStats.fallbacks 로 세고 알린다)
+//   · 손잡이·띠·막대·메뉴·고르개는 본문 밖(.tg-layer · .card)에 그린다. 본문에 들어가는 편집 표시는 고른 칸의 tg-on 뿐이고,
+//     임시 저장·보내기·«쓰던 글이 있나»는 그것을 떼고 본다 (editorFree)
+//   · 누르는 것은 모두 mousedown 을 막는다 — 본문 커서·포커스를 안 뺏는다
+const grid = window.nunsGrid;
+const tgLayer = $('tg-layer');
+const tgCard = document.querySelector('.card');
+const CELL_EXTRA = 21;    // 새 표 칸의 안쪽 여백(10px × 2) + 선 1px — 종이에 맞출 때 열 너비에 더해 센다
+const MOD_KEYS = ['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'];
+let tgStamp = 0;          // 본문이 바뀔 때마다 하나씩 — 칸 지도 캐시를 버린다
+// fallbacks — insertHTML 이 표를 못 넣어 DOM 으로 바꾼 횟수 (그 한 번은 되돌리기에 안 실린다)
+// synced — 크로미움이 넣으면서 고쳐 쓴 표를 넣은 노드 그대로 바란 꼴로 되돌린 횟수 (되돌리기는 그대로 된다)
+const tgStats = { fallbacks: 0, synced: 0 };
+let tgHot = null;         // 마우스가 올라간 표
+let tgHotRow = 0;
+let tgHotCol = 0;
+let tgShown = null;       // 손잡이를 그린 자리 — { table, r, c } (손잡이를 누르면 이 줄·열)
+let tgEdge = null;        // 너비 손잡이를 그린 경계 — { table, col } (그 열의 오른쪽 선)
+let tgSel = null;         // 칸 여럿 고르기 — { table, anchor(처음 칸), rect }
+let tgLine = null;        // 손잡이로 고른 줄·열 — { table, kind, r, c } (메뉴가 떠 있는 동안)
+let tgDrag = null;        // 칸에서 누른 채 끄는 중 — { table, anchor }
+let tgAnchor = null;      // Shift+누르기의 처음 칸
+let tgSize = null;        // 열 너비 끄는 중
+let tgMenus = [];         // 열린 메뉴 (하위 메뉴가 뒤에)
+let tgRaf = 0;
+const tgPick = { open: false, r: 1, c: 1, here: null };
+const tgMaps = new WeakMap();
+
+const elOf = (n) => (n && n.nodeType === 1 ? n : n && n.parentElement);
+/** 본문 표의 칸 (td·th) — 본문 밖이면 null */
+function cellOf(n) {
+  const e = elOf(n);
+  const c = e && e.closest('td, th');
+  return c && body.contains(c) ? c : null;
+}
+/** 커서가 있는 칸 */
+function caretCell() {
+  const s = getSelection();
+  return s && s.rangeCount ? cellOf(s.focusNode) : null;
+}
+/** 본문의 가장 바깥 표 (표 안 표면 바깥 것) */
+function outerTable(n) {
+  const e = elOf(n);
+  let t = e && e.closest('table');
+  if (!t || !body.contains(t)) return null;
+  for (let up = t.parentElement.closest('table'); up && body.contains(up); up = up.parentElement.closest('table')) t = up;
+  return t;
+}
+function caretInto(cell, atEnd) {
+  const r = document.createRange();
+  r.selectNodeContents(cell);
+  r.collapse(!atEnd);
+  const s = getSelection();
+  s.removeAllRanges();
+  s.addRange(r);
+}
+
+/**
+ * 본문 표 → tablegrid 가 받는 꼴. full 이 아니면 칸 자리만 (마우스를 따라 그릴 때 — 칸 HTML·속성은 안 읽는다).
+ * 편집 표시(tg-on · data-tg-*)는 안 읽는다 — 다시 넣는 HTML 에 섞이지 않게
+ */
+function readRaw(t, full) {
+  const attrsOf = (el, skip) => {
+    const o = {};
+    if (!full) return o;
+    for (const a of el.attributes) {
+      const n = a.name.toLowerCase();
+      if ((skip && skip.includes(n)) || n.startsWith('data-tg-')) continue;
+      if (n === 'class') {
+        const v = a.value.split(/\s+/).filter((k) => k && k !== 'tg-on').join(' ');
+        if (v) o.class = v;
+        continue;
+      }
+      o[n] = a.value;
+    }
+    return o;
+  };
+  const raw = { attrs: attrsOf(t), caption: null, cols: null, secs: [], rows: [] };
+  const cols = [];
+  const spanOf = (el) => Math.min(1000, Math.max(1, parseInt(el.getAttribute('span'), 10) || 1));
+  const addRow = (tr, sec) => raw.rows.push({
+    sec, attrs: attrsOf(tr), ref: tr,
+    cells: [...tr.children].filter((c) => c.tagName === 'TD' || c.tagName === 'TH').map((c) => ({
+      tag: c.tagName.toLowerCase(), rs: c.rowSpan, cs: c.colSpan, attrs: attrsOf(c, ['rowspan', 'colspan']), html: full ? c.innerHTML : '', ref: c
+    }))
+  });
+  let loose = -1;   // 구역 없이 표에 바로 든 줄 — tbody 하나로 본다
+  for (const ch of t.children) {
+    const tag = ch.tagName;
+    if (tag === 'CAPTION') {
+      if (full) raw.caption = { attrs: attrsOf(ch), html: ch.innerHTML };
+    } else if (tag === 'COLGROUP' || tag === 'COL') {
+      const list = tag === 'COL' ? [ch] : [...ch.children].filter((x) => x.tagName === 'COL');
+      if (!list.length) for (let i = 0; i < spanOf(ch); i++) cols.push({ attrs: {} });
+      for (const col of list) for (let i = 0; i < spanOf(col); i++) cols.push({ attrs: attrsOf(col, ['span']) });
+    } else if (tag === 'THEAD' || tag === 'TBODY' || tag === 'TFOOT') {
+      raw.secs.push({ tag: tag.toLowerCase(), attrs: attrsOf(ch) });
+      loose = -1;
+      for (const tr of ch.children) if (tr.tagName === 'TR') addRow(tr, raw.secs.length - 1);
+    } else if (tag === 'TR') {
+      if (loose < 0) { raw.secs.push({ tag: 'tbody', attrs: {} }); loose = raw.secs.length - 1; }
+      addRow(ch, loose);
+    }
+  }
+  if (cols.length) raw.cols = cols;
+  return raw;
+}
+
+/** 칸 자리 지도 (가벼운 것 — 본문이 바뀌면 다시 읽는다) */
+function mapOf(t) {
+  const got = tgMaps.get(t);
+  if (got && got.stamp === tgStamp) return got.m;
+  const m = grid.tidy(readRaw(t, false));
+  tgMaps.set(t, { stamp: tgStamp, m });
+  return m;
+}
+const itemOf = (m, cell) => m.items.find((it) => it.ref === cell) || null;
+/** 지도 자리 (r,c) 를 차지한 본문 칸 */
+function cellAt(t, r, c) {
+  const m = mapOf(t);
+  if (!m.h || !m.w) return null;
+  const it = grid.cells(m)[Math.max(0, Math.min(r, m.h - 1))][Math.max(0, Math.min(c, m.w - 1))];
+  return it && it.ref ? it.ref : null;
+}
+/** 지금 커서의 지도 자리 (그 표 안일 때) */
+function caretSpot(t) {
+  const cc = caretCell();
+  if (!cc || cc.closest('table') !== t) return null;
+  const it = itemOf(mapOf(t), cc);
+  return it ? { r: it.r, c: it.c } : null;
+}
+/** 열 경계 x (화면 좌표) — 칸 끝에서 모은다. 합친 칸뿐인 열은 사이를 고르게 나눈다 */
+function edgesOf(t, m) {
+  const e = new Array(m.w + 1).fill(null);
+  for (const it of m.items) {
+    if (!it.ref) continue;
+    const r = it.ref.getBoundingClientRect();
+    if (e[it.c] === null) e[it.c] = r.left;
+    if (e[it.c + it.cs] === null) e[it.c + it.cs] = r.right;
+  }
+  const tr = t.getBoundingClientRect();
+  if (e[0] === null) e[0] = tr.left;
+  if (e[m.w] === null) e[m.w] = tr.right;
+  for (let i = 1; i < m.w; i++) {
+    if (e[i] !== null) continue;
+    let j = i + 1;
+    while (e[j] === null) j++;
+    e[i] = e[i - 1] + (e[j] - e[i - 1]) / (j - i + 1);
+  }
+  return e;
+}
+const rowsOf = (m) => m.meta.map((x) => (x.ref ? x.ref.getBoundingClientRect() : null));
+/** 표가 들어 있는 칸(본문·인용문·칸)의 안쪽 너비 — 표가 이보다 넓어지지 않게 */
+function roomOf(host) {
+  const p = host && body.contains(host) ? host : body;
+  const cs = getComputedStyle(p);
+  return Math.max(0, p.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0) - 1);
+}
+/** 열마다 지금 너비(칸 안쪽, px)와 칸마다 더해지는 여백·선 */
+function measureCols(t, m) {
+  const any = m.items.find((it) => it.ref);
+  const cs0 = any ? getComputedStyle(any.ref) : null;
+  const extra = cs0 ? ['paddingLeft', 'paddingRight', 'borderLeftWidth', 'borderRightWidth'].reduce((n, k) => n + (parseFloat(cs0[k]) || 0), 0) : CELL_EXTRA;
+  const ed = edgesOf(t, m);
+  const widths = Array.from({ length: m.w }, (_, c) => {
+    const it = m.items.find((x) => x.c === c && x.cs === 1 && x.ref);
+    const w = it ? parseFloat(getComputedStyle(it.ref).width) : ed[c + 1] - ed[c] - extra;
+    return Math.max(grid.MIN_W, Math.round(w || 0));
+  });
+  return { widths, extra };
+}
+/** 열 넣기가 종이보다 넓어지면 줄이게 — tablegrid.insertCol 의 room·extra */
+function fitOpt(t) {
+  const m = mapOf(t);
+  return { room: roomOf(t.parentElement), extra: m.w ? measureCols(t, m).extra : CELL_EXTRA };
+}
+
+/** 본문 HTML 에서 편집기만 쓰는 표시(고른 칸의 tg-on)를 뗀다 — 임시 저장·보내기·«쓰던 글이 있나»가 본다 */
+function editorFree(html) {
+  const s = String(html || '');
+  if (!s.includes('tg-on')) return s;
+  return s.replace(/ class="([^"]*)"/g, (all, v) => {
+    const list = v.split(/\s+/).filter(Boolean);
+    const keep = list.filter((k) => k !== 'tg-on');
+    if (keep.length === list.length) return all;
+    return keep.length ? ` class="${keep.join(' ')}"` : '';
+  });
+}
+
+/** 고른 칸 표시를 다 걷는다 — 칸에 class 가 원래 없었으면 빈 class="" 도 남기지 않는다 */
+function clearCells() {
+  for (const c of body.querySelectorAll('.tg-on')) {
+    c.classList.remove('tg-on');
+    if (!c.classList.length) c.removeAttribute('class');
+  }
+  body.classList.remove('tg-cells');
+  tgSel = null;
+}
+/** 글 고르기가 칸 고르기의 처음 칸 안에 접혀 있나 — 아니면(Ctrl+A 등으로 넓어졌으면) 칸 고르기는 낡았다 */
+function inAnchor() {
+  const s = getSelection();
+  return !!tgSel && !!s && s.rangeCount > 0 && s.isCollapsed && tgSel.anchor.isConnected && tgSel.anchor.contains(s.focusNode);
+}
+function markCells(items) {
+  for (const it of items) if (it.ref) it.ref.classList.add('tg-on');
+}
+const inRect = (it, R) => it.r <= R.r1 && it.r + it.rs - 1 >= R.r0 && it.c <= R.c1 && it.c + it.cs - 1 >= R.c0;
+
+/** 네모 rect 를 고른다 (합친 칸을 다 담게 넓혀서). 칸이 하나뿐이면(합친 칸 하나는 빼고) 고르지 않는다 */
+function selectRect(t, rect, anchor) {
+  const m = mapOf(t);
+  const R = grid.expand(m, rect);
+  const inside = m.items.filter((it) => inRect(it, R));
+  clearCells();
+  if (inside.length < 2 && !(inside[0] && (inside[0].rs > 1 || inside[0].cs > 1))) return;
+  markCells(inside);
+  body.classList.add('tg-cells');
+  const a = anchor && anchor.isConnected ? anchor : (inside.find((it) => it.ref) || {}).ref || null;
+  if (!a) return;
+  tgSel = { table: t, anchor: a, rect: R };
+  // 글 고르기는 처음 칸 안에 접어 둔다 — 칸 고르기만 보이고, 치면 그 칸에 들어간다
+  const s = getSelection();
+  if (a && !(s.isCollapsed && s.rangeCount && a.contains(s.focusNode))) caretInto(a, true);
+}
+function selectCells(t, a, b) {
+  const m = mapOf(t);
+  const ia = itemOf(m, a);
+  const ib = itemOf(m, b);
+  if (!ia || !ib) return;
+  selectRect(t, {
+    r0: Math.min(ia.r, ib.r), c0: Math.min(ia.c, ib.c),
+    r1: Math.max(ia.r + ia.rs, ib.r + ib.rs) - 1, c1: Math.max(ia.c + ia.cs, ib.c + ib.cs) - 1
+  }, a);
+}
+
+/**
+ * 표 t 를 html(표 하나)로 갈아 끼운다 — 표를 골라 insertHTML (되돌리기 한 번). 새 표를 돌려준다.
+ * 크로미움은 넣으면서 문맥과 같은 값의 칸 style 을 «쓸데없다»고 떼고 그 칸의 style 을 rgb()·긴 이름으로 다시 쓴다
+ * (text-align:left · font-weight:normal · white-space:nowrap · 본문과 같은 font-size — 인용문·서명 표에 흔하다, 실측).
+ * 그러면 넣은 표 노드는 그대로 두고 그 속성과 안쪽만 바란 꼴로 바꾼다 — 되돌리기·다시 하기는 이 표 노드를 통째로 빼고 넣으므로
+ * 둘 다 바르다 (예전처럼 되돌린 뒤 DOM 으로 바꾸면 다시 하기가 같은 표를 하나 더 넣었다). insertHTML 이 표를 못 넣었을 때만
+ * DOM 으로 바로 바꾼다 (그 한 번은 되돌리기에 안 실린다 — tgStats.fallbacks 로 세고 알린다)
+ */
+function commit(t, html) {
+  const fresh = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html').body.firstElementChild;
+  if (!fresh || fresh.tagName !== 'TABLE') return null;
+  if (document.activeElement !== body) body.focus();
+  const sel = getSelection();
+  const r = document.createRange();
+  r.selectNode(t);
+  sel.removeAllRanges();
+  sel.addRange(r);
+  const did = document.execCommand('insertHTML', false, String(html).replace(/^<table/i, '<table data-tg-new="1"'));
+  let nt = body.querySelector('table[data-tg-new]');
+  if (nt) {
+    nt.removeAttribute('data-tg-new');
+    if (nt.outerHTML !== fresh.outerHTML) {
+      for (const a of [...nt.attributes]) if (!fresh.hasAttribute(a.name)) nt.removeAttribute(a.name);
+      for (const a of fresh.attributes) if (nt.getAttribute(a.name) !== a.value) nt.setAttribute(a.name, a.value);
+      nt.replaceChildren(...[...fresh.childNodes].map((n) => document.importNode(n, true)));
+      tgStats.synced += 1;
+    }
+  } else {
+    if (did && !t.isConnected) document.execCommand('undo');
+    if (!t.isConnected) return null;
+    nt = document.importNode(fresh, true);
+    t.replaceWith(nt);
+    tgStats.fallbacks += 1;
+    say('', '표를 고쳤습니다 — 이번 고침은 Ctrl+Z 로 되돌릴 수 없습니다');
+    body.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  tgStamp += 1;
+  return nt;
+}
+
+/** 셈이 칸 배치를 안 바꿨나 — 칸마다 자리·합침이 같고, 글·속성이 바뀐 칸은 다 본문 칸이다 (tidy 가 채운 빈 칸이 아니다) */
+function sameShape(a, b) {
+  const J = (v) => JSON.stringify(v || null);
+  if (a.h !== b.h || a.w !== b.w || a.items.length !== b.items.length || J(a.attrs) !== J(b.attrs) || J(a.cols) !== J(b.cols)
+    || J(a.caption) !== J(b.caption) || J(a.meta.map((x) => [x.sec, x.attrs])) !== J(b.meta.map((x) => [x.sec, x.attrs]))) return false;
+  return a.items.every((it, i) => {
+    const x = b.items[i];
+    if (x.ref !== it.ref || x.r !== it.r || x.c !== it.c || x.rs !== it.rs || x.cs !== it.cs || x.tag !== it.tag) return false;
+    return !!it.ref || (x.html === it.html && J(x.attrs) === J(it.attrs));
+  });
+}
+
+/**
+ * 칸 배치를 안 바꾸는 셈(내용 지우기·배경색·머리글)의 새 표 — 본문 표의 사본에서 바뀐 칸의 글·속성만 고친다.
+ * 지도(tidy)로 다시 지으면 겹치는 합침이 든 웹 표는 tidy 가 자른 꼴로 바뀐다 — 그려진 꼴을 그대로 두려고
+ */
+function patched(t, m0, m1) {
+  const copy = t.cloneNode(true);
+  const live = [...t.querySelectorAll('td, th')];
+  const dup = [...copy.querySelectorAll('td, th')];
+  const J = (v) => JSON.stringify(v || {});
+  m1.items.forEach((it, i) => {
+    const was = m0.items[i];
+    const c = it.ref ? dup[live.indexOf(it.ref)] : null;
+    if (!c) return;
+    if (it.html !== was.html) {
+      if (!it.html) c.replaceChildren(document.createElement('br'));
+      else c.replaceChildren(...[...new DOMParser().parseFromString(`<body>${it.html}</body>`, 'text/html').body.childNodes].map((n) => document.importNode(n, true)));
+    }
+    if (J(it.attrs) !== J(was.attrs)) {
+      for (const a of [...c.attributes]) if (a.name !== 'rowspan' && a.name !== 'colspan' && !(a.name in it.attrs)) c.removeAttribute(a.name);
+      for (const [k, v] of Object.entries(it.attrs)) c.setAttribute(k, v);
+    }
+  });
+  for (const x of [copy, ...copy.querySelectorAll('[class]')]) {
+    x.classList.remove('tg-on');
+    if (x.hasAttribute('class') && !x.classList.length) x.removeAttribute('class');
+  }
+  return copy.outerHTML;
+}
+
+/** 칸 안 글 자리 — 칸 맨 앞부터 커서까지 글자 수 */
+function offsetIn(cell, r) {
+  if (!cell || !r || !cell.contains(r.startContainer)) return 0;
+  const x = document.createRange();
+  x.selectNodeContents(cell);
+  x.setEnd(r.startContainer, r.startOffset);
+  return x.toString().length;
+}
+/** 칸 안 n 번째 글자 자리에 커서 (글이 모자라면 칸 끝) */
+function placeIn(cell, n) {
+  const w = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+  let left = n;
+  for (let tx = w.nextNode(); tx; tx = w.nextNode()) {
+    if (left <= tx.length) {
+      const r = document.createRange();
+      r.setStart(tx, left);
+      r.collapse(true);
+      const s = getSelection();
+      s.removeAllRanges();
+      s.addRange(r);
+      return;
+    }
+    left -= tx.length;
+  }
+  caretInto(cell, n > 0);
+}
+
+/** 칸마다 열 너비에 더해지는 여백·선 (그려진 칸 너비 − 안쪽 너비) — 열을 통째로 합칠 때 사이 여백·선만큼 너비를 더한다 */
+function cellExtra(t) {
+  const c = t.querySelector('td, th');
+  if (!c) return CELL_EXTRA;
+  const x = c.getBoundingClientRect().width - parseFloat(getComputedStyle(c).width);
+  return Number.isFinite(x) && x >= 0 ? Math.round(x) : CELL_EXTRA;
+}
+
+/** 표 지우기 — 표를 골라 지운다 (되돌리기 한 번) */
+function dropTable(t) {
+  if (document.activeElement !== body) body.focus();
+  const r = document.createRange();
+  r.selectNode(t);
+  const s = getSelection();
+  s.removeAllRanges();
+  s.addRange(r);
+  document.execCommand('delete');
+  if (t.isConnected) {
+    t.remove();
+    body.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  tgStamp += 1;
+  tgHot = null;
+  paintTools();
+}
+
+/**
+ * 표 셈 하나 — op(m) 은 tablegrid 셈의 답 ({ model, focus } · { gone } · 못 하면 null·{ refused }).
+ * 표를 통째로 바꿔 넣고, 커서를 셈이 말한 칸(없으면 커서가 있던 칸)에 둔다.
+ *   opt.keep — 칸 고르기를 새 표에 다시 (배경색을 칠한 뒤 이어서 다른 것을 하게)
+ *   opt.stay — 커서를 셈 전 자리에 둔다 (너비 끌기): 표 밖이면 그 자리, 이 표 칸 안이면 새 표의 같은 칸 같은 글자 자리
+ * 칸 배치를 안 바꾸는 셈은 지도로 다시 짓지 않고 바뀐 칸만 고친 사본을 넣는다 (patched)
+ */
+function runOp(t, op, opt = {}) {
+  if (!t || !t.isConnected || !body.contains(t)) return null;
+  const spot = caretSpot(t);
+  const before = caretRange();
+  const at = spot && before ? offsetIn(caretCell(), before) : 0;
+  let m0 = null;
+  let res = null;
+  try { m0 = grid.tidy(readRaw(t, true)); res = op(m0); } catch { res = null; }
+  if (!res || res.refused) return null;
+  closeMenus();
+  clearCells();
+  tgLine = null;
+  if (res.gone) { dropTable(t); return null; }
+  const nt = commit(t, sameShape(m0, res.model) ? patched(t, m0, res.model) : grid.toHtml(res.model));
+  if (!nt) return null;
+  if (opt.stay && spot) {
+    const cell = cellAt(nt, spot.r, spot.c);
+    if (cell) placeIn(cell, at);
+  } else if (opt.stay && before && body.contains(before.startContainer)) {
+    const s = getSelection();
+    s.removeAllRanges();
+    s.addRange(before);
+  } else {
+    const f = res.focus || spot || { r: 0, c: 0 };
+    const cell = cellAt(nt, f.r, f.c);
+    if (cell) caretInto(cell);
+  }
+  if (opt.keep) selectRect(nt, opt.keep, cellAt(nt, opt.keep.r0, opt.keep.c0));
+  if (tgHot === t) tgHot = nt;
+  paintTools();
+  return nt;
+}
+
+// ── 메뉴 (손잡이·오른쪽 클릭·배경색) ──
+// 포커스는 본문에 둔 채 키는 document 의 붙잡기(capture) 단계에서 받는다 — 화살표·Enter·Esc 가 본문으로 안 간다
+const usable = (m, i) => { const it = m.items[i]; return !!it && it !== '-' && !it.disabled; };
+function nextItem(m, from, dir) {
+  const n = m.items.length;
+  for (let k = 1; k <= n; k++) {
+    const i = (((from + dir * k) % n) + n) % n;
+    if (usable(m, i)) return i;
+  }
+  return -1;
+}
+function focusItem(m, i) {
+  m.at = i;
+  m.rows.forEach((row, k) => { if (row) row.classList.toggle('on', k === i); });
+  // 작은 창에서는 메뉴가 굴러간다 — 키보드로 고른 줄이 보이게 메뉴만 굴린다 (scrollIntoView 는 카드까지 굴린다)
+  const row = m.rows[i];
+  if (row && m.el.scrollHeight > m.el.clientHeight) {
+    const top = row.offsetTop;
+    const bottom = top + row.offsetHeight;
+    if (top < m.el.scrollTop) m.el.scrollTop = top;
+    else if (bottom > m.el.scrollTop + m.el.clientHeight) m.el.scrollTop = bottom - m.el.clientHeight;
+  }
+}
+function closeMenus(from = 0) {
+  for (const m of tgMenus.splice(from)) m.el.remove();
+  if (!tgMenus.length && tgLine) {
+    tgLine = null;
+    clearCells();
+    paintTools();
+  }
+}
+/** 메뉴를 (x,y) 에 연다 — 창(카드) 안으로 당긴다. 하위 메뉴가 오른쪽에 안 들어가면 flipX(부모 왼쪽)로 */
+function openMenu(items, x, y, level = 0, flipX) {
+  closeMenus(level);
+  const el = document.createElement('div');
+  el.className = 'tg-menu';
+  el.setAttribute('role', 'menu');
+  const m = { el, items, at: -1, rows: [], level };
+  items.forEach((it, i) => {
+    if (it === '-') {
+      el.append(document.createElement('hr'));
+      m.rows.push(null);
+      return;
+    }
+    const row = document.createElement('div');
+    row.className = 'mi';
+    row.setAttribute('role', 'menuitem');
+    if (it.swatch !== undefined) {
+      const sw = document.createElement('span');
+      sw.className = 'sw';
+      if (it.swatch) sw.style.setProperty('--c', it.swatch);
+      row.append(sw);
+    }
+    const lb = document.createElement('span');
+    lb.textContent = it.label;
+    row.append(lb);
+    if (it.sub) {
+      const s = document.createElement('span');
+      s.className = 'sub';
+      s.textContent = '▸';
+      row.append(s);
+    }
+    if (it.disabled) row.setAttribute('aria-disabled', 'true');
+    if (it.title) row.title = it.title;
+    row.addEventListener('mouseover', () => {
+      if (m.at === i || !tgMenus.includes(m)) return;
+      focusItem(m, usable(m, i) ? i : -1);
+      if (it.sub && usable(m, i)) openSub(m, i); else closeMenus(m.level + 1);
+    });
+    row.addEventListener('click', () => pickItem(m, i));
+    el.append(row);
+    m.rows.push(row);
+  });
+  el.addEventListener('mousedown', keepFocus);
+  el.addEventListener('contextmenu', (e) => e.preventDefault());
+  tgCard.append(el);
+  const cr = tgCard.getBoundingClientRect();
+  // 카드보다 길면(작은 창) 카드 높이로 자르고 메뉴 안에서 굴린다 — 카드는 넘친 것을 감춰서 아래 줄을 못 누른다
+  el.style.maxHeight = `${Math.max(60, Math.floor(cr.height - 8))}px`;
+  let left = x - cr.left;
+  if (left + el.offsetWidth > cr.width - 4 && flipX !== undefined) left = flipX - cr.left - el.offsetWidth;
+  left = Math.max(4, Math.min(left, cr.width - el.offsetWidth - 4));
+  const top = Math.max(4, Math.min(y - cr.top, cr.height - el.offsetHeight - 4));
+  el.style.left = `${left}px`;
+  el.style.top = `${top}px`;
+  tgMenus.push(m);
+  focusItem(m, nextItem(m, -1, 1));
+  return m;
+}
+function openSub(m, i) {
+  const r = m.rows[i].getBoundingClientRect();
+  openMenu(m.items[i].sub, r.right + 2, r.top - 4, m.level + 1, r.left - 2);
+}
+function pickItem(m, i) {
+  if (!usable(m, i)) return;
+  const it = m.items[i];
+  if (it.sub) { openSub(m, i); return; }
+  closeMenus();
+  it.act();
+}
+/** 배경색 하위 메뉴 — 기본(없음)과 노션의 옅은 채움 */
+const palette = (fn) => grid.PALETTE.map((p) => ({ label: p.name, swatch: p.color || '', act: () => fn(p.color) }));
+const headOf = (t, kind) => grid.headerOn(grid.tidy(readRaw(t, true)), kind);
+const rowRect = (r) => (m) => ({ r0: r, c0: 0, r1: r, c1: m.w - 1 });
+const colRect = (c) => (m) => ({ r0: 0, c0: c, r1: m.h - 1, c1: c });
+
+/** 줄 손잡이 메뉴 — 줄 r (c 는 커서를 둘 열) */
+function rowMenu(t, r, c) {
+  const items = [
+    { label: '위에 행 넣기', act: () => runOp(t, (m) => grid.insertRow(m, r, 'above', { c })) },
+    { label: '아래에 행 넣기', act: () => runOp(t, (m) => grid.insertRow(m, r, 'below', { c })) },
+    { label: '복제', act: () => runOp(t, (m) => grid.duplicateRow(m, r, { c })) },
+    { label: '지우기', act: () => runOp(t, (m) => grid.deleteRow(m, r, { c })) },
+    '-',
+    { label: '배경색', sub: palette((color) => runOp(t, (m) => grid.paint(m, rowRect(r)(m), color))) },
+    { label: '내용 지우기', act: () => runOp(t, (m) => grid.clear(m, rowRect(r)(m))) }
+  ];
+  if (r === 0) {
+    const on = headOf(t, 'row');
+    items.push('-', { label: on ? '머리글 끄기' : '머리글 켜기', act: () => runOp(t, (m) => grid.header(m, 'row', !on)) });
+  }
+  return items;
+}
+/** 열 손잡이 메뉴 — 열 c (r 은 커서를 둘 줄) */
+function colMenu(t, c, r) {
+  const items = [
+    { label: '왼쪽에 열 넣기', act: () => runOp(t, (m) => grid.insertCol(m, c, 'left', { r, ...fitOpt(t) })) },
+    { label: '오른쪽에 열 넣기', act: () => runOp(t, (m) => grid.insertCol(m, c, 'right', { r, ...fitOpt(t) })) },
+    { label: '복제', act: () => runOp(t, (m) => grid.duplicateCol(m, c, { r })) },
+    { label: '지우기', act: () => runOp(t, (m) => grid.deleteCol(m, c, { r })) },
+    '-',
+    { label: '배경색', sub: palette((color) => runOp(t, (m) => grid.paint(m, colRect(c)(m), color))) },
+    { label: '내용 지우기', act: () => runOp(t, (m) => grid.clear(m, colRect(c)(m))) }
+  ];
+  if (c === 0) {
+    const on = headOf(t, 'col');
+    items.push('-', { label: on ? '머리글 끄기' : '머리글 켜기', act: () => runOp(t, (m) => grid.header(m, 'col', !on)) });
+  }
+  return items;
+}
+const MERGE_WHY = {
+  section: '머리글 줄(thead)과 본문 줄은 합칠 수 없습니다 — 따로 골라 합쳐 주세요',
+  one: '칸을 둘 이상 고르면 합칠 수 있습니다'
+};
+/** 고른 칸이 합친 칸 하나뿐이면 그 칸 */
+function oneMerged() {
+  if (!tgSel) return null;
+  const m = mapOf(tgSel.table);
+  const inside = m.items.filter((it) => inRect(it, tgSel.rect));
+  return inside.length === 1 && inside[0].ref ? inside[0].ref : null;
+}
+/** 오른쪽 클릭 메뉴 — 모든 동작. 고른 칸이 있으면 합치기·배경색·내용 지우기는 그 칸들에, 아니면 누른 칸에 */
+function ctxMenu(cell) {
+  const t = cell.closest('table');
+  const full = grid.tidy(readRaw(t, true));
+  const it = full.items.find((x) => x.ref === cell);
+  if (!it) return [];
+  const { r, c } = it;
+  const rEnd = it.r + it.rs - 1;
+  const cEnd = it.c + it.cs - 1;
+  const sel = tgSel && tgSel.table === t ? tgSel.rect : null;
+  const rect = sel || { r0: r, c0: c, r1: rEnd, c1: cEnd };
+  const can = sel ? grid.canMerge(full, sel) : { ok: false, why: 'one' };
+  const one = sel ? oneMerged() : (it.rs > 1 || it.cs > 1 ? cell : null);
+  const oneIt = one ? full.items.find((x) => x.ref === one) : null;
+  const hr = grid.headerOn(full, 'row');
+  const hc = grid.headerOn(full, 'col');
+  return [
+    { label: '위에 행 넣기', act: () => runOp(t, (m) => grid.insertRow(m, r, 'above', { c })) },
+    { label: '아래에 행 넣기', act: () => runOp(t, (m) => grid.insertRow(m, rEnd, 'below', { c })) },
+    { label: '왼쪽에 열 넣기', act: () => runOp(t, (m) => grid.insertCol(m, c, 'left', { r, ...fitOpt(t) })) },
+    { label: '오른쪽에 열 넣기', act: () => runOp(t, (m) => grid.insertCol(m, cEnd, 'right', { r, ...fitOpt(t) })) },
+    '-',
+    { label: '행 복제', act: () => runOp(t, (m) => grid.duplicateRow(m, rEnd, { c })) },
+    { label: '열 복제', act: () => runOp(t, (m) => grid.duplicateCol(m, cEnd, { r })) },
+    { label: '행 지우기', act: () => runOp(t, (m) => grid.deleteRow(m, r, { c })) },
+    { label: '열 지우기', act: () => runOp(t, (m) => grid.deleteCol(m, c, { r })) },
+    '-',
+    { label: '칸 합치기', disabled: !can.ok, title: can.ok ? '' : MERGE_WHY[can.why], act: () => runOp(t, (m) => grid.merge(m, sel, { extra: cellExtra(t) })) },
+    { label: '칸 나누기', disabled: !oneIt, title: oneIt ? '' : '합친 칸에서 나눌 수 있습니다', act: () => runOp(t, (m) => grid.split(m, oneIt.r, oneIt.c)) },
+    '-',
+    { label: '배경색', sub: palette((color) => runOp(t, (m) => grid.paint(m, rect, color), { keep: sel })) },
+    { label: hr ? '머리글 행 끄기' : '머리글 행 켜기', act: () => runOp(t, (m) => grid.header(m, 'row', !hr)) },
+    { label: hc ? '머리글 열 끄기' : '머리글 열 켜기', act: () => runOp(t, (m) => grid.header(m, 'col', !hc)) },
+    { label: '내용 지우기', act: () => runOp(t, (m) => grid.clear(m, rect)) },
+    '-',
+    { label: '표 지우기', act: () => { clearCells(); dropTable(t); } }
+  ];
+}
+
+// ── 손잡이·띠·막대 그리기 ──
+function placeTool(el, on, x, y, w, h) {
+  el.classList.toggle('on', !!on);
+  if (!on) return;
+  el.style.left = `${Math.round(x)}px`;
+  el.style.top = `${Math.round(y)}px`;
+  if (w !== undefined) el.style.width = `${Math.round(w)}px`;
+  if (h !== undefined) el.style.height = `${Math.round(h)}px`;
+}
+/** 다음 그림 차례에 한 번 그린다 — 창이 가려져 그림 차례가 안 오면 60ms 뒤에라도 */
+function paintSoon() {
+  if (tgRaf) return;
+  const run = () => {
+    if (!tgRaf) return;
+    cancelAnimationFrame(tgRaf.frame);
+    clearTimeout(tgRaf.timer);
+    tgRaf = 0;
+    paintTools();
+  };
+  tgRaf = { frame: requestAnimationFrame(run), timer: setTimeout(run, 60) };
+}
+/**
+ * 손잡이·+ 띠·너비 손잡이·고른 칸 막대를 그린다. 어느 줄·열인가 — 메뉴가 떠 있는 줄·열, 마우스를 올린 칸, 커서가 있는 칸 차례.
+ * 층은 본문 자리에 맞춰 두고(종이 밖으로 안 나간다), 그릴 자리가 본문 밖으로 굴러 나간 것은 숨긴다
+ */
+function paintTools() {
+  const els = { row: $('tg-row'), col: $('tg-col'), addC: $('tg-add-col'), addR: $('tg-add-row'), size: $('tg-size'), bar: $('tg-cellbar') };
+  if (tgHot && (!tgHot.isConnected || !body.contains(tgHot))) tgHot = null;
+  if (tgSel && !tgSel.table.isConnected) clearCells();
+  if (tgLine && !tgLine.table.isConnected) tgLine = null;
+  const cc = caretCell();
+  let t = null;
+  let r = 0;
+  let c = 0;
+  if (tgLine) ({ table: t, r, c } = tgLine);
+  else if (tgHot) { t = tgHot; r = tgHotRow; c = tgHotCol; }
+  else if (cc) {
+    t = cc.closest('table');
+    const it = itemOf(mapOf(t), cc);
+    if (it) ({ r, c } = it);
+  }
+  const hover = !!t && tgHot === t;
+  const barCell = !tgSel && cc && (cc.rowSpan > 1 || cc.colSpan > 1) ? cc : null;
+  tgShown = null;
+  if (!t && !tgSel && !barCell && !tgSize) {
+    tgLayer.classList.remove('on');
+    return;
+  }
+  tgLayer.classList.add('on');
+  tgLayer.style.left = `${body.offsetLeft}px`;
+  tgLayer.style.top = `${body.offsetTop}px`;
+  tgLayer.style.width = `${body.clientWidth}px`;
+  tgLayer.style.height = `${body.clientHeight}px`;
+  const L = tgLayer.getBoundingClientRect();
+  const seen = (x, y) => x >= -1 && x <= L.width + 1 && y >= -1 && y <= L.height + 1;
+  let m = null;
+  let tr = null;
+  let ed = null;
+  if (t) {
+    m = mapOf(t);
+    if (!m.h || !m.w) t = null;
+  }
+  if (t) {
+    r = Math.min(r, m.h - 1);
+    c = Math.min(c, m.w - 1);
+    tgShown = { table: t, r, c };
+    tr = t.getBoundingClientRect();
+    ed = edgesOf(t, m);
+    const rr = rowsOf(m)[r];
+    if (rr) {
+      const gh = Math.min(20, Math.max(12, rr.height - 2));
+      const x = tr.left - L.left - 15;
+      const y = rr.top - L.top + (rr.height - gh) / 2;
+      placeTool(els.row, seen(x + 13, y + gh / 2), Math.max(0, x), y, undefined, gh);
+    } else placeTool(els.row, false);
+    // 열 손잡이는 표 윗선에 걸친다 (노션처럼) — 선 위에 두면 표 바로 위 글 줄을 가린다
+    const gx = (ed[c] + ed[c + 1]) / 2 - L.left - 11;
+    const gy = tr.top - L.top - 6;
+    placeTool(els.col, seen(gx + 11, gy + 6), gx, Math.max(0, gy));
+    els.row.classList.toggle('lit', !!tgLine && tgLine.kind === 'row');
+    els.col.classList.toggle('lit', !!tgLine && tgLine.kind === 'col');
+    // + 띠 — 마우스를 올렸을 때만
+    placeTool(els.addC, hover, tr.right - L.left + 3, tr.top - L.top, 12, tr.height);
+    placeTool(els.addR, hover, tr.left - L.left, tr.bottom - L.top + 3, tr.width, 12);
+  } else {
+    for (const k of ['row', 'col', 'addC', 'addR']) placeTool(els[k], false);
+  }
+  // 너비 손잡이 — 열 오른쪽 선 가까이 (끄는 중이면 끄는 선에)
+  const se = tgSize ? { table: tgSize.table, col: tgSize.col } : tgEdge;
+  if (se && se.table.isConnected && (tgSize || (hover && se.table === t))) {
+    const sm = mapOf(se.table);
+    const sx = edgesOf(se.table, sm)[Math.min(se.col, sm.w - 1) + 1];
+    const st = se.table.getBoundingClientRect();
+    placeTool(els.size, true, sx - L.left - 3, st.top - L.top, 7, st.height);
+  } else placeTool(els.size, false);
+  paintCellBar(els.bar, L, barCell);
+}
+/** 고른 칸 위 막대 — 칸 여럿이면 합치기·배경색·내용 지우기, 커서가 합친 칸에 있으면(또는 그 칸 하나만 골랐으면) 나누기 */
+function paintCellBar(bar, L, barCell) {
+  let box = null;
+  if (tgSel) {
+    const m = mapOf(tgSel.table);
+    for (const it of m.items) {
+      if (!it.ref || !inRect(it, tgSel.rect)) continue;
+      const q = it.ref.getBoundingClientRect();
+      box = box ? { left: Math.min(box.left, q.left), top: Math.min(box.top, q.top), right: Math.max(box.right, q.right), bottom: Math.max(box.bottom, q.bottom) } : { left: q.left, top: q.top, right: q.right, bottom: q.bottom };
+    }
+  } else if (barCell) {
+    box = barCell.getBoundingClientRect();
+  }
+  // 고른 칸이 본문 밖으로 굴러 나갔으면 막대도 숨긴다 (손잡이처럼) — 종이 끝에 붙어 떠 있지 않게
+  if (!box || box.bottom < L.top || box.top > L.bottom) { placeTool(bar, false); return; }
+  const one = tgSel ? oneMerged() : barCell;
+  $('tg-merge').classList.toggle('hide', !tgSel || !!one);
+  $('tg-split').classList.toggle('hide', !one);
+  $('tg-paint').classList.toggle('hide', !tgSel);
+  $('tg-wipe').classList.toggle('hide', !tgSel);
+  if (tgSel && !one) {
+    const can = grid.canMerge(mapOf(tgSel.table), tgSel.rect);
+    $('tg-merge').disabled = !can.ok;
+    $('tg-merge').title = can.ok ? '고른 칸을 하나로' : MERGE_WHY[can.why];
+  }
+  placeTool(bar, true, 0, 0);
+  const bw = bar.offsetWidth;
+  const bh = bar.offsetHeight;
+  let y = box.top - L.top - bh - 4;
+  if (y < 2) y = box.bottom - L.top + 4;
+  placeTool(bar, true, Math.max(2, Math.min(box.left - L.left, L.width - bw - 2)), Math.min(y, L.height - bh - 2));
+}
+
+// ── 마우스 ──
+/** 표 둘레(손잡이·띠가 서는 자리)까지 — 표에서 손잡이로 옮겨 가는 동안 손잡이가 사라지지 않게 */
+function nearTable(t, x, y) {
+  const q = t.getBoundingClientRect();
+  return x >= q.left - 24 && x <= q.right + 20 && y >= q.top - 20 && y <= q.bottom + 20;
+}
+document.addEventListener('mousemove', (e) => {
+  if (tgSize) return;   // 너비를 끄는 중은 아래 window 처리기가 맡는다
+  const target = e.target && e.target.nodeType === 1 ? e.target : null;
+  const cell = cellOf(target);
+  const onTool = !!(target && target.closest('.tg-layer > div'));
+  let t = cell ? cell.closest('table') : null;
+  if (!t && tgHot && tgHot.isConnected && (onTool || nearTable(tgHot, e.clientX, e.clientY))) t = tgHot;
+  tgHot = t;
+  tgEdge = null;
+  if (t) {
+    const m = mapOf(t);
+    if (m.h && m.w) {
+      const ri = rowsOf(m).findIndex((q) => q && e.clientY >= q.top && e.clientY < q.bottom);
+      if (ri >= 0) tgHotRow = ri;
+      const ed = edgesOf(t, m);
+      for (let k = 0; k < m.w; k++) if (e.clientX >= ed[k] && e.clientX < ed[k + 1]) tgHotCol = k;
+      // 열 오른쪽 선 가까이 — 너비 손잡이
+      const q = t.getBoundingClientRect();
+      if (e.clientY >= q.top && e.clientY <= q.bottom) for (let k = 1; k <= m.w; k++) if (Math.abs(e.clientX - ed[k]) <= 4) tgEdge = { table: t, col: k - 1 };
+    }
+  }
+  // 칸에서 누른 채 다른 칸으로 — 칸 고르기
+  // 처음 칸으로 돌아오면 칸 고르기를 풀고 칸 하나(글 고르기)로
+  if (tgDrag && (e.buttons & 1) && cell && cell.closest('table') === tgDrag.table) {
+    if (cell !== tgDrag.anchor) selectCells(tgDrag.table, tgDrag.anchor, cell);
+    else if (tgSel) clearCells();
+  }
+  paintTools();
+});
+body.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;   // 오른쪽 클릭은 contextmenu 가 맡는다
+  const cell = cellOf(e.target);
+  if (cell && e.shiftKey) {
+    const t = cell.closest('table');
+    const cc = caretCell();
+    const a = tgAnchor && tgAnchor.isConnected && tgAnchor.closest('table') === t ? tgAnchor : cc && cc.closest('table') === t ? cc : null;
+    // 다른 칸이면 칸 고르기. 같은 칸 안이면 막지 않는다 — 칸 안 글 고르기를 늘리는 기본 동작 (굵게·복사할 글 고르기)
+    if (a && a !== cell) {
+      e.preventDefault();   // 글 고르기를 늘리지 않고 칸을 고른다
+      selectCells(t, a, cell);
+      paintTools();
+      return;
+    }
+  }
+  clearCells();
+  tgDrag = cell ? { table: cell.closest('table'), anchor: cell } : null;
+  tgAnchor = cell;
+  paintSoon();
+});
+window.addEventListener('mouseup', () => {
+  tgDrag = null;
+  // 끄는 동안 크로미움이 늘린 글 고르기를 처음 칸에 다시 접는다
+  if (tgSel && tgSel.anchor && tgSel.anchor.isConnected && !getSelection().isCollapsed) caretInto(tgSel.anchor, true);
+});
+body.addEventListener('contextmenu', (e) => {
+  let cell = cellOf(e.target);
+  let x = e.clientX;
+  let y = e.clientY;
+  if (!cell && e.target === body) {
+    // 메뉴 키(Shift+F10)로 열면 커서 칸에
+    cell = caretCell();
+    if (cell) { const q = cell.getBoundingClientRect(); x = q.left + 8; y = q.bottom - 4; }
+  }
+  if (!cell) return;
+  e.preventDefault();
+  if (tgSel && !(tgSel.table === cell.closest('table') && cell.classList.contains('tg-on'))) clearCells();
+  openMenu(ctxMenu(cell), x, y);
+  paintTools();
+});
+document.addEventListener('mousedown', (e) => {
+  const t = e.target && e.target.nodeType === 1 ? e.target : null;
+  if (tgPick.open && !(t && t.closest('#tg-pick, #btn-table'))) closePick();
+  if (tgMenus.length && !(t && t.closest('.tg-menu'))) closeMenus();
+}, true);
+body.addEventListener('scroll', () => { closeMenus(); paintTools(); });
+window.addEventListener('resize', () => paintTools());
+document.addEventListener('selectionchange', () => { if (!tgSize) paintSoon(); });
+body.addEventListener('input', (e) => {
+  tgStamp += 1;
+  // 되돌리기로 살아난 옛 칸의 고른 표시는 걷는다
+  if (e.inputType && e.inputType.startsWith('history') && !tgSel && !tgLine) clearCells();
+  paintSoon();
+});
+
+for (const id of ['tg-row', 'tg-col', 'tg-add-col', 'tg-add-row']) $(id).addEventListener('mousedown', keepFocus);
+for (const b of $('tg-cellbar').querySelectorAll('button')) b.addEventListener('mousedown', keepFocus);
+/** 손잡이를 누르면 — 그 줄·열 칸을 다 고른 표시로, 메뉴를 연다 */
+function openLine(kind) {
+  const s = tgShown;
+  if (!s || !s.table.isConnected) return;
+  clearCells();
+  const m = mapOf(s.table);
+  markCells(m.items.filter((it) => (kind === 'row' ? it.r <= s.r && it.r + it.rs > s.r : it.c <= s.c && it.c + it.cs > s.c)));
+  const g = $(kind === 'row' ? 'tg-row' : 'tg-col').getBoundingClientRect();
+  const spot = caretSpot(s.table);
+  if (kind === 'row') openMenu(rowMenu(s.table, s.r, spot ? spot.c : s.c), g.right + 4, g.top);
+  else openMenu(colMenu(s.table, s.c, spot ? spot.r : s.r), g.left, g.bottom + 4);
+  tgLine = { table: s.table, kind, r: s.r, c: s.c };
+  paintTools();
+}
+$('tg-row').addEventListener('click', () => openLine('row'));
+$('tg-col').addEventListener('click', () => openLine('col'));
+$('tg-add-col').addEventListener('click', () => {
+  const s = tgShown;
+  if (s) runOp(s.table, (m) => grid.insertCol(m, m.w - 1, 'right', { r: s.r, ...fitOpt(s.table) }));
+});
+$('tg-add-row').addEventListener('click', () => {
+  const s = tgShown;
+  if (s) runOp(s.table, (m) => grid.insertRow(m, m.h - 1, 'below', { c: s.c }));
+});
+$('tg-merge').addEventListener('click', () => {
+  const s = tgSel;
+  if (s && !$('tg-merge').disabled) runOp(s.table, (m) => grid.merge(m, s.rect, { extra: cellExtra(s.table) }));
+});
+$('tg-split').addEventListener('click', () => {
+  const cell = tgSel ? oneMerged() : caretCell();
+  if (!cell) return;
+  const t = cell.closest('table');
+  const it = itemOf(mapOf(t), cell);
+  if (it) runOp(t, (m) => grid.split(m, it.r, it.c));
+});
+$('tg-paint').addEventListener('click', () => {
+  const s = tgSel;
+  if (!s) return;
+  const q = $('tg-paint').getBoundingClientRect();
+  openMenu(palette((color) => runOp(s.table, (m) => grid.paint(m, s.rect, color), { keep: s.rect })), q.left, q.bottom + 4);
+});
+$('tg-wipe').addEventListener('click', () => {
+  const s = tgSel;
+  if (s) runOp(s.table, (m) => grid.clear(m, s.rect));
+});
+
+// ── 열 너비 끌기 ──
+// 끄는 동안은 칸의 width 를 바로 고쳐 보여 주고, 놓으면 고치기 전으로 되돌린 뒤 셈(resize)으로 한 번에 넣는다 —
+// 그래야 Ctrl+Z 한 번이 끌기 전으로 간다. 열 너비는 40px 아래로 안 가고, 표는 들어 있는 칸(종이)보다 넓어지지 않는다
+$('tg-size').addEventListener('mousedown', (e) => {
+  e.preventDefault();
+  const ed = tgEdge;
+  if (!ed || !ed.table.isConnected) return;
+  const t = ed.table;
+  const m = grid.tidy(readRaw(t, true));
+  const meas = measureCols(t, m);
+  // 열마다 적힌 너비(COL·칸)와 잰 너비 가운데 큰 것 — 종이보다 넓은 표는 크로미움이 칸을 줄여 그려서 잰 값이 적힌 값보다 작다.
+  // 잰 값으로 적으면 끈 적 없는 열까지 줄어든다 (받는 사람이 보는 표도 줄어든다)
+  const decl = grid.colWidths(m);
+  const widths = meas.widths.map((x, k) => Math.max(x, decl[k] || 0));
+  const els = [t, ...t.querySelectorAll(':scope > colgroup > col, :scope > col'), ...m.items.map((it) => it.ref).filter(Boolean)];
+  tgSize = {
+    table: t, col: ed.col, x0: e.clientX, m, widths, extra: meas.extra, room: roomOf(t.parentElement), now: widths,
+    // 끄는 동안 포커스는 그대로(mousedown 을 막는다) — 놓은 뒤 셈이 본문에 포커스를 주므로, 제목 칸 등에 있었으면 되돌린다
+    focus: document.activeElement,
+    saved: els.map((el) => [el, el.getAttribute('width'), el.getAttribute('style')])
+  };
+});
+window.addEventListener('mousemove', (e) => {
+  const s = tgSize;
+  if (!s) return;
+  const others = s.widths.reduce((n, w, k) => (k === s.col ? n : n + w + s.extra), 0);
+  // 끄는 열의 위쪽 한도는 지금 너비 아래로 내리지 않는다 — 이미 종이보다 넓은 표는 넓히지는 못하고 좁히기만 된다
+  const max = Math.max(s.widths[s.col], grid.MIN_W, Math.floor(s.room - others - s.extra));
+  const w = Math.max(grid.MIN_W, Math.min(max, Math.round(s.widths[s.col] + e.clientX - s.x0)));
+  s.now = s.widths.map((x, k) => (k === s.col ? w : x));
+  // 보여 주기만 — 놓을 때 되돌린다
+  const res = grid.resize(s.m, s.now).model;
+  for (const it of res.items) {
+    if (!it.ref) continue;
+    for (const a of ['width', 'style']) if (it.attrs[a] === undefined) it.ref.removeAttribute(a); else it.ref.setAttribute(a, it.attrs[a]);
+  }
+  let k = 0;
+  for (const col of s.table.querySelectorAll(':scope > colgroup > col, :scope > col')) {
+    if (s.now[k] !== undefined) col.setAttribute('width', String(s.now[k]));
+    k += Math.max(1, parseInt(col.getAttribute('span'), 10) || 1);
+  }
+  s.table.removeAttribute('width');
+  if (s.m.attrs.style !== undefined) {
+    const st = grid.setDecl(s.m.attrs.style, 'width', null);
+    if (st) s.table.setAttribute('style', st); else s.table.removeAttribute('style');
+  }
+  paintTools();
+});
+window.addEventListener('mouseup', () => {
+  const s = tgSize;
+  if (!s) return;
+  tgSize = null;
+  for (const [el, w, st] of s.saved) {
+    if (w === null) el.removeAttribute('width'); else el.setAttribute('width', w);
+    if (st === null) el.removeAttribute('style'); else el.setAttribute('style', st);
+  }
+  if (s.now.some((x, k) => x !== s.widths[k])) {
+    runOp(s.table, (m) => grid.resize(m, s.now), { stay: true });
+    const f = s.focus;
+    if (f && f !== body && f !== document.body && f.isConnected && !body.contains(f) && typeof f.focus === 'function') f.focus();
+  }
+  paintTools();
+});
+
+// ── 키 ──
+body.addEventListener('keydown', (e) => {
+  if (e.isComposing || composing) {
+    if (tgSel) clearCells();
+    return;
+  }
+  // Ctrl+A, 또는 글 고르기가 이미 칸 고르기 밖으로 넓어졌으면 — 칸 고르기를 풀고 키는 기본 동작에 맡긴다
+  // (안 그러면 Ctrl+A 뒤 Delete 가 본문 전체가 아니라 고른 칸 내용만 지운다)
+  if (tgSel && (!inAnchor() || ((e.ctrlKey || e.metaKey) && e.code === 'KeyA'))) {
+    clearCells();
+    paintTools();
+    return;
+  }
+  if (tgSel) {
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      e.preventDefault();
+      const s = tgSel;
+      runOp(s.table, (m) => grid.clear(m, s.rect));
+      return;
+    }
+    if (e.key === 'Escape') {
+      // 창 닫기(Esc)까지 가지 않게
+      e.preventDefault();
+      e.stopPropagation();
+      clearCells();
+      paintTools();
+      return;
+    }
+    if (MOD_KEYS.includes(e.key) || e.ctrlKey || e.metaKey) return;   // 바로 가기 키는 그대로
+    // 치기·화살표 — 고르기를 풀고 처음 칸에서 이어 간다
+    const a = tgSel.anchor;
+    clearCells();
+    if (a && a.isConnected) caretInto(a, true);
+    paintTools();
+    if (e.key !== 'Tab') return;
+  }
+  // Tab — 칸 안에서만 다음·앞 칸으로 (표 밖은 예전 그대로)
+  if (e.key === 'Tab' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    const cell = caretCell();
+    if (!cell) return;
+    e.preventDefault();
+    const t = cell.closest('table');
+    const list = grid.order(mapOf(t)).filter((it) => it.ref);
+    const i = list.findIndex((it) => it.ref === cell);
+    const j = i + (e.shiftKey ? -1 : 1);
+    if (i >= 0 && j >= list.length) runOp(t, (m) => grid.insertRow(m, m.h - 1, 'below'));
+    else if (i >= 0 && j >= 0) caretInto(list[j].ref);
+  }
+});
+document.addEventListener('keydown', (e) => {
+  if (e.isComposing) return;
+  if (tgPick.open) {
+    const k = e.key;
+    if (k === 'ArrowDown') tgPick.r = Math.min(8, tgPick.r + 1);
+    else if (k === 'ArrowUp') tgPick.r = Math.max(1, tgPick.r - 1);
+    else if (k === 'ArrowRight') tgPick.c = Math.min(8, tgPick.c + 1);
+    else if (k === 'ArrowLeft') tgPick.c = Math.max(1, tgPick.c - 1);
+    else if (k === 'Enter') insertTable(tgPick.r, tgPick.c);
+    else if (k === 'Escape') closePick();
+    else {
+      if (!MOD_KEYS.includes(k)) closePick();
+      return;
+    }
+    paintPick();
+    e.preventDefault();
+    e.stopPropagation();
+    return;
+  }
+  if (!tgMenus.length) return;
+  const m = tgMenus[tgMenus.length - 1];
+  const k = e.key;
+  if (k === 'ArrowDown') focusItem(m, nextItem(m, m.at, 1));
+  else if (k === 'ArrowUp') focusItem(m, nextItem(m, m.at, -1));
+  else if (k === 'Enter' || k === ' ') pickItem(m, m.at);
+  else if (k === 'ArrowRight') { if (usable(m, m.at) && m.items[m.at].sub) openSub(m, m.at); }
+  else if (k === 'ArrowLeft') { if (tgMenus.length > 1) closeMenus(tgMenus.length - 1); }
+  else if (k === 'Escape') closeMenus(tgMenus.length > 1 ? tgMenus.length - 1 : 0);
+  else {
+    if (!MOD_KEYS.includes(k)) closeMenus();
+    return;
+  }
+  e.preventDefault();
+  e.stopPropagation();
+}, true);
+
+// 칸 여럿을 고른 채 복사(Ctrl+C)·잘라내기(Ctrl+X) — 글 고르기는 접혀 있으므로 고른 칸을 표(HTML)와 탭·줄 글로 싣는다.
+// 합친 칸은 글 몫에서 왼쪽 위 자리에만 글을 둔다 (엑셀처럼). 잘라내기는 구조는 두고 내용만 지운다
+function copyCells(e, cut) {
+  const s = tgSel;
+  if (!s || !s.table.isConnected || !e.clipboardData) return;
+  // 글 고르기가 칸 고르기 밖으로 넓어졌으면(Ctrl+A 등) 보통 복사로
+  if (!inAnchor()) { clearCells(); paintTools(); return; }
+  const m = grid.tidy(readRaw(s.table, true));
+  const R = s.rect;
+  const h = R.r1 - R.r0 + 1;
+  const w = R.c1 - R.c0 + 1;
+  const items = m.items.filter((it) => inRect(it, R)).map((it) => ({ ...it, r: it.r - R.r0, c: it.c - R.c0 }));
+  const { id: _id, ...attrs } = m.attrs;
+  const part = {
+    attrs, caption: null, cols: m.cols ? m.cols.slice(R.c0, R.c1 + 1) : null, secs: [{ tag: 'tbody', attrs: {} }],
+    meta: Array.from({ length: h }, (_, k) => ({ sec: 0, attrs: m.meta[R.r0 + k].attrs })), h, w, items
+  };
+  const text = Array.from({ length: h }, (_, r) => Array.from({ length: w }, (_, c) => {
+    const it = items.find((x) => x.r === r && x.c === c);
+    return it && it.ref ? it.ref.innerText.replace(/\s+/g, ' ').trim() : '';
+  }).join('\t')).join('\n');
+  e.preventDefault();
+  e.clipboardData.setData('text/html', grid.toHtml(part));
+  e.clipboardData.setData('text/plain', text);
+  if (cut) runOp(s.table, (mm) => grid.clear(mm, R));
+}
+body.addEventListener('copy', (e) => copyCells(e, false));
+body.addEventListener('cut', (e) => copyCells(e, true));
+
+// ── «표» 단추 — 8×8 고르개 ──
+for (let r = 1; r <= 8; r++) {
+  for (let c = 1; c <= 8; c++) {
+    const q = document.createElement('div');
+    q.className = 'sq';
+    q.dataset.r = String(r);
+    q.dataset.c = String(c);
+    $('tg-grid').append(q);
+  }
+}
+function paintPick() {
+  for (const q of $('tg-grid').children) q.classList.toggle('on', Number(q.dataset.r) <= tgPick.r && Number(q.dataset.c) <= tgPick.c);
+  $('tg-lbl').textContent = `${tgPick.r} × ${tgPick.c}`;
+}
+function openPick() {
+  closeMenus();
+  // 고르는 동안 본문을 누르면 닫힌다 — 연 순간의 커서 자리에 넣는다 («그림» 단추와 같다)
+  tgPick.here = caretRange();
+  tgPick.r = 1;
+  tgPick.c = 1;
+  paintPick();
+  const p = $('tg-pick');
+  p.classList.add('on');
+  const b = $('btn-table').getBoundingClientRect();
+  const cr = tgCard.getBoundingClientRect();
+  p.style.left = `${Math.max(4, Math.min(b.left - cr.left, cr.width - p.offsetWidth - 4))}px`;
+  p.style.top = `${b.bottom - cr.top + 4}px`;
+  tgPick.open = true;
+}
+function closePick() {
+  $('tg-pick').classList.remove('on');
+  tgPick.open = false;
+}
+/**
+ * 빈 표를 넣는다 — 붙인 표와 같은 꼴(pastetable.blank), insertHTML 이라 Ctrl+Z 한 번에 빠진다. 커서는 첫 칸.
+ * 커서가 표 안이면 그 표(가장 바깥 표) 바로 뒤에 — 표 안에 표를 만들지 않는다. 열 너비는 120px, 종이에 안 들어가면 좁힌다
+ */
+function insertTable(rows, cols) {
+  closePick();
+  let r = insertSpot(tgPick.here && tgPick.here.startContainer.isConnected ? tgPick.here : null);
+  const inT = outerTable(r.startContainer);
+  if (inT) {
+    r = document.createRange();
+    r.setStartAfter(inT);
+    r.collapse(true);
+  }
+  const host = elOf(r.startContainer);
+  const room = roomOf((host && host.closest('blockquote, td, th')) || body);
+  const w = Math.max(grid.MIN_W, Math.min(tableKit.COL_W, Math.floor(room / cols) - CELL_EXTRA));
+  let html = tableKit.blank(rows, cols, w).replace('<table', '<table data-tg-new="1"');
+  // 표 안에서 넣거나 커서가 표 바로 뒤 빈 줄이면 옛 표 바로 뒤 — 두 표가 붙어 사이에 글을 쓸 줄이 없지 않게 빈 줄을 앞에 둔다
+  if (inT || rightAfterTable(r)) html = `<div><br></div>${html}`;
+  if (lineEndsHere(r)) html += '<div><br></div>';
+  if (document.activeElement !== body) body.focus();
+  const s = getSelection();
+  s.removeAllRanges();
+  s.addRange(r);
+  document.execCommand('insertHTML', false, html);
+  const t = body.querySelector('table[data-tg-new]');
+  if (!t) return;
+  t.removeAttribute('data-tg-new');
+  tgStamp += 1;
+  caretInto(t.rows[0].cells[0]);
+  paintTools();
+}
+$('tg-pick').addEventListener('mousedown', keepFocus);
+$('tg-grid').addEventListener('mouseover', (e) => {
+  const q = e.target.closest('.sq');
+  if (!q) return;
+  tgPick.r = Number(q.dataset.r);
+  tgPick.c = Number(q.dataset.c);
+  paintPick();
+});
+$('tg-grid').addEventListener('click', (e) => {
+  const q = e.target.closest('.sq');
+  if (q) insertTable(Number(q.dataset.r), Number(q.dataset.c));
+});
+$('btn-table').onclick = () => (tgPick.open ? closePick() : openPick());
+
 /**
  * 그려서 보낼 꼴로 — PNG 로 굽고, 5MB 를 넘으면 JPEG 로 줄인다 (fitImage — 붙여넣기와 같은 길).
  * 인용문의 3000×2000 WebP 사진(289KB)을 원래 크기 PNG 로 구우면 14MB 가 되어 메인이 보내기를 통째로 거절했다.
@@ -677,11 +1954,15 @@ async function sendablePart(type, b64) {
  * (width 속성은 그대로 — 화면 배율로 맞춘 크기를 지킨다).
  * @returns { html, text, inline, gone } — gone 은 보낼 수 없는 형식이라 뺀 그림 수
  */
+// 보내는 본문의 글꼴·크기·줄 높이·색 — 쓰기 창 .body 와 같게 (compose.html). 감싸는 div 와 표마다 인라인으로 적는다
+const BODY_FONT = [['font-family', "'맑은 고딕','Malgun Gothic',sans-serif"], ['font-size', '14px'], ['line-height', '1.7'], ['color', '#1a1a1a']];
+
 async function bodyForSend() {
   // cloneNode로 만들면 복제된 <img>가 cid: 주소를 진짜로 불러오려 들어 콘솔이 더러워진다.
   // DOMParser로 뜬 문서는 그림을 부르지 않는다 — 고쳐 쓰기에만 쓴다.
+  // 표 편집의 고른 칸 표시(tg-on)는 떼고 (editorFree)
   const doc = new DOMParser().parseFromString(
-    `<body>${body.innerHTML}</body>`, 'text/html');
+    `<body>${editorFree(body.innerHTML)}</body>`, 'text/html');
   const clone = doc.body;
   // «그림 넣는 중…» 표식은 안 보낸다 (붙이는 중에는 보내기를 막지만, 되돌리기로 살아난 것이 남았을 수 있다)
   for (const s of [...clone.querySelectorAll('[data-paste-slot]')]) s.remove();
@@ -720,9 +2001,24 @@ async function bodyForSend() {
     if (!img.style.maxWidth) img.style.maxWidth = '100%';
     if (!img.style.height) img.style.height = 'auto';
   }
+  // 표마다 글꼴·크기·줄 높이·색을 인라인으로 — doctype 없이 문서로 그리는 메일 프로그램(quirks 모드)은 표가 감싼 div 의 글꼴을
+  // 물려받지 않아 표 안 글자만 16px·줄 높이 normal 이 된다 (아웃룩도 div 글꼴을 칸에 안 물려준다고 알려져 있다).
+  // 표를 감싼 것이 적어 둔 값(인용문의 12px 등)이 있으면 그 값을, 없으면 본문 값을 — 표준 모드에서 보이는 것과 같게.
+  // CSSOM 은 색을 rgb() 로 고쳐 쓰므로 style 글을 직접 고친다
+  for (const t of clone.querySelectorAll('table')) {
+    let st = t.getAttribute('style') || '';
+    for (const [p, base] of BODY_FONT) {
+      if (grid.getDecl(st, p)) continue;
+      let v = '';
+      for (let up = t.parentElement; up && up !== clone && !v; up = up.parentElement) v = grid.getDecl(up.getAttribute('style'), p);
+      st = grid.setDecl(st, p, v || base);
+    }
+    t.setAttribute('style', st);
+  }
+  // 감싸는 div 는 쓰기 창 .body 와 같은 글꼴·줄 높이·줄바꿈 — word-break·overflow-wrap 이 다르면 긴 낱말(주소·계좌번호)이 든
+  // 표 칸이 받는 쪽에서만 넓어져 열 너비가 쓰기 창과 크게 달라진다
   return {
-    html: `<div style="font-family:'맑은 고딕','Malgun Gothic',sans-serif;font-size:14px;`
-      + `line-height:1.65;color:#1a1a1a">${clone.innerHTML}</div>`,
+    html: `<div style="${BODY_FONT.map(([p, v]) => `${p}:${v}`).join(';')};word-break:keep-all;overflow-wrap:anywhere">${clone.innerHTML}</div>`,
     text: plainText(),
     inline,
     gone
@@ -921,13 +2217,44 @@ function cleanPasted(input) {
  * 남이 쓴 글이 한 덩어리로 붙어버린다.
  */
 function plainText() {
-  let text = (body.innerText || '').trim();
+  let text = textWithTables(body).trim();
   for (const q of body.querySelectorAll('blockquote')) {
-    const raw = (q.innerText || '').trim();
+    const raw = textWithTables(q).trim();
     if (!raw) continue;
     const marked = raw.split('\n').map((l) => (l.trim() ? `> ${l}` : '>')).join('\n');
     // 첫 자리만 바꾼다. 인용문의 글 그대로를 찾는 것이라 엉뚱한 데가 걸릴 일은 없다.
     text = text.replace(raw, () => marked);
+  }
+  return text;
+}
+
+/**
+ * 표 하나의 글 몫 — 줄마다 칸을 탭으로. innerText 로는 빈 칸(<br>)이 빈 줄이 되고, 칸 안 줄바꿈이 줄을 가르고,
+ * 합친 칸 아래 줄의 칸이 앞 열로 당겨진다. 칸 지도를 펴서: 칸 글은 빈칸 하나로 접고, 빈 칸과 합친 칸이 덮은 자리는 '' (열이 맞는다)
+ */
+function tableText(t) {
+  const m = grid.tidy(readRaw(t, false));
+  return grid.cells(m).map((row, r) => row.map((it, c) => (it && it.ref && it.r === r && it.c === c
+    ? (it.ref.innerText || '').replace(/\s+/g, ' ').trim() : '')).join('\t')).join('\n');
+}
+
+/** el 의 글 (innerText) — 그 안의 가장 바깥 표는 tableText 로 바꿔서. 표의 innerText 를 앞에서부터 차례로 찾아 바꾼다 */
+function textWithTables(el) {
+  let text = el.innerText || '';
+  let from = 0;
+  for (const t of el.querySelectorAll('table')) {
+    const up = t.parentElement.closest('table');
+    if (up && el.contains(up)) continue;
+    let raw = t.innerText || '';
+    let i = raw ? text.indexOf(raw, from) : -1;
+    if (i < 0 && raw.trim()) {
+      raw = raw.trim();
+      i = text.indexOf(raw, from);
+    }
+    if (i < 0) continue;
+    const mine = tableText(t);
+    text = text.slice(0, i) + mine + text.slice(i + raw.length);
+    from = i + mine.length;
   }
   return text;
 }
@@ -957,7 +2284,7 @@ const QUOTE_TAGS = new Set([
 ]);
 const QUOTE_ATTRS = new Set([
   'style', 'align', 'valign', 'width', 'height', 'colspan', 'rowspan',
-  'bgcolor', 'color', 'face', 'size', 'border', 'cellpadding', 'cellspacing', 'span'
+  'bgcolor', 'color', 'face', 'size', 'border', 'cellpadding', 'cellspacing', 'span', 'nowrap'
 ]);
 
 /** 인용문 안의 링크 — 사람이 눌러서 갈 수 있는 곳만 */
@@ -1010,7 +2337,8 @@ function quoteInto(host, html) {
             : name === 'src' && tag === 'IMG' ? quoteSrc(at.value)
               : name === 'alt' && tag === 'IMG' ? at.value
                 : QUOTE_ATTRS.has(name) ? at.value : '';
-        if (val) el.setAttribute(name, val);
+        // 칸의 nowrap 은 값 없이 온다 (<td nowrap>) — 빈 값이어도 남긴다 (붙인 엑셀 표의 줄바꿈 안 함이 답장·전달에서 빠지지 않게)
+        if (val || (name === 'nowrap' && (tag === 'TD' || tag === 'TH'))) el.setAttribute(name, val);
       }
       // 주소가 살아남지 못한 그림은 빈 네모로 남는다 — 아예 넣지 않는다
       if (tag === 'IMG' && !el.getAttribute('src')) continue;
@@ -1127,7 +2455,7 @@ function draftNow(html = body.innerHTML) {
     cc: $('cc').value,
     bcc: $('bcc').value,
     subject: $('subject').value,
-    bodyHtml: draftBody(html),
+    bodyHtml: draftBody(editorFree(html)),
     inReplyTo: (context && context.inReplyTo) || '',
     references: (context && context.references) || '',
     // 경로는 안 보낸다 — 메인은 «대화상자로 골람 파일»만 보내게 되어 있고,
@@ -1189,7 +2517,8 @@ function dirty(html) {
   return $('to').value !== (base.to || '')
     || $('cc').value !== (base.cc || '') || $('bcc').value !== (base.bcc || '')
     || $('subject').value !== (base.subject || '')
-    || (html === undefined ? body.innerHTML : html).trim() !== (base.bodyHtml || '')
+    // 표 편집의 고른 칸 표시(tg-on)는 쓴 글이 아니다 (editorFree)
+    || editorFree(html === undefined ? body.innerHTML : html).trim() !== (base.bodyHtml || '')
     || attachments.map(keyOf).join('\n') !== startAtts;
 }
 

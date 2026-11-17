@@ -1,11 +1,15 @@
 'use strict';
+// 지킴이 — 무엇보다 먼저 (불러오다 터지면 Electron 이 사용자 화면에 오류 창을 띄운다 — 띄우지 않고 실패로 끝낸다)
+process.on('uncaughtException', (e) => { console.error('시험 터짐:', (e && e.stack) || e); try { require('electron').app.exit(1); } catch { process.exit(1); } });
+process.on('unhandledRejection', (e) => { console.error('시험 약속 깨짐:', (e && e.stack) || e); try { require('electron').app.exit(1); } catch { process.exit(1); } });
+require('electron').dialog.showErrorBox = () => {};
 // 메일 쓰기 창에 그림 붙여넣기 — 진짜 renderer/compose.html 에 가짜 붙여넣기를 넣어 본다.
 //
 // 사용자: «메일 작성할때 이미지 붙이기 기능». 예전엔 본문 붙여넣기가 글자만 받아서
 // 화면 캡처(Win+Shift+S)·브라우저 «이미지 복사»를 붙이면 아무것도 안 들어갔다.
 //   [1] 화면 캡처 PNG → 커서 자리에 본문 그림 (data:), 이름 «붙여넣은 그림 YYYYMMDD-HHMMSS.png», 알림 한 줄.
 //       화면 배율이 2면 width 를 반으로 (HiDPI 캡처가 화면에서 본 크기로), 1이면 width 없음
-//   [2] 엑셀 칸 꼴 (글 + 표 HTML + 그림) → 글만. 글만 붙이기도 예전 그대로
+//   [2] 엑셀 칸 꼴 (글 + 표 HTML + 그림) → 표 (그림은 버린다 — 자세한 것은 tablepaste.test.js). 글만 붙이기도 예전 그대로
 //   [3] 워드 그림 꼴 (글 없음, HTML <img file://>, PNG) → 그림. file:// 주소는 안 들어간다
 //   [4] 브라우저 «이미지 복사» 꼴 (글은 주소, HTML <img https>, PNG) → 그림. 바깥 주소는 안 들어간다
 //   [5] 5MB 넘는 그림 → JPEG 로 줄여 5MB 아래로, «커서 줄였습니다 (… → …)»
@@ -241,13 +245,15 @@ app.whenReady().then(async () => {
   ok(imgs && imgs[0].width === '200' && imgs[0].nw === 400, '화면 배율 2 → width = 400/2 = 200 (픽셀은 그대로 400)', imgs);
   await js('Object.defineProperty(window, "devicePixelRatio", { configurable: true, get: () => 1 }); true');
 
-  console.log('\n[2] 엑셀 칸 꼴 → 글만');
+  console.log('\n[2] 엑셀 칸 꼴 → 표 (그림은 버린다)');
+  // 예전엔 «글만»이었다 — 이제 표로 넣는다 (renderer/pastetable.js · tablepaste.test.js). 같이 실려 온 그림은 여전히 안 들어간다
   await js('__t.reset()');
   await js(`(async () => __t.paste({ text: '1월\\t2월', html: '<table><tr><td>1월</td><td>2월</td></tr></table>', files: [await __t.png(200, 40)] }))()`);
   await sleep(600);
   imgs = await js('__t.imgs()');
   let seq = await js('__t.seq()');
-  ok(imgs.length === 0 && /^가나1월\s2월다라$/.test(seq), '글 + 표 + 그림 → 글만 (그림은 안 들어간다)', { imgs: imgs.length, seq });
+  const cells2 = await js('[...document.querySelectorAll("#body table td")].map((td) => td.textContent)');
+  ok(imgs.length === 0 && seq === '가나1월2월다라' && JSON.stringify(cells2) === '["1월","2월"]', '글 + 표 + 그림 → 표 (그림은 안 들어간다)', { imgs: imgs.length, seq, cells2 });
   await js('__t.reset()');
   await js(`__t.paste({ text: '그냥 글' })`);
   ok(await js('__t.seq()') === '가나그냥 글다라', '글만 붙이기 — 예전 그대로', await js('__t.seq()'));

@@ -215,6 +215,76 @@
   /* 인용문 안의 표는 대개 서명이다. 원문 너비를 그대로 들고 오면 창을 밀어낸다. */
   .body blockquote table { max-width: 100%; }
   .body blockquote img { max-width: 100%; height: auto; }
+  /* 표 칸 너비는 받는 사람과 같게 — 메일 프로그램은 칸의 width 를 안쪽 너비(content-box)로 본다.
+     창 전체의 border-box 를 칸에도 쓰면 width:120px 칸이 여기서만 좁아 보인다 */
+  .body td, .body th { box-sizing: content-box; }
+  /* 표 편집 — 고른 칸. 칸 배경색(인라인) 위에 옅은 파랑을 덮는다. 흰 종이 위라 두 테마 같은 값 */
+  .body .tg-on { background-image: linear-gradient(rgba(35, 131, 226, 0.16), rgba(35, 131, 226, 0.16)); }
+  /* 칸을 여럿 고르는 동안 글 고르기 색은 감춘다 — 칸 고르기만 보이게 */
+  .body.tg-cells ::selection { background: transparent; }
+
+  /* 표 편집 도구 층 — 본문(종이) 위에 겹쳐 그리고 종이 밖으로는 안 나간다. 본문 HTML 에는 안 들어간다 (compose.js 표 편집) */
+  .tg-layer { position: absolute; z-index: 6; overflow: hidden; pointer-events: none; display: none; }
+  .tg-layer.on { display: block; }
+  .tg-layer > div { position: absolute; display: none; pointer-events: auto; user-select: none; }
+  .tg-layer > div.on { display: flex; align-items: center; justify-content: center; }
+  /* 손잡이·+ 띠 — 흰 종이 위라 두 테마 같은 값 (노션의 옅은 회색) */
+  .tg-grip {
+    border-radius: 4px; color: #9b9a97; font-size: 10px; line-height: 1; letter-spacing: -2px;
+    background: #fff; box-shadow: 0 0 0 1px rgba(55, 53, 47, 0.14); cursor: grab;
+  }
+  .tg-row { width: 13px; height: 20px; }
+  .tg-col { width: 22px; height: 12px; letter-spacing: 0; }
+  .tg-grip:hover, .tg-grip.lit { background: #ebebea; color: #37352f; }
+  .tg-plus { border-radius: 4px; color: #9b9a97; font-size: 12px; background: rgba(55, 53, 47, 0.05); cursor: pointer; }
+  .tg-plus:hover { background: rgba(55, 53, 47, 0.12); color: #37352f; }
+  .tg-size { width: 7px; cursor: col-resize; }
+  .tg-size::after { content: ''; position: absolute; left: 2px; top: 0; bottom: 0; width: 3px; border-radius: 2px; background: #2383e2; }
+  /* 고른 칸 위 막대 — 창 꾸밈이라 테마 색 */
+  .tg-layer > .tg-cellbar {
+    gap: 2px; padding: 3px; border-radius: 8px; background: #26262c;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35), inset 0 0 0 0.5px var(--separator);
+  }
+  :root[data-theme="light"] .tg-layer > .tg-cellbar { background: #fff; }
+  .tg-cellbar button {
+    all: unset; cursor: default; font-family: inherit; font-size: 11.5px; color: var(--label);
+    padding: 3px 8px; border-radius: 6px; white-space: nowrap;
+  }
+  .tg-cellbar button:hover { background: var(--fill-hi); }
+  .tg-cellbar button[disabled] { color: var(--tertiary); background: none; }
+  .tg-cellbar button.hide { display: none; }
+  /* 표 메뉴(손잡이·오른쪽 클릭)와 «표» 고르개 — 창 꾸밈이라 테마 색. 뒤가 비치면 아래 글과 겹쳐 안 읽힌다 */
+  .tg-menu, .tg-pick {
+    position: absolute; z-index: 45; background: #26262c; border-radius: 9px; padding: 4px;
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45), inset 0 0 0 0.5px var(--separator);
+    font-size: 12px; color: var(--label);
+  }
+  :root[data-theme="light"] .tg-menu, :root[data-theme="light"] .tg-pick { background: #fff; }
+  /* 작은 창에서는 카드 높이로 잘리고 안에서 굴린다 (compose.js openMenu 가 max-height 를 준다) */
+  .tg-menu { min-width: 150px; overflow-y: auto; }
+  .tg-menu .mi {
+    display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px;
+    cursor: default; white-space: nowrap;
+  }
+  .tg-menu .mi.on { background: var(--fill-hi); }
+  /* 라이트: 흰 메뉴 위 옅은 회색 줄만으로는 키보드로 고른 줄이 안 보인다 — 왼쪽 막대를 더한다 (주소록 목록과 같게) */
+  :root[data-theme="light"] .tg-menu .mi.on { box-shadow: inset 2px 0 0 var(--accent); }
+  .tg-menu .mi[aria-disabled="true"] { color: var(--tertiary); }
+  .tg-menu .mi .sub { margin-left: auto; padding-left: 12px; color: var(--tertiary); font-size: 10px; }
+  /* 배경색 견본 — 색은 --c 로 받는다 (기본은 빈 칸) */
+  .tg-menu .sw {
+    width: 14px; height: 14px; border-radius: 4px; flex: none;
+    background: var(--c, transparent); box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.45);
+  }
+  .tg-menu hr { border: 0; height: 0.5px; margin: 4px 2px; background: var(--separator); }
+  .tg-pick { display: none; padding: 8px; }
+  .tg-pick.on { display: block; }
+  .tg-pick .grid { display: grid; grid-template-columns: repeat(8, 16px); gap: 3px; }
+  .tg-pick .sq { width: 16px; height: 16px; border-radius: 3px; box-shadow: inset 0 0 0 1px var(--fill-hi); }
+  /* 라이트: 옅은 채움 테두리는 흰 바탕에서 안 보인다 — 칸 테두리를 짙게 */
+  :root[data-theme="light"] .tg-pick .sq { box-shadow: inset 0 0 0 1px rgba(60, 60, 67, 0.36); }
+  .tg-pick .sq.on { background: color-mix(in srgb, var(--accent) 30%, transparent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .tg-pick .lbl { margin-top: 6px; text-align: center; font-size: 11.5px; color: var(--secondary); }
 
   .files { flex: none; padding: 0 14px 6px; display: flex; flex-wrap: wrap; gap: 5px; }
   .file {
@@ -342,11 +412,25 @@
       <button data-cmd="justifyCenter" title="가운데 정렬">≣</button>
       <span class="sep"></span>
       <button id="btn-image" title="본문에 그림 넣기">그림</button>
+      <button id="btn-table" title="표 넣기">표</button>
       <button id="btn-link" title="링크 넣기">링크</button>
       <button data-cmd="removeFormat" title="서식 지우기">서식 지우기</button>
     </div>
 
     <div class="body" id="body" contenteditable="true" data-ph="내용을 쓰세요"></div>
+    <!-- 표 편집 손잡이·+ 띠·너비 손잡이·고른 칸 막대 — 본문(종이) 위에 겹쳐 그린다. 본문 HTML 에는 안 들어간다 (compose.js 표 편집) -->
+    <div class="tg-layer" id="tg-layer">
+      <div class="tg-grip tg-row" id="tg-row" title="행 — 누르면 메뉴">⋮⋮</div>
+      <div class="tg-grip tg-col" id="tg-col" title="열 — 누르면 메뉴">⋯</div>
+      <div class="tg-plus" id="tg-add-col" title="끝에 열 넣기">+</div>
+      <div class="tg-plus" id="tg-add-row" title="끝에 행 넣기">+</div>
+      <div class="tg-size" id="tg-size" title="끌어서 열 너비 바꾸기"></div>
+      <div class="tg-cellbar" id="tg-cellbar">
+        <button id="tg-merge">칸 합치기</button><button id="tg-split">칸 나누기</button><button id="tg-paint">배경색</button><button id="tg-wipe">내용 지우기</button>
+      </div>
+    </div>
+    <!-- «표» 단추의 칸 고르기 (8×8) -->
+    <div class="tg-pick" id="tg-pick"><div class="grid" id="tg-grid"></div><div class="lbl" id="tg-lbl">1 × 1</div></div>
     <div class="files" id="files"></div>
 
     <div class="foot">
@@ -383,4 +467,8 @@
 <script src="drag.js"></script>
 <!-- 붙여넣은 그림을 어떻게 받을지 정하는 셈 (window.nunsPaste) — compose.js 가 쓴다 -->
 <script src="pastepick.js"></script>
+<!-- 붙여넣은 표를 허락한 것만 남겨 다시 짓는 셈 (window.nunsTable) — compose.js 가 쓴다 -->
+<script src="pastetable.js"></script>
+<!-- 표 편집의 칸 지도 셈 (window.nunsGrid) — compose.js 가 쓴다 -->
+<script src="tablegrid.js"></script>
 <script src="compose.js"></script>
