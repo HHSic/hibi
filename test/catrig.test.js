@@ -7,7 +7,8 @@
 //   [2] 자리 — 여러 화면 크기에서 구석 고양이는 화면 안·글 자리 밖·단추 줄 밖, 주인공은 오른쪽 아래 안내 칸 밖.
 //       영상 프레임 알파와 리그 사진을 겹쳐 보면 같은 자리다 (IoU)
 //   [3] 띄우기 — 고양이마다 휴식 창에 앉아 ready(webgl)·세계 크기를 알리고, 거울 고양이는 scale -1 1, 커서를 막지 않는다.
-//       주인공은 안내·단추와 안 겹친다. 다른 모니터는 영상처럼 비워 둔다(주인공 자리도 안 켠다). 며칠 만에 보면 친밀도를 식혀 저장한다
+//       주인공은 안내·단추와 안 겹친다. 다른 모니터는 영상처럼 비워 둔다(주인공 자리도 안 켠다). 며칠 만에 보면 친밀도를 식혀 저장한다.
+//       크기가 소수인 화면(확대 0.75)에서도 바닥이 화면 끝에 맞고, «고양이 만지기»를 끈 영상 고양이도 리그와 같은 바닥에 앉는다
 //   [4] 쓰다듬기·휴식 끝 — 커서가 창 밖으로 나가도 혼자 숨쉰다. 진짜 커서로 쓰다듬다 휴식이 시간으로 끝나도(메인 endBreak)
 //       쓰다듬은 횟수가 메인 store 까지 간다. 걷으면 사라진다. 손가락으로 떼며 쓸어도 센다
 //   [4b] 혼자 두리번 — 진짜 고양이처럼 홱 돌고 멈춘다 (90% 까지 0.8초 안, 넘치지 않고, 구석 크기에서 그린 장 사이 건너뛰지 않는다).
@@ -256,15 +257,67 @@ app.whenReady().then(async () => {
   // 1082.67 은 clientHeight 로 올림, 1077.33 은 내림되는 높이다 — 상자를 정수 크기로 잡으면 앞쪽은 화면 끝을 넘고, 뒤쪽은 고양이 밑으로 화면 픽셀 한 줄이 빈다.
   // 1077.33 (창 808 DIP) 은 배율 1·1.5 모두 그 높이가 된다. 1081.33 (창 811 DIP) 은 배율 1.5 에서 1082.67 이 되어 올림 쪽만 본다
   console.log('\n[3a] 크기가 소수인 화면 — 바닥에 붙는 고양이');
-  for (const height of [1082.67, 1077.33]) {
-    for (const clipId of ['cat', 'cat-meow', 'cat-lie', 'cat-roll']) {
+  const FRACTION = { heights: [1082.67, 1077.33], clips: ['cat', 'cat-meow', 'cat-lie', 'cat-roll'] };
+  const rigBottom = {};   // 아래 [3a2] 가 영상 바닥과 견준다
+  for (const height of FRACTION.heights) {
+    for (const clipId of FRACTION.clips) {
       const { win, s } = await begin(1922.67, height, pay(clipId), 0.75);
       const tag = `${clipId} ${height}`;
       if (s.none) { ok(false, `${tag}: 앉는다`, s); win.destroy(); continue; }
       ok(Math.abs(s.H - Math.round(s.H)) > 0.1, `${tag}: 시험 창 높이가 소수다`, s.H);
       ok(inside(s.cv, s.W, s.H) && Math.abs(s.box.b - s.cv.b) < 0.1 && Math.abs(s.H - s.cv.b) < 0.15, `${tag}: 화면 안, 바닥이 자리 상자·화면 끝과 맞는다`, { box: s.box.b, cv: s.cv.b, H: s.H });
+      rigBottom[tag] = s.cv.b;
       win.destroy();
     }
+  }
+
+  // «고양이 만지기»를 끈 영상 길(clip.js mount)도 소수 크기로 자리를 잡아야 한다. clientWidth·clientHeight 로 재면
+  // 1082.67 에서는 영상 바닥이 화면 끝을 0.32 넘고, 1077.33 에서는 0.35 모자라 맨 아랫줄 화면 픽셀이 빈다 — 리그와는 0.3~0.4 어긋난다
+  console.log('\n[3a2] 크기가 소수인 화면 — 영상 고양이(«고양이 만지기» 끔)도 같은 바닥');
+  const VIDEO_STATE = `(async () => {
+    const host = document.getElementById('curtain');
+    let v = null;
+    for (let i = 0; i < 100; i++) {
+      v = host.querySelector('video.ent-clip');
+      if (v && v.readyState >= 2 && v.classList.contains('in')) break;
+      await new Promise((q) => setTimeout(q, 50));
+    }
+    if (!v || !v.classList.contains('in')) return { none: true, video: !!v };
+    await new Promise((q) => setTimeout(q, 900));   // 들어오는 움직임(translateY 0.7초)이 끝난 뒤
+    const R = (el) => { const b = el.getBoundingClientRect(); return { l: b.left, t: b.top, r: b.right, b: b.bottom }; };
+    return { v: R(v), rig: document.querySelectorAll('#curtain .ent-rig').length, W: visualViewport.width, H: visualViewport.height };
+  })()`;
+  for (const height of FRACTION.heights) {
+    for (const clipId of FRACTION.clips) {
+      const win = await overlay(1922.67, height, true, 0.75);
+      await js(win, `window.__begin(${JSON.stringify(pay(clipId, { catRig: null }))})`);
+      const s = await js(win, VIDEO_STATE);
+      const tag = `${clipId} ${height}`;
+      if (s.none) { ok(false, `${tag} 영상: 앉는다`, s); win.destroy(); continue; }
+      ok(s.rig === 0 && Math.abs(s.H - Math.round(s.H)) > 0.1, `${tag} 영상: 리그 없이 영상이고, 시험 창 높이가 소수다`, { rig: s.rig, H: s.H });
+      ok(inside(s.v, s.W, s.H) && Math.abs(s.H - s.v.b) < 0.15 && rigBottom[tag] != null && Math.abs(s.v.b - rigBottom[tag]) < 0.1,
+        `${tag} 영상: 화면 안, 바닥이 화면 끝·만지는 고양이 바닥과 맞는다`, { video: s.v.b, rig: rigBottom[tag], H: s.H });
+      win.destroy();
+    }
+  }
+  {
+    // host 가 display:none 이면 소수 크기를 못 잰다('auto') — 예전처럼 창 크기(innerWidth·innerHeight)로 물러난다
+    const win = await overlay(1922.67, FRACTION.heights[0], true, 0.75);
+    await js(win, `window.__begin(${JSON.stringify(pay('cat', { catRig: null }))})`);
+    const s = await js(win, `(async () => {
+      const host = document.getElementById('curtain');
+      let v = null;
+      for (let i = 0; i < 100 && !(v = host.querySelector('video.ent-clip')); i++) await new Promise((q) => setTimeout(q, 50));
+      if (!v) return { none: true };
+      host.style.display = 'none';
+      dispatchEvent(new Event('resize'));
+      const want = window.nunsClip.layout(innerWidth, innerHeight, window.nunsClip.CLIPS.cat);
+      const got = { x: parseFloat(v.style.left), y: parseFloat(v.style.top), w: parseFloat(v.style.width), h: parseFloat(v.style.height) };
+      return { cs: getComputedStyle(host).height, want, got };
+    })()`);
+    ok(!s.none && s.cs === 'auto' && ['x', 'y', 'w', 'h'].every((k) => Math.abs(s.got[k] - s.want[k]) < 0.01),
+      'host 가 display:none 이면 영상은 창 크기(innerWidth·innerHeight)로 자리를 잡는다', s);
+    win.destroy();
   }
 
   console.log('\n[3b] 주인공 — 여러 화면');

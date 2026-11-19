@@ -325,8 +325,12 @@
     let dead = false;
 
     const place = () => {
-      const w = host.clientWidth || window.innerWidth;
-      const h = host.clientHeight || window.innerHeight;
+      // clientWidth·clientHeight 는 정수로 반올림된다 — 화면 크기가 소수면(배율 1.25·1.5) 바닥에 앉는 고양이가 화면 끝을 넘거나
+      // 밑으로 화면 픽셀 한 줄이 비었고, 같은 자리에 앉는 만지는 고양이(enter.js mountRig)와 바닥이 0.5px 까지 어긋났다.
+      // host 가 display:none 이면 'auto' 라 예전처럼 창 크기로 물러난다
+      const cs = window.getComputedStyle(host);
+      const w = parseFloat(cs.width) || window.innerWidth;
+      const h = parseFloat(cs.height) || window.innerHeight;
       const b = layout(w, h, clip);
       v.style.left = `${b.x}px`;
       v.style.top = `${b.y}px`;
