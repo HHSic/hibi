@@ -41,6 +41,12 @@ console.log('\n[1] 다듬기');
     && r.oldest === 99 && r.blocked === false && r.days === 0 && r.kept === 0 && r.unread === 0 && r.skippedBoxes === 0,
   'normResult — 숫자는 0 이상 정수, more·blocked 는 참일 때만, 오류는 200자, 기간은 목록 값', r);
   ok(normResult(null) === undefined && normResult([1]) === undefined && normResult({}).error === null, '…객체가 아니면 없음, 빈 오류는 null');
+  // «확인 안 됨»의 까닭 — 아는 코드만, 0 이상 정수, 0 은 뺀다. 화면·기록 글
+  const w = normResult({ why: { headmismatch: '12', sizemismatch: 200.6, idmismatch: 0, evil: 5, __proto__: { x: 1 } } }).why;
+  ok(same(w, { sizemismatch: 200, headmismatch: 12 }) && same(normResult({ why: 'x' }).why, {}) && same(normResult({}).why, {}),
+    'normResult.why — 아는 까닭 코드만 남긴다', w);
+  ok(tidyacct.whyText(w) === ' — ID 없고 크기 다름 200 · 날짜·보낸이·제목 다름 12' && tidyacct.whyText({}) === '' && tidyacct.whyText(null) === '',
+    'whyText — 기록에 붙는 까닭 글', tidyacct.whyText(w));
   // 기록 없는 폴더는 건너뛴 폴더 안의 몫이다 — 손으로 고친 파일이 «건너뜀 1곳 중 기록 없음 5곳»을 그리지 않게
   ok(normResult({ skippedBoxes: 2, unsavedBoxes: 5 }).unsavedBoxes === 2 && normResult({ skippedBoxes: 3, unsavedBoxes: 1 }).unsavedBoxes === 1,
     '…unsavedBoxes 는 skippedBoxes 를 넘지 않는다');

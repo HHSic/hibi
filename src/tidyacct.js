@@ -36,6 +36,20 @@ function normEntry(x) {
   return { on, days: normDays(x.days), ...(on && x.copyAsk === true ? { copyAsk: true } : {}) };
 }
 
+/** «확인 안 됨» 까닭 코드 (mailtidy UNVERIFIED) — 이 밖의 열쇠는 버린다 */
+const WHY_CODES = ['nofile', 'empty', 'damaged', 'idmismatch', 'sizemismatch', 'headmismatch'];
+const WHY_LABEL = {
+  nofile: '파일 못 엶', empty: '빈 파일', damaged: '깨진 파일',
+  idmismatch: 'Message-ID 다름', sizemismatch: 'ID 없고 크기 다름', headmismatch: '날짜·보낸이·제목 다름'
+};
+
+/** «확인 안 됨»의 까닭을 « — 날짜·보낸이·제목 다름 12 · ID 없고 크기 다름 200» 꼴로. 없으면 빈 글 */
+function whyText(why) {
+  if (!isObj(why)) return '';
+  const parts = WHY_CODES.filter((k) => count(why[k]) > 0).map((k) => `${WHY_LABEL[k]} ${count(why[k])}`);
+  return parts.length ? ` — ${parts.join(' · ')}` : '';
+}
+
 /** 0 이상 정수만 — 손으로 고친 파일·이상한 값은 0 */
 function count(x) {
   const n = Number(x);
@@ -53,7 +67,9 @@ function normResult(v) {
     unread: count(v.unread), uncertain: count(v.uncertain), skippedBoxes: count(v.skippedBoxes),
     more: v.more === true, error: text(v.error), oldest: count(v.oldest), blocked: v.blocked === true,
     // PC 에 저장 기록이 없어 건너뛴 폴더 수 (skippedBoxes 안의 몫) · 복사 길을 묻지 않아 껐다
-    unsavedBoxes: Math.min(count(v.unsavedBoxes), count(v.skippedBoxes)), copyAsk: v.copyAsk === true
+    unsavedBoxes: Math.min(count(v.unsavedBoxes), count(v.skippedBoxes)), copyAsk: v.copyAsk === true,
+    // «확인 안 됨»의 까닭별 수 — 0 인 것은 뺀다
+    why: Object.fromEntries(WHY_CODES.map((k) => [k, count(isObj(v.why) ? v.why[k] : 0)]).filter(([, n]) => n > 0))
   };
 }
 
@@ -172,6 +188,7 @@ function capShare(left, accountsLeft) {
 }
 
 module.exports = {
+  whyText, WHY_LABEL,
   TIDY_DAYS, PATH_KEYS, goodId, normDays, normEntry, normResult, normMap, normResults, entryOf, anyOn, allOff,
   pathOf, samePath, afterUpdate, migrate, gapMs, dueOrder, capShare
 };

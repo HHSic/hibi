@@ -909,6 +909,18 @@ function tidyTail(days, everyMin) {
     : `받은 지 ${days}일 지난 메일을 읽음과 상관없이 옮깁니다. 별표·중요 메일은 남깁니다.`;
 }
 
+// «확인 안 됨»의 까닭 — src/tidyacct.js WHY_LABEL 과 같은 말 (설정 창은 그 모듈을 싣지 않는다)
+const UNVERIFIED_WHY = [
+  ['headmismatch', '날짜·보낸이·제목 다름'], ['sizemismatch', 'ID 없고 크기 다름'], ['idmismatch', 'Message-ID 다름'],
+  ['damaged', '깨진 파일'], ['empty', '빈 파일'], ['nofile', '파일 못 엶']
+];
+/** « (날짜·보낸이·제목 다름 12 · ID 없고 크기 다름 200)» — 까닭을 모르면(옛 결과) 빈 글 */
+function unverifiedWhy(why) {
+  if (!why || typeof why !== 'object') return '';
+  const parts = UNVERIFIED_WHY.filter(([k]) => Number(why[k]) > 0).map(([k, label]) => `${label} ${Math.floor(Number(why[k]))}`);
+  return parts.length ? ` (${parts.join(' · ')})` : '';
+}
+
 /**
  * 계정 한 줄의 상태 — 무엇이 막고 있는지를 먼저, 그다음 마지막 실행이 무엇을 했는지.
  * 순서: 꺼짐(빈 줄 — 옛 설정에서 옮겨 와 꺼 뒀으면 그 까닭) · 쓸 수 없음(조건·계정) · 멈춤 · 지난 메일로 쉼 · 도는 중 · 아직 안 돔 · 옮김 ·
@@ -960,7 +972,7 @@ function tidyLine(a, t) {
     + (unread && head !== 'unread' ? ` · 안 읽은 ${a.unread}통 남김` : '')
     + (head === 'important' ? (others ? ` · 별표 등 ${others}통 남김` : '') : a.spared ? ` · 별표·중요 등 ${a.spared}통 남김` : '')
     + (a.unsaved && head !== 'unsaved' ? ` · 저장 안 된 ${a.unsaved}통 남김(«지난 메일 받기» 필요)` : '')
-    + (a.unverified ? ` · 확인 안 된 ${a.unverified}통 남김` : '')
+    + (a.unverified ? ` · 확인 안 된 ${a.unverified}통 남김${unverifiedWhy(a.why)}` : '')
     + (a.more ? ' · 나머지는 다음에' : '')
     + skippedText(a)
     + (a.error && head !== 'error' ? ` · 실패: ${a.error}` : '');

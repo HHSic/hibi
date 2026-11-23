@@ -628,7 +628,7 @@ async function runTidy(dir, accounts) {
           + ' 옛 설정에서 옮겨 와 그 방식은 묻지 않았으므로 껐습니다 (다시 켜면 확인합니다)');
       }
       noteTidyResult(acc, {
-        at: Date.now(), days, moved: r.moved, kept: r.kept, unsaved: r.unsaved, unverified: r.unverified,
+        at: Date.now(), days, moved: r.moved, kept: r.kept, unsaved: r.unsaved, unverified: r.unverified, why: p.why || r.why || {},
         spared: r.spared, important: r.important, flagged: r.flagged, unread: r.unread, uncertain: r.uncertain,
         skippedBoxes: r.skippedBoxes.length, unsavedBoxes: (r.unsavedBoxes || []).length, copyAsk: p.copyAsk === true,
         more: r.more, error: p.error || r.errors[0] || null, oldest: r.oldest,
@@ -682,7 +682,7 @@ function logTidyRun(acc, days, r, errors) {
   if (same || !(r.moved || r.kept || r.uncertain || errors.length || r.skippedBoxes.length)) return;
   evlog.log('메일', mailtidy.maskAddr(`서버 정리 · ${labelFor(acc)} · ${r.moved}통 휴지통으로`
     + (r.uncertain ? ` · 옮기는 중 끊겨 ${r.uncertain}통은 옮겨졌을 수 있음` : '')
-    + (r.kept ? ` · 남김 ${r.kept}통 (저장 안 됨 ${r.unsaved} · 확인 안 됨 ${r.unverified})` : '')
+    + (r.kept ? ` · 남김 ${r.kept}통 (저장 안 됨 ${r.unsaved} · 확인 안 됨 ${r.unverified}${tidyacct.whyText(r.why)})` : '')
     + (r.spared ? ` · 별표·중요 등 ${r.spared}통은 남김` : '')
     + (r.unread ? ` · 안 읽은 ${r.unread}통은 읽을 때까지 남김` : '')
     + (r.more ? ` · 남은 것은 다음에 (한 번에 ${mailtidy.CAP}통까지, 모든 계정 합${r.aborted ? ', 중간에 끊음' : ''})` : '')

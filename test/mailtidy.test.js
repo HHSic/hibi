@@ -242,6 +242,28 @@ const pick = (r) => ({ moved: r.moved, verified: r.verified, kept: r.kept, unsav
     const s = mk(1000, { subject: 'something else' });
     const b = await one('subj', { ...mk(1000), file: Buffer.from(s.raw, 'latin1') });
     ok(b.r.moved === 0 && b.r.unverified === 1, 'Message-ID 는 같고 Subject 가 다르면 남김', pick(b.r));
+    ok(b.r.why.headmismatch === 1 && Object.keys(b.r.why).length === 1 && Object.values(b.r.per)[0].why.headmismatch === 1,
+      '…«확인 안 됨»의 까닭을 센다 (전체·계정마다 headmismatch 1)', { why: b.r.why, per: Object.values(b.r.per)[0].why });
+  }
+  {
+    // 이카운트 — BODY[HEADER.FIELDS] 의 인코딩 낱말을 원문과 다르게(나눔 자리·B/Q·문자셋) 다시 써서 준다. 뜻이 같으면 옮긴다
+    const file = '=?UTF-8?B?7ZWc6riA7YWM7Iqk7Yq4?=';                        // «한글테스트»
+    for (const [label, srvSubj, srvFrom] of [
+      ['나눔 자리가 다름', '=?UTF-8?B?7ZWc6riA?=\r\n =?UTF-8?B?7YWM7Iqk7Yq4?=', null],
+      ['B 와 Q', '=?UTF-8?Q?=ED=95=9C=EA=B8=80=ED=85=8C=EC=8A=A4=ED=8A=B8?=', null],
+      ['문자셋이 다름 (EUC-KR)', '=?EUC-KR?B?x9Gx28XXvbrGrg==?=', null],
+      ['보낸이 이름도 다시 씀', '=?UTF-8?B?7ZWc6riA?= =?UTF-8?B?7YWM7Iqk7Yq4?=', '=?UTF-8?Q?=ED=99=8D?= <a@corp.example>']
+    ]) {
+      const srv = mk(1000, { subject: srvSubj, ...(srvFrom ? { from: srvFrom } : {}) });
+      const f = mk(1000, { subject: file, ...(srvFrom ? { from: '=?UTF-8?B?7ZmN?= <a@corp.example>' } : {}) });
+      const { r } = await one(`reenc${label.length}${srvSubj.length}`, { ...srv, file: Buffer.from(f.raw, 'latin1') });
+      ok(r.moved === 1 && r.unverified === 0, `머리글 원문은 다르고 뜻은 같다 (${label}) → 옮긴다`, pick(r));
+    }
+    // 뜻이 다르면 지금처럼 남긴다
+    const srv = mk(1000, { subject: '=?UTF-8?B?7ZWc6riA?=' });                 // «한글»
+    const f = mk(1000, { subject: file });
+    const { r } = await one('reencDiff', { ...srv, file: Buffer.from(f.raw, 'latin1') });
+    ok(r.moved === 0 && r.unverified === 1 && r.why.headmismatch === 1, '…풀어서도 뜻이 다르면 남긴다 (headmismatch)', pick(r));
   }
   {
     const srv = mk(1000, { id: null, subject: 'aaaa' });

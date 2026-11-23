@@ -25,6 +25,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const libmime = require('libmime');
 const mail = require('./mail');
 const mailbackup = require('./mailbackup');
 const mailmove = require('./mailmove');
@@ -273,6 +274,29 @@ async function carryMoved(fromDir, toDir) {
   return to.size - before;
 }
 
+/**
+ * 머리글 값을 뜻으로 — RFC 2047 인코딩 낱말(=?UTF-8?B?…?=)을 풀고 공백을 하나로. 날것 8비트(latin1 로 읽은 UTF-8)는 UTF-8 로 읽는다.
+ * 이카운트처럼 BODY[HEADER.FIELDS] 를 줄 때 인코딩 낱말을 다시 써서(나눔 자리·B/Q) 주는 서버가 있다 — 원문 글자는 달라도 뜻은 같다
+ */
+function headMeaning(v) {
+  let t = String(v == null ? '' : v);
+  if (/[\x80-\xff]/.test(t)) {
+    const u = Buffer.from(t, 'latin1').toString('utf8');
+    if (!u.includes('\ufffd')) t = u;
+  }
+  try { t = libmime.decodeWords(t); } catch { /* 못 풀면 원문으로 */ }
+  return t.replace(/\s+/g, ' ').trim();
+}
+
+/** 파일과 서버의 머리글 값이 같은가 — 원문이 같거나, 풀어서 뜻이 같으면 같다 (한쪽만 비었으면 다르다) */
+function sameHead(a, b) {
+  const x = a || '';
+  const y = b || '';
+  if (x === y) return true;
+  if (!x || !y) return false;
+  return headMeaning(x) === headMeaning(y);
+}
+
 const latin1 = (v) => (Buffer.isBuffer(v) ? v.toString('latin1') : String(v == null ? '' : v));
 
 /**
@@ -321,7 +345,7 @@ async function checkFile(file, msg, sid, sh) {
       // 서버에 Message-ID가 없으면 크기라도 바이트까지 같아야 한다
       return 'sizemismatch';
     }
-    if (SAME_HEADS.some((k) => (fields[k] || '') !== (sh[k] || ''))) return 'headmismatch';
+    if (SAME_HEADS.some((k) => !sameHead(fields[k], sh[k]))) return 'headmismatch';
     return 'ok';
   } catch {
     return null;
@@ -410,11 +434,19 @@ async function tidyAll(accounts, dir, opts = {}) {
   } = opts;
   const res = Object.assign(into || {}, {
     moved: 0, verified: 0, kept: 0, unsaved: 0, unverified: 0, spared: 0, important: 0, flagged: 0, uncertain: 0, unread: 0,
+    // why — «확인 안 됨»의 까닭별 수 (UNVERIFIED 의 코드: nofile·empty·damaged·idmismatch·sizemismatch·headmismatch)
+    why: {},
     skippedBoxes: [], unsavedBoxes: [], errors: [], accounts: 0, failedAccounts: 0, noMove: [], oldest: 0, per: {},
     more: false, complete: false, aborted: false, halt: false
   });
   // 지금 보는 계정의 결과 — 오류는 이 계정 것만 따로도 모은다 (계정은 하나씩 차례로 본다)
   let cur = null;
+  /** «확인 안 됨» 한 통 — 까닭별로도 센다 (화면·기록이 무엇이 안 맞는지 말한다) */
+  const unverifiedBy = (code) => {
+    res.unverified += 1;
+    res.kept += 1;
+    res.why[code] = (res.why[code] || 0) + 1;
+  };
   const fail = (msg, front = false) => {
     if (front) res.errors.unshift(msg);
     else res.errors.push(msg);
@@ -724,7 +756,7 @@ async function tidyAll(accounts, dir, opts = {}) {
             const fresh = [];
             for (const u of cand) {
               const code = mm.codes.get(u);
-              if (UNVERIFIED.has(code)) { res.unverified += 1; res.kept += 1; }
+              if (UNVERIFIED.has(code)) unverifiedBy(code);
               else if (SPARED.has(code)) spare(code);
               else fresh.push(u);
             }
@@ -765,8 +797,7 @@ async function tidyAll(accounts, dir, opts = {}) {
                 sidOf.set(u, sid);
                 res.verified += 1;
               } else if (UNVERIFIED.has(v)) {
-                res.unverified += 1;
-                res.kept += 1;
+                unverifiedBy(v);
                 if (mm) mm.codes.set(u, v);
               } else if (SPARED.has(v)) {
                 spare(v);
@@ -828,6 +859,7 @@ async function tidyAll(accounts, dir, opts = {}) {
       // 계정마다의 결과 — 이 계정 앞뒤의 수를 견준다. more 는 이 계정 것만 보려고 잠시 내린다
       const snap = Object.fromEntries(PER_COUNTS.map((k) => [k, res[k]]));
       const skipped0 = res.skippedBoxes.length;
+      const why0 = { ...res.why };
       const unsaved0 = res.unsavedBoxes.length;
       const more0 = res.more;
       res.more = false;
@@ -859,6 +891,7 @@ async function tidyAll(accounts, dir, opts = {}) {
         }
       } finally {
         const p = Object.fromEntries(PER_COUNTS.map((k) => [k, res[k] - snap[k]]));
+        p.why = Object.fromEntries(Object.entries(res.why).map(([k, n]) => [k, n - (why0[k] || 0)]).filter(([, n]) => n > 0));
         p.skippedBoxes = res.skippedBoxes.slice(skipped0);
         p.unsavedBoxes = res.unsavedBoxes.slice(unsaved0);
         p.copy = cur.copy;
