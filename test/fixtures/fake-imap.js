@@ -144,7 +144,8 @@ class FakeClient {
     };
     // noUidValidity: 답에 UIDVALIDITY 가 없다 — 한 번 빠진 답으로 세대가 오르면 안 되는 것을 시험한다
     if (box.noUidValidity) delete this.mailbox.uidValidity;
-    // noDeletedFlag: PERMANENTFLAGS 에 \Deleted 가 없다 — imapflow store.js 는 STORE 를 보내지도 않고 false
+    // noDeletedFlag: PERMANENTFLAGS 에 \Deleted 가 없다 — imapflow store.js 는 STORE 를 보내지도 않고 false (mailmove 는 직접 보낸다).
+    // 정말 못 지우는 서버는 ignoreDeleted 를 같이 켠다
     if (box.noDeletedFlag) this.mailbox.permanentFlags = new Set(['\\Seen', '\\Flagged']);
     // uidNext: 'auto' 면 진짜 UIDNEXT 처럼 줄지 않는 값 (맨 위 메일을 지워도 내려가지 않는다), 숫자면 그 값.
     // 없으면 키를 넣지 않는다 — UIDNEXT 를 안 주는 서버 (옛 시험과 같은 결과)
@@ -378,9 +379,37 @@ class FakeClient {
     return true;
   }
 
-  /** IMAP 명령 보내기 — EXPUNGE·UID EXPUNGE 만 흉내 낸다. 그 밖은 금지로 남기고 던진다 */
+  /**
+   * 직접 보낸 UID STORE (mailmove addDeleted — imapflow 가 PERMANENTFLAGS 로 막을 때). 서버는 PERMANENTFLAGS 와 상관없이 받는다
+   * (목록에 없는 표시는 세션 동안만 산다). ignoreDeleted 폴더는 OK 라고 답하지만 \Deleted 를 붙이지 않는다 — 정말 못 지우는 서버
+   */
+  async _rawStore(attributes) {
+    const range = attributes && attributes[0] && attributes[0].value;
+    const op = String((attributes && attributes[1] && attributes[1].value) || '');
+    const list = ((attributes && attributes[2]) || []).map((a) => a.value);
+    this._cmd('STORE', { path: this.mailbox && this.mailbox.path, range, flags: list, opts: { uid: true, raw: true, op } });
+    if (typeof range !== 'string' || !/^[+-]FLAGS(\.SILENT)?$/i.test(op)) throw new Error('fake: bad raw UID STORE');
+    const box = this._box();
+    if (this.mailbox.readOnly) throw refusal('Mailbox is read-only');
+    if (this.spec.storeNo) throw refusal('Store refused');
+    const remove = op.startsWith('-');
+    const set = parseSet(range, box);
+    for (const m of box.msgs) {
+      if (!set.has(m.uid)) continue;
+      for (const f of list) {
+        if (remove) m.flags.delete(f);
+        else if (!(box.ignoreDeleted && f === '\\Deleted')) m.flags.add(f);
+      }
+    }
+    this.server.log.push({ acc: this.acc, cmd: 'stored', op: remove ? 'remove' : 'add', flags: list, uids: [...set], raw: true });
+    if (this.spec.dropAt === 'store') { this._drop(); throw new Error('Connection not available'); }
+    return { response: { attributes: [] }, next: () => {} };
+  }
+
+  /** IMAP 명령 보내기 — EXPUNGE·UID EXPUNGE·UID STORE 만 흉내 낸다. 그 밖은 금지로 남기고 던진다 */
   async exec(command, attributes) {
     const cmd = String(command).toUpperCase();
+    if (cmd === 'UID STORE') return this._rawStore(attributes);
     if (cmd !== 'EXPUNGE' && cmd !== 'UID EXPUNGE') {
       this.server.log.push({ acc: this.acc, cmd: 'FORBIDDEN', name: `exec ${cmd}` });
       throw new Error(`fake: forbidden exec ${cmd}`);

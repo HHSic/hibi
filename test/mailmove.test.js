@@ -231,9 +231,23 @@ const flow = (e) => e.cmds().filter((x) => !['connect', 'mailboxOpen', 'moved', 
     ok(r.left.length === 1 && !e.cmds().includes('STORE') && e.ids('INBOX').length === 3, '없는 폴더로 COPY — 서버가 거절(TRYCREATE), 원본 그대로', short(r));
   }
   {
+    // 이카운트 — PERMANENTFLAGS 에 \Deleted 가 없다. 표시는 이 연결 동안 붙으므로 UID STORE 를 직접 보내 옮긴다
     const e = await env({ caps: NOMOVE_UP }, { boxExtra: { noDeletedFlag: true } });
-    const r = await mm.moveUids(e.c, [1000], 'Trash', { accKey: 'a1', journal: mm.memJournal() });
-    ok(r.left.length === 1 && !!r.block && !e.cmds().includes('COPY'), 'PERMANENTFLAGS 에 \\Deleted 없음 — 복사도 하지 않고 멈춤', short(r));
+    const j = mm.memJournal();
+    const r = await mm.moveUids(e.c, [1000], 'Trash', { accKey: 'a1', journal: j });
+    const st = e.server.log.filter((x) => x.cmd === 'stored');
+    ok(r.moved.length === 1 && !r.block && !r.error && e.ids('INBOX').length === 2 && e.ids('Trash').length === 1 && st.length === 1 && st[0].raw === true,
+      'PERMANENTFLAGS 에 \\Deleted 없음 — 멈추지 않고 UID STORE 를 직접 보내 옮긴다', { r: short(r), st });
+    ok(j.pending('a1', 'INBOX').length === 0 && e.lost().length === 0, '…일지 비고 잃은 메일 0', j.pending('a1', 'INBOX'));
+  }
+  {
+    // 정말 못 지우는 서버 — STORE 에 OK 라고 하지만 표시가 안 붙는다. 다시 세기가 남은 것을 보고 멈추고, 알림에 받은 목록을 붙인다
+    const e = await env({ caps: NOMOVE_UP }, { boxExtra: { noDeletedFlag: true, ignoreDeleted: true } });
+    const j = mm.memJournal();
+    const r = await mm.moveUids(e.c, [1000], 'Trash', { accKey: 'a1', journal: j });
+    ok(r.moved.length === 0 && r.kept.length === 1 && !!r.block && /PERMANENTFLAGS \(\\Seen \\Flagged\)/.test(r.block)
+      && '1000' in e.inboxFlags() && !e.inboxFlags()['1000'].includes('\\Deleted') && e.ids('Trash').length === 1 && e.lost().length === 0,
+    '…지워지지 않으면 원본을 남기고 멈춘다 (휴지통에 복사본 1통, 알림에 서버 PERMANENTFLAGS)', short(r));
   }
   {
     const e = await env({ caps: NOMOVE, statusNoUidNext: true });

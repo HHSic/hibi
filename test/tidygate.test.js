@@ -1146,14 +1146,16 @@ app.whenReady().then(async () => {
     ok(server.log.some((e) => e.acc === 'a4' && e.cmd === 'COPY') && !server.log.some((e) => e.acc === 'a4' && e.cmd === 'messageMove') && server.forbidden().length === 0,
       '…MOVE 없이 COPY 로 · 금지 명령 0');
 
-    // 이 폴더는 지움 표시를 저장하지 않는다 — 서버 탓으로 되풀이될 실패라 그 계정을 멈춘다
+    // 이 서버는 지움 표시를 받는 척만 하고 지우지 않는다 — 서버 탓으로 되풀이될 실패라 그 계정을 멈춘다
+    // (PERMANENTFLAGS 에 \Deleted 가 없는 것만으로는 멈추지 않는다 — mailmove.test [I])
     server.box('a4', 'INBOX').noDeletedFlag = true;
+    server.box('a4', 'INBOX').ignoreDeleted = true;
     addMail(A4, 3000);
     await quickBackup();
     const at30 = A('a4').at;
     await backup.autoBackupNew({ now: true });
     ok(await until(() => A('a4').at > at30 && !T().running, 5000), '(다시 돌았다)');
-    ok(!!A('a4').blocked && /지움 표시/.test(A('a4').blocked) && inbox('a4').includes(3000) && A('a4').moved === 0,
+    ok(!!A('a4').blocked && /지우지 않아 원본을 남겼습니다.*PERMANENTFLAGS/.test(A('a4').blocked) && inbox('a4').includes(3000) && A('a4').moved === 0,
       '멈춘 계정 — 상태에 까닭, 원본은 그대로', A('a4'));
     // 멈춘 계정에는 붙지 않는다 · 건너뛴다는 기록은 이번 실행에 한 번
     const c30 = conns('a4');
@@ -1182,9 +1184,13 @@ app.whenReady().then(async () => {
     r = await set({ id: 'a4', retry: true });
     ok(r.tidy.messageKind === 'wait' && /멈춘 옮기기가 없습니다/.test(r.tidy.message), '…멈춘 것이 없으면 그렇다고 말한다', r.tidy.message);
     server.box('a4', 'INBOX').noDeletedFlag = false;
+    server.box('a4', 'INBOX').ignoreDeleted = false;
+    // 3000 은 휴지통에 복사본이 있어 열쇠가 남는다 (다시 복사하지 않는다) — 새 메일로 다시 옮기는지 본다
+    addMail(A4, 3001);
+    await quickBackup();
     r = await set({ id: 'a4', on: true }, { startMs: 50 });
     ok(S(r, 'a4').on === true, '풀린 뒤에는 켤 수 있다', r.tidy.message);
-    ok(await until(() => !inbox('a4').includes(3000), 5000) && server.forbidden().length === 0, '…다시 옮긴다', inbox('a4'));
+    ok(await until(() => !inbox('a4').includes(3001), 5000) && server.forbidden().length === 0, '…다시 옮긴다', inbox('a4'));
     await until(() => !T().running, 3000);
     await set({ id: 'a4', on: false });
     accounts = [A1];

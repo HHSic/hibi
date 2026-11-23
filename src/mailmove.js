@@ -73,10 +73,39 @@ function pack(uids) {
   return out.join(',');
 }
 
-/** imapflow tools.canUseFlag 와 같다 — PERMANENTFLAGS 에 없으면 imapflow 는 STORE 를 보내지도 않는다 */
+/**
+ * imapflow tools.canUseFlag 와 똑같다 (대소문자까지) — 이것이 거짓이면 imapflow 의 run('STORE') 는 STORE 를 보내지도 않고 false.
+ * 이카운트는 SELECT 의 PERMANENTFLAGS 가 여기에 걸려 «지움 표시를 저장하지 않는다»로 늘 멈췄다
+ */
 function canFlag(mailbox, flag) {
   const p = mailbox && mailbox.permanentFlags;
   return !p || typeof p.has !== 'function' || p.has('\\*') || p.has(flag);
+}
+
+/** 서버가 준 PERMANENTFLAGS — 알림에 붙여 무엇을 받았는지 보이게 한다 */
+function permText(mailbox) {
+  const p = mailbox && mailbox.permanentFlags;
+  if (!p || typeof p[Symbol.iterator] !== 'function') return '(안 줌)';
+  return `(${[...p].join(' ')})`;
+}
+
+/**
+ * 지움 표시 붙이기. imapflow 가 허락하면 run('STORE') 로, 아니면 IMAP 명령 UID STORE 를 직접 보낸다.
+ * PERMANENTFLAGS 에 \Deleted 가 없거나 대소문자가 달라도(\deleted) 표시는 이 연결 동안은 붙는다 — RFC 3501 7.1:
+ * 목록에 없는 표시는 «세션이 끝나면 사라진다»는 뜻일 뿐이고, 우리는 같은 연결에서 바로 지운다.
+ * 정말로 안 지우는 서버면 지운 뒤 다시 세기에서 남은 것을 보고 멈춘다 (첫 묶음은 1통이다).
+ * 끊겨 표시가 사라지면 원본이 남고 휴지통에 복사본이 하나 더 있을 뿐이다
+ */
+async function addDeleted(client, set) {
+  if (canFlag(client.mailbox, '\\Deleted')) {
+    return client.run('STORE', set, ['\\Deleted'], { uid: true, operation: 'add', silent: true });
+  }
+  clearTimeout(client.idleStartTimer);
+  if (typeof client.preCheck === 'function') await client.preCheck();
+  const imapCommand = client.exec.bind(client);
+  const r = await imapCommand('UID STORE', [{ type: 'SEQUENCE', value: set }, { type: 'ATOM', value: '+FLAGS.SILENT' }, [{ type: 'ATOM', value: '\\Deleted' }]]);
+  if (r && typeof r.next === 'function') r.next();
+  return true;
 }
 
 const goodV = (v) => /^[1-9]\d*$/.test(String(v));
@@ -432,7 +461,7 @@ async function viaMove(client, uids, dest, ctx, out) {
 
 /**
  * 복사 길 — MOVE 가 없는 서버. 순서:
- *  0) 지난번 남은 내 지움 표시 풀기   1) \Deleted 를 저장 못 하는 폴더면 멈춤
+ *  0) 지난번 남은 내 지움 표시 풀기   1) PERMANENTFLAGS 에 \Deleted 가 없어도 간다 (addDeleted 가 직접 보낸다)
  *  2) (UIDPLUS 없음) 남의 지움 표시가 있으면 이 폴더는 건너뜀 + 지금 있는 UID 확인   3) 휴지통 UIDNEXT·메일 수
  *  4) UID COPY   5) 증명: COPYUID 가 그 UID 를 덮고 휴지통도 그만큼 늘었다 / (UIDPLUS 없음) 휴지통이 통수만큼 늘었다
  *  6) 일지에 적고 UID STORE +FLAGS.SILENT (\Deleted)
@@ -462,11 +491,9 @@ async function viaCopy(client, uids, dest, ctx, out) {
     block('서버가 이 폴더의 UIDVALIDITY 를 주지 않아 옮기지 않았습니다');
     return out;
   }
-  if (!canFlag(client.mailbox, '\\Deleted')) {
-    out.left = uids;
-    block('이 폴더는 지움 표시(\\Deleted)를 저장하지 않아 옮기지 않았습니다');
-    return out;
-  }
+  // PERMANENTFLAGS 에 \Deleted 가 없어도 멈추지 않는다 — addDeleted 가 직접 보내고, 안 지워지면 아래 다시 세기가 멈춘다.
+  // 그때 알림에 서버가 준 목록을 붙인다
+  const perm = canFlag(client.mailbox, '\\Deleted') ? '' : ` (서버 PERMANENTFLAGS ${permText(client.mailbox)})`;
 
   let todo = uids;
   if (!uidplus) {
@@ -564,7 +591,7 @@ async function viaCopy(client, uids, dest, ctx, out) {
     return out;
   }
   let flagged;
-  try { flagged = await client.run('STORE', pack(proven), ['\\Deleted'], { uid: true, operation: 'add', silent: true }); } catch { flagged = false; }
+  try { flagged = await addDeleted(client, pack(proven)); } catch { flagged = false; }
   if (!flagged) {
     out.kept.push(...proven);
     if (!live(client)) {
@@ -573,7 +600,7 @@ async function viaCopy(client, uids, dest, ctx, out) {
       return out;
     }
     await unflag(client, proven, ctx);
-    block('서버가 지움 표시를 거부해 원본을 남겼습니다 — 휴지통에 복사본이 있습니다');
+    block(`서버가 지움 표시를 거부해 원본을 남겼습니다 — 휴지통에 복사본이 있습니다${perm}`);
     return out;
   }
 
@@ -618,7 +645,7 @@ async function viaCopy(client, uids, dest, ctx, out) {
     }
     await unflag(client, proven, ctx);
     out.kept.push(...proven);
-    block('서버가 지우기를 거부해 원본을 남겼습니다 — 휴지통에 복사본이 있습니다');
+    block(`서버가 지우기를 거부해 원본을 남겼습니다 — 휴지통에 복사본이 있습니다${perm}`);
     return out;
   }
 
@@ -635,7 +662,7 @@ async function viaCopy(client, uids, dest, ctx, out) {
   if (stayed.length) {
     await unflag(client, stayed, ctx);
     out.kept.push(...stayed);
-    block(`서버가 ${stayed.length}통을 지우지 않아 원본을 남겼습니다 — 휴지통에 복사본이 있습니다`);
+    block(`서버가 ${stayed.length}통을 지우지 않아 원본을 남겼습니다 — 휴지통에 복사본이 있습니다${perm}`);
     return out;
   }
   if (others.length) {

@@ -8,7 +8,7 @@
 //   [W3] COPY 거절 — imapflow messageMove 는 원본을 지운다(대조), 도우미는 STORE·EXPUNGE 를 보내지 않는다, 막은 연결은 아무것도 안 보낸다
 //   [W4] COPY 뒤 소켓이 끊김 — usable=false, unsure, 원본 그대로
 //   [W5] STORE 뒤 끊김 → 다음 연결이 UID STORE -FLAGS.SILENT 로 푼다
-//   [W6] PERMANENTFLAGS 에 \Deleted 없음 — COPY 도 안 보낸다
+//   [W6] PERMANENTFLAGS 에 \Deleted 없음·소문자 — UID STORE 를 직접 보내 옮긴다 (이카운트)
 //   [W7] MOVE 거절의 서버 까닭 — mail.warnCatcher 가 imapflow 의 log.warn 에서 받아 오류 문구에 붙인다
 //   [W8] 로그인 거절의 진짜 모양 — mail.friendly 가 responseText·serverResponseCode 를 읽는다
 //   [W9] 복사 전·뒤 STATUS 에서 끊김, 첫 검색에서 끊김 — imapflow 는 false 를 준다. 멈춤(block)이 아니라 left·unsure
@@ -262,12 +262,16 @@ const close = async (c) => { try { await c.logout(); } catch { try { c.close(); 
 
   console.log('\n[W6] PERMANENTFLAGS 에 \\Deleted 없음');
   {
-    const s = await startServer({ caps: 'IMAP4rev1 UIDPLUS', perm: '\\Seen \\Flagged' });
-    const c = await client(s.port);
-    const r = await mm.moveUids(c, [1000], 'Trash', { accKey: 'w6', journal: mm.memJournal() });
-    await close(c);
-    s.stop();
-    ok(r.left.length === 1 && !!r.block && !s.wire.some((l) => /COPY|STORE|EXPUNGE/.test(l)), '복사도 하지 않는다 (imapflow 가 읽은 permanentFlags 를 본다)', { err: r.error });
+    // 이카운트 꼴 — 목록에 \Deleted 가 없거나(1) 소문자(2). imapflow run('STORE') 는 보내지 않으니 mailmove 가 UID STORE 를 직접 보낸다
+    for (const perm of ['\\Seen \\Flagged', '\\Seen \\deleted']) {
+      const s = await startServer({ caps: 'IMAP4rev1 UIDPLUS', perm });
+      const c = await client(s.port);
+      const r = await mm.moveUids(c, [1000], 'Trash', { accKey: 'w6', journal: mm.memJournal() });
+      await close(c);
+      s.stop();
+      ok(r.moved.length === 1 && !r.block && !r.error && cmdsOf(s.wire).includes('UID STORE 1000 +FLAGS.SILENT (\\Deleted)') && cmdsOf(s.wire).includes('UID EXPUNGE 1000'),
+        `PERMANENTFLAGS (${perm}) — 멈추지 않고 UID STORE +FLAGS.SILENT (\\Deleted) 를 직접 보내 옮긴다`, { r: { moved: r.moved, err: r.error }, wire: cmdsOf(s.wire) });
+    }
   }
 
   console.log('\n[W7] MOVE 거절의 서버 까닭');
